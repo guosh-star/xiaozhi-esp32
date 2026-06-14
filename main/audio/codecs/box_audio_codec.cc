@@ -215,6 +215,7 @@ void BoxAudioCodec::EnableOutput(bool enable) {
     if (enable == output_enabled_) {
         return;
     }
+    ESP_LOGI(TAG, "EnableOutput: %d -> %d", output_enabled_, enable);
     if (enable) {
         // Play 16bit 1 channel
         esp_codec_dev_sample_info_t fs = {

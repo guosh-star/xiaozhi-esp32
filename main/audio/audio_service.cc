@@ -757,7 +757,10 @@ void AudioService::CheckAndUpdateAudioPowerState() {
     if (output_elapsed > AUDIO_POWER_TIMEOUT_MS && codec_->output_enabled()) {
         // Keep TX clock when duplex RX is active; otherwise RX may stall on some boards.
         if (!(codec_->duplex() && codec_->input_enabled())) {
+            ESP_LOGI(TAG, "POWER-OFF: output idle %lld ms", output_elapsed);
             codec_->EnableOutput(false);
+        } else {
+            ESP_LOGD(TAG, "POWER-KEEP: duplex+RX active, keeping TX clock");
         }
     }
     if (!codec_->input_enabled() && !codec_->output_enabled()) {

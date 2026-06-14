@@ -197,6 +197,17 @@ public:
         
         ESP_LOGI(TAG, "=== Cuckoo Clock Board ===");
         
+        // Motor power OFF at boot (P-MOSFET: HIGH=off)
+        // Prevents power supply noise from affecting audio module
+        gpio_config_t motor_pwr_cfg = {
+            .pin_bit_mask = (1ULL << POWER_MOTOR_GPIO),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        };
+        gpio_config(&motor_pwr_cfg);
+        gpio_set_level(POWER_MOTOR_GPIO, 1);  // motors OFF
+        
         InitializeDisplayI2c();
         InitializeDisplay();
         InitializePeripherals();
