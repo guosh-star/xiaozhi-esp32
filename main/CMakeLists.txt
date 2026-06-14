@@ -4,6 +4,7 @@ set(SOURCES "audio/audio_codec.cc"
             "audio/demuxer/ogg_demuxer.cc"
             "audio/codecs/no_audio_codec.cc"
             "audio/codecs/box_audio_codec.cc"
+            "audio/codecs/cuckoo_box_audio_codec.cc"
             "audio/codecs/es8311_audio_codec.cc"
             "audio/codecs/es8374_audio_codec.cc"
             "audio/codecs/es8388_audio_codec.cc"
@@ -803,6 +804,10 @@ elseif(CONFIG_BOARD_TYPE_AI_VOX3)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_CUCKOO_CLOCK)
+    set(BOARD_TYPE "cuckoo-clock")
+    # Include cuckoo clock MP3 music files in assets partition
+    set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets")
 endif()
 
 if(MANUFACTURER)
@@ -977,6 +982,14 @@ if(CONFIG_BOARD_TYPE_ESP_VOCAT)
         espressif__touch_button_sensor
     )
 endif()
+if(CONFIG_BOARD_TYPE_CUCKOO_CLOCK)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
+        esp_driver_ledc
+        esp_adc
+        esp_lcd
+        esp_audio_codec
+    )
+endif()
 
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
@@ -1000,6 +1013,8 @@ idf_component_register(SRCS ${SOURCES}
                         efuse
                         bt
                         fatfs
+                        esp_audio_codec
+                        esp_http_client
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
 

@@ -12,7 +12,7 @@
 #include "board.h"
 
 #define AUDIO_CODEC_DMA_DESC_NUM 6
-#define AUDIO_CODEC_DMA_FRAME_NUM 240
+#define AUDIO_CODEC_DMA_FRAME_NUM 512
 
 class AudioCodec {
 public:
@@ -51,7 +51,7 @@ protected:
     int output_sample_rate_ = 0;
     int input_channels_ = 1;
     int output_channels_ = 1;
-    int output_volume_ = 70;
+    int output_volume_ = 90;
     float input_gain_ = 0.0;
 
     virtual int Read(int16_t* dest, int samples) = 0;

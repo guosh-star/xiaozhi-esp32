@@ -1,0 +1,1477 @@
+#include "cuckoo_controller.h"
+#include "cuckoo_bell_sound.h"
+#include "../../mcp_server.h"
+#include "../../application.h"
+#include "board.h"
+
+#include <esp_log.h>
+#include <esp_wifi.h>
+#include <time.h>
+#include <string.h>
+#include <cmath>
+
+#define TAG "CuckooCtrl"
+
+// ============================================
+// LEDC PWM 通道分配
+// ============================================
+// TB6612 需�?4 �?PWM 通道
+// 舵机需�?2 �?PWM 通道
+// 鸟门电机 1 �?PWM 通道
+// 总共 7 �?// TB6612 PWM 要求 ~10-100KHz
+// 舵机要求 50Hz
+// 鸟门电机 L9110S 要求 ~1-10KHz
+
+// ============================================
+// Motor (TB6612)
+// ============================================
+Motor::Motor(gpio_num_t pwm_pin, gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t channel)
+    : pwm_pin_(pwm_pin), in1_pin_(in1_pin), in2_pin_(in2_pin), speed_(0), reverse_(false), ledc_channel_(channel) {
+
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << in1_pin_) | (1ULL << in2_pin_),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+
+    ledc_timer_config_t timer_conf = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 10000,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ledc_timer_config(&timer_conf);
+
+    ledc_channel_config_t ch_conf = {
+        .gpio_num = pwm_pin_,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = ledc_channel_,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 0,
+        .hpoint = 0,
+        .flags = { .output_invert = 0 },
+    };
+    ledc_channel_config(&ch_conf);
+
+    Stop();
+}
+
+void Motor::SetSpeed(int speed) {
+    if (speed == 0) { Stop(); return; }
+    bool rev = speed < 0;
+    int spd = abs(speed);
+    if (spd > 100) spd = 100;
+    uint32_t duty = (spd * 255) / 100;
+    gpio_set_level(in1_pin_, rev ? 0 : 1);
+    gpio_set_level(in2_pin_, rev ? 1 : 0);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
+    speed_ = spd;
+    reverse_ = rev;
+}
+
+void Motor::Stop() {
+    gpio_set_level(in1_pin_, 0);
+    gpio_set_level(in2_pin_, 0);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
+    speed_ = 0;
+}
+
+void Motor::Forward(int speed) { SetSpeed(speed); }
+void Motor::Reverse(int speed) { SetSpeed(-speed); }
+
+// ============================================
+// Servo (SG90)
+// ============================================
+Servo::Servo(gpio_num_t pin, ledc_channel_t channel)
+    : pin_(pin), angle_(90), ledc_channel_(channel) {
+
+    ledc_timer_config_t timer_conf = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_14_BIT,
+        .timer_num = LEDC_TIMER_1,
+        .freq_hz = 50,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ledc_timer_config(&timer_conf);
+
+    ledc_channel_config_t ch_conf = {
+        .gpio_num = pin_,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = ledc_channel_,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_1,
+        .duty = 0,
+        .hpoint = 0,
+        .flags = { .output_invert = 0 },
+    };
+    ledc_channel_config(&ch_conf);
+
+    SetAngle(90);
+}
+
+void Servo::SetAngle(int angle) {
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+    angle_ = angle;
+    uint32_t duty = (uint32_t)(409 + (float)(angle) / 180.0f * (2048 - 409));
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
+}
+
+void Servo::Sweep(int from, int to, int duration_ms) {
+    if (from == to) { SetAngle(to); return; }
+    int steps = duration_ms / 20;
+    if (steps < 1) steps = 1;
+    float delta = (float)(to - from) / steps;
+    for (int i = 0; i <= steps; i++) {
+        SetAngle(from + (int)(delta * i));
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+// ============================================
+// BirdJump (电磁�?
+// ============================================
+BirdJump::BirdJump(gpio_num_t gpio) : gpio_(gpio), active_(false) {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << gpio_),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(gpio_, 0);
+}
+
+void BirdJump::Jump(int duration_ms) {
+    Set(true);
+    if (duration_ms > 0) {
+        vTaskDelay(pdMS_TO_TICKS(duration_ms));
+        Set(false);
+    }
+}
+
+void BirdJump::Set(bool on) {
+    gpio_set_level(gpio_, on ? 1 : 0);
+    active_ = on;
+}
+
+// ============================================
+// MP3 Player (YX5200/YX5300 UART)
+// ============================================
+// ============================================
+// Mp3Player - 软件解码播放器（异步任务版）
+// ============================================
+
+Mp3Player::~Mp3Player() {
+    stop_requested_ = true;
+    is_playing_ = false;
+    if (play_task_) {
+        vTaskDelete(play_task_);
+        play_task_ = nullptr;
+    }
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+}
+
+void Mp3Player::Init(Assets* assets) {
+    assets_ = assets;
+    ESP_LOGI(TAG, "Mp3Player initialized (async task-based software decode)");
+}
+
+// 在播放任务中运行，解码单个 MP3 文件
+int Mp3Player::DecodeSingleFile(int index) {
+    if (!assets_) {
+        ESP_LOGE(TAG, "Assets not initialized");
+        return 0;
+    }
+
+    char filename[16];
+    snprintf(filename, sizeof(filename), "%04d.mp3", index);
+
+    // 从 assets 获取 MP3 文件数据
+    void* mp3_data = nullptr;
+    size_t mp3_size = 0;
+    if (!assets_->GetAssetData(filename, mp3_data, mp3_size)) {
+        ESP_LOGE(TAG, "Failed to get asset: %s", filename);
+        return 0;
+    }
+
+    if (!mp3_data || mp3_size == 0) {
+        ESP_LOGE(TAG, "Empty asset: %s", filename);
+        return 0;
+    }
+
+    ESP_LOGI(TAG, "Playing %s (%zu bytes)", filename, mp3_size);
+
+    // 打开 MP3 解码器
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+
+    esp_audio_err_t ret = esp_mp3_dec_open(nullptr, 0, &mp3_dec_handle_);
+    if (ret != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
+        return 0;
+    }
+
+    // 解码信息
+    esp_audio_dec_info_t dec_info = {};
+    bool info_ready = false;
+    int sample_rate = 22050;
+    int channels = 1;
+
+    // 解码前静音 AI 的 Opus 输出，防止 AI 声音打断音乐
+    // SetOutputMuted(true) 仅静音 Opus 解码后的音频，不影响 OutputRawPcm
+    auto& app = Application::GetInstance();
+        // 解码循环
+    uint8_t* input_ptr = (uint8_t*)mp3_data;
+    size_t remaining = mp3_size;
+
+    while (remaining > 0 && !stop_requested_) {
+        // 准备输入帧
+        size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
+        memcpy(input_buf_, input_ptr, in_len);
+
+        esp_audio_dec_in_raw_t raw;
+        raw.buffer = input_buf_;
+        raw.len = in_len;
+        raw.consumed = 0;
+        raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
+
+        // 准备输出帧
+        esp_audio_dec_out_frame_t frame;
+        frame.buffer = output_buf_;
+        frame.len = kOutputBufSize;
+        frame.needed_size = 0;
+        frame.decoded_size = 0;
+
+        // 解码
+        ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
+
+        if (ret == ESP_AUDIO_ERR_OK) {
+            // 首次获取解码信息
+            if (!info_ready) {
+                esp_audio_err_t info_ret = esp_audio_dec_get_info(mp3_dec_handle_, &dec_info);
+                if (info_ret == ESP_AUDIO_ERR_OK) {
+                    sample_rate = dec_info.sample_rate;
+                    channels = dec_info.channel;
+                    ESP_LOGI(TAG, "MP3 info: %d Hz, %d ch, %.1f kbps",
+                             sample_rate, channels, dec_info.bitrate / 1000.0f);
+                }
+                info_ready = true;
+            }
+
+            // 有解码出的 PCM 数据，推给扬声器
+            if (frame.decoded_size > 0 && !stop_requested_) {
+                int16_t* pcm_data = (int16_t*)frame.buffer;
+                size_t num_samples = frame.decoded_size / sizeof(int16_t);
+
+                // 计算这段 PCM 的播放时长
+                int play_ms = (int)(num_samples * 1000 / sample_rate / (channels > 0 ? channels : 1));
+                if (play_ms < 10) play_ms = 10;  // 最小延时
+
+                // 音量：保持原始音量
+                for (size_t i = 0; i < num_samples; i++) {
+                    if (pcm_data[i] > 30000) pcm_data[i] = 30000;
+                    if (pcm_data[i] < -30000) pcm_data[i] = -30000;
+                }
+                auto& app = Application::GetInstance();
+                app.GetAudioService().OutputRawPcm(pcm_data, num_samples, sample_rate);
+
+                // 等待播放完成（OutputRawPcm 非阻塞）
+                vTaskDelay(pdMS_TO_TICKS(play_ms));
+            }
+
+            // 移动输入指针
+            size_t consumed = raw.consumed;
+            if (consumed == 0) {
+                consumed = 1440;  // 默认跳一帧
+                if (consumed > remaining) consumed = remaining;
+            }
+            input_ptr += consumed;
+            remaining -= consumed;
+
+        } else if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
+            ESP_LOGW(TAG, "Output buffer too small, needed %lu", (unsigned long)frame.needed_size);
+            break;
+        } else if (ret == ESP_AUDIO_ERR_NOT_SUPPORT) {
+            ESP_LOGE(TAG, "Unsupported MP3 format (stopping)");
+            break;
+        } else {
+            // 解码错误：跳过当前帧
+            ESP_LOGW(TAG, "Decode error %d, skipping frame", ret);
+            size_t skip = raw.consumed ? raw.consumed : 1440;
+            if (skip > remaining) skip = remaining;
+            input_ptr += skip;
+            remaining -= skip;
+        }
+    }
+
+    // 关闭解码器
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+
+    // 恢复小智的 Opus 解码输出（无论正常结束还是被打断都必须恢复）
+    app.GetAudioService().SetOutputMuted(false);
+
+    ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, (int)stop_requested_);
+    return !stop_requested_;
+}
+
+// 播放任务入口
+void Mp3Player::PlayTaskEntry(void* arg) {
+    Mp3Player* self = (Mp3Player*)arg;
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        if (self->stop_requested_) {
+            self->is_playing_ = false;
+            self->stop_requested_ = false;
+            continue;
+        }
+
+        if (self->pending_track_ > 0) {
+            // play single track - manage mute here
+            self->is_playing_ = true;
+            int track = self->pending_track_;
+            self->pending_track_ = 0;
+            Application::GetInstance().GetAudioService().SetOutputMuted(true);
+            self->DecodeSingleFile(track);
+            self->is_playing_ = false;
+            Application::GetInstance().GetAudioService().SetOutputMuted(false);
+        }
+
+        if (self->pending_bell_hour_ > 0) {
+            // play bell chime using short PCM bell sound (~0.5s each)
+            self->is_playing_ = true;
+            int hour = self->pending_bell_hour_;
+            self->pending_bell_hour_ = 0;
+            Application::GetInstance().GetAudioService().SetOutputMuted(true);
+            for (int i = 0; i < hour; i++) {
+                if (self->stop_requested_) break;
+                self->bell_player_.PlayBellSoundSync();
+                // pause ~1s between strikes for natural clock sound
+                if (i < hour - 1 && !self->stop_requested_) {
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+            }
+            self->is_playing_ = false;
+            Application::GetInstance().GetAudioService().SetOutputMuted(false);
+        }
+    }
+}
+
+void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
+    if (folder == 1) {
+        // 钟声
+        PlayBell(track);
+    } else if (folder == 2) {
+        // 音乐
+        if (track < 1) track = 1;
+        if (track > 12) track = 12;
+        PlayIndex(track);
+    }
+}
+
+void Mp3Player::PlayIndex(uint16_t index) {
+    if (index < 1) index = 1;
+    if (index > 13) index = 13;
+
+    if (!assets_) {
+        ESP_LOGE(TAG, "Mp3Player not initialized (call Init first)");
+        return;
+    }
+
+    // 停止当前播放
+    Stop();
+
+    // 清空 stop_requested_ 并设置新曲目
+    stop_requested_ = false;
+    pending_track_ = index;
+
+    // 确保任务已创建
+    if (!play_task_) {
+        stop_requested_ = false;
+        xTaskCreatePinnedToCore(
+            PlayTaskEntry,
+            "mp3_play",
+            4096,
+            this,
+            5,
+            &play_task_,
+            1
+        );
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+void Mp3Player::Stop() {
+    stop_requested_ = true;
+    is_playing_ = false;
+    pending_track_ = 0;
+    pending_bell_hour_ = 0;
+
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_reset(mp3_dec_handle_);
+    }
+}
+
+void Mp3Player::Pause() {
+    stop_requested_ = true;
+    is_playing_ = false;
+}
+
+void Mp3Player::ResetForNextPlay() {
+    stop_requested_ = false;
+    is_playing_ = false;
+    pending_track_ = 0;
+    pending_bell_hour_ = 0;
+}
+
+void Mp3Player::Resume() {
+    ESP_LOGW(TAG, "Resume not supported, call PlayIndex again");
+}
+
+void Mp3Player::SetVolume(uint8_t vol) {
+    ESP_LOGI(TAG, "Volume request: %d (handled by AudioService)", vol);
+}
+
+void Mp3Player::VolumeUp() { SetVolume(20); }
+void Mp3Player::VolumeDown() { SetVolume(10); }
+void Mp3Player::Next() {}
+void Mp3Player::Prev() {}
+
+void Mp3Player::PlayBell(int hour) {
+    if (hour < 1) hour = 1;
+    if (hour > 12) hour = 12;
+
+    if (!assets_) return;
+
+    // 停止当前播放
+    Stop();
+
+    // 设置钟声重复次数
+    pending_bell_hour_ = hour;
+
+    // 确保任务已创建
+    if (!play_task_) {
+        stop_requested_ = false;
+        xTaskCreatePinnedToCore(
+            PlayTaskEntry,
+            "mp3_play",
+            4096,
+            this,
+            5,
+            &play_task_,
+            1
+        );
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+void Mp3Player::PlayBgMusic(int index) {
+    if (index < 1) index = 1;
+    if (index > 12) index = 12;
+    PlayIndex(index);
+}
+
+int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate) {
+    char filename[16];
+    snprintf(filename, sizeof(filename), "%04d.mp3", index);
+
+    void* mp3_data = nullptr;
+    size_t mp3_size = 0;
+    if (!assets_->GetAssetData(filename, mp3_data, mp3_size)) {
+        ESP_LOGE(TAG, "Failed to get asset: %s", filename);
+        return -1;
+    }
+    if (!mp3_data || mp3_size == 0) {
+        ESP_LOGE(TAG, "Empty asset: %s", filename);
+        return -1;
+    }
+
+    // 打开解码器
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+    esp_audio_err_t ret = esp_mp3_dec_open(nullptr, 0, &mp3_dec_handle_);
+    if (ret != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
+        return -1;
+    }
+
+    esp_audio_dec_info_t dec_info = {};
+    bool info_ready = false;
+    int sample_rate = 22050;
+    int channels = 1;
+
+    // 先解码一遍估算总 PCM 大小
+    uint8_t* input_ptr = (uint8_t*)mp3_data;
+    size_t remaining = mp3_size;
+    size_t total_decoded = 0;
+
+    while (remaining > 0 && !stop_requested_) {
+        size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
+        memcpy(input_buf_, input_ptr, in_len);
+
+        esp_audio_dec_in_raw_t raw;
+        raw.buffer = input_buf_;
+        raw.len = in_len;
+        raw.consumed = 0;
+        raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
+
+        esp_audio_dec_out_frame_t frame;
+        frame.buffer = output_buf_;
+        frame.len = kOutputBufSize;
+        frame.needed_size = 0;
+        frame.decoded_size = 0;
+
+        ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
+
+        if (ret == ESP_AUDIO_ERR_OK) {
+            if (!info_ready) {
+                esp_audio_err_t info_ret = esp_audio_dec_get_info(mp3_dec_handle_, &dec_info);
+                if (info_ret == ESP_AUDIO_ERR_OK) {
+                    sample_rate = dec_info.sample_rate;
+                    channels = dec_info.channel;
+                }
+                info_ready = true;
+            }
+            if (frame.decoded_size > 0) {
+                total_decoded += frame.decoded_size / sizeof(int16_t);
+            }
+
+            size_t consumed = raw.consumed;
+            if (consumed == 0) consumed = 1440;
+            if (consumed > remaining) consumed = remaining;
+            input_ptr += consumed;
+            remaining -= consumed;
+        } else if (ret == ESP_AUDIO_ERR_NOT_SUPPORT) {
+            break;
+        } else {
+            size_t skip = raw.consumed ? raw.consumed : 1440;
+            input_ptr += skip;
+            if (skip > remaining) remaining = 0;
+            else remaining -= skip;
+        }
+    }
+
+    if (total_decoded == 0) {
+        ESP_LOGE(TAG, "No PCM data decoded from %s", filename);
+        return -1;
+    }
+
+    // 分配缓冲区
+    int16_t* buf = (int16_t*)heap_caps_malloc(total_decoded * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        ESP_LOGE(TAG, "Failed to allocate %zu samples in PSRAM", total_decoded);
+        return -1;
+    }
+
+    // 第二遍解码，存到缓冲区
+    // 重新打开解码器（需要从头解码）
+    esp_mp3_dec_close(mp3_dec_handle_);
+    mp3_dec_handle_ = nullptr;
+    ret = esp_mp3_dec_open(nullptr, 0, &mp3_dec_handle_);
+    if (ret != ESP_AUDIO_ERR_OK) {
+        heap_caps_free(buf);
+        return -1;
+    }
+
+    input_ptr = (uint8_t*)mp3_data;
+    remaining = mp3_size;
+    size_t written = 0;
+
+    while (remaining > 0 && written < total_decoded && !stop_requested_) {
+        size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
+        memcpy(input_buf_, input_ptr, in_len);
+
+        esp_audio_dec_in_raw_t raw;
+        raw.buffer = input_buf_;
+        raw.len = in_len;
+        raw.consumed = 0;
+        raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
+
+        esp_audio_dec_out_frame_t frame;
+        frame.buffer = output_buf_;
+        frame.len = kOutputBufSize;
+        frame.needed_size = 0;
+        frame.decoded_size = 0;
+
+        ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
+
+        if (ret == ESP_AUDIO_ERR_OK && frame.decoded_size > 0) {
+            size_t n = frame.decoded_size / sizeof(int16_t);
+            if (written + n <= total_decoded) {
+                memcpy(buf + written, frame.buffer, frame.decoded_size);
+                written += n;
+            }
+
+            size_t consumed = raw.consumed;
+            if (consumed == 0) consumed = 1440;
+            if (consumed > remaining) consumed = remaining;
+            input_ptr += consumed;
+            remaining -= consumed;
+        } else {
+            size_t skip = raw.consumed ? raw.consumed : 1440;
+            input_ptr += skip;
+            if (skip > remaining) remaining = 0;
+            else remaining -= skip;
+        }
+    }
+
+    // 关闭解码器
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+
+    *out_buf = buf;
+    *out_samples = written;
+    *out_samplerate = sample_rate;
+    ESP_LOGI(TAG, "Decoded %s to PCM: %zu samples, %d Hz", filename, written, sample_rate);
+    return 0;
+}
+
+// ============================================
+// LDR 光敏传感器
+// ============================================
+LdrSensor::LdrSensor(gpio_num_t adc_pin, int threshold)
+    : adc_pin_(adc_pin), threshold_(threshold) {
+    ESP_LOGI(TAG, "LDR sensor on GPIO %d, threshold %d", adc_pin_, threshold_);
+}
+
+int LdrSensor::ReadRaw() {
+    int level = gpio_get_level(adc_pin_);
+    return level == 1 ? 4095 : 0;
+}
+
+bool LdrSensor::IsDark() { return ReadRaw() > threshold_; }
+void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
+
+// ============================================
+// BellSoundPlayer - 通过 AI 音频系统播放布谷鸟叫�?// ============================================
+void BellSoundPlayer::PlayCuckooSoundSync() {
+    // 直接写 I2S（阻塞直到播完），使用 data_if_mutex_ 与 AudioOutputTask 互斥
+    // 不需要 SetOutputMuted，也不需要 vTaskDelay
+    auto& app = Application::GetInstance();
+    app.GetAudioService().OutputRawPcm(
+        cuckoo_wake_sound,
+        CUCKOO_WAKE_SOUND_NUM_SAMPLES,
+        CUCKOO_WAKE_SOUND_SAMPLE_RATE
+    );
+}
+
+void BellSoundPlayer::PlayBellSoundSync() {
+    // 直接写 I2S（阻塞直到播完），使用 data_if_mutex_ 与 AudioOutputTask 互斥
+    auto& app = Application::GetInstance();
+    app.GetAudioService().OutputRawPcm(
+        cuckoo_bell_sound,
+        CUCKOO_BELL_SOUND_NUM_SAMPLES,
+        CUCKOO_BELL_SOUND_SAMPLE_RATE
+    );
+}
+
+// ============================================
+// CuckooStateMachine
+// ============================================
+CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
+                                        Motor* bird_door, Servo* violin, Servo* dog,
+                                        BirdJump* bird_jump, Mp3Player* mp3,
+                                        BellSoundPlayer* bell_player,
+                                        RtcPcf8563* rtc, LdrSensor* ldr)
+    : m1_(m1), m2_(m2), m3_(m3), m4_(m4),
+      bird_door_(bird_door), violin_servo_(violin), dog_servo_(dog),
+      bird_jump_(bird_jump), mp3_(mp3), bell_player_(bell_player), rtc_(rtc), ldr_(ldr),
+      current_performance_(kPerformanceNone), current_phase_(kPhaseIdle),
+      call_count_(0), total_calls_(0), is_running_(false),
+      last_hour_(-1), last_half_hour_(-1),
+      task_handle_(nullptr), phase_timer_(nullptr),
+      current_hour_(12), current_min_(0), current_sec_(0), time_set_(false),
+      is_dark_(false) {}
+
+CuckooStateMachine::~CuckooStateMachine() {
+    if (phase_timer_) esp_timer_delete(phase_timer_);
+    StopAll();
+}
+
+void CuckooStateMachine::PhaseTimerCallback(void* arg) {
+    auto* sm = static_cast<CuckooStateMachine*>(arg);
+    sm->AdvancePhase();
+}
+
+void CuckooStateMachine::StartPhase(Phase phase, int duration_ms) {
+    current_phase_ = phase;
+    ESP_LOGI(TAG, "Phase: %d", phase);
+
+    if (phase_timer_) {
+        esp_timer_stop(phase_timer_);
+        esp_timer_delete(phase_timer_);
+        phase_timer_ = nullptr;
+    }
+
+    if (duration_ms > 0) {
+        esp_timer_create_args_t args = {
+            .callback = PhaseTimerCallback,
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "cuckoo_phase",
+            .skip_unhandled_events = false,
+        };
+        esp_timer_create(&args, &phase_timer_);
+        esp_timer_start_once(phase_timer_, duration_ms * 1000);
+    }
+
+    // 立即执行当前阶段动作
+    switch (phase) {
+        case kPhaseOpeningDoor:
+            if (bird_door_) {
+                bird_door_->Forward(80);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                bird_door_->Stop();
+            }
+            break;
+
+        case kPhaseBirdOut:
+            if (bird_jump_) bird_jump_->Jump(300);
+            if (dog_servo_) dog_servo_->Sweep(90, 45, 300);
+            break;
+
+        case kPhaseCalling:
+            // 只执行第一次动作，后续由 AdvancePhase 的定时器驱动
+            if (call_count_ > 0) {
+                // 小鸟跳跃
+                if (bird_jump_) bird_jump_->Jump(150);
+                // 通过 AI 扬声器播放布谷鸟叫声
+                if (bell_player_) {
+                    bell_player_->PlayCuckooSoundSync();
+                }
+                call_count_--;
+            } else {
+                // 已经叫完了，直接进入下一阶段
+                StartPhase(kPhaseBirdIn, 1000);
+            }
+            break;
+
+        case kPhaseBirdIn:
+            if (bird_jump_) bird_jump_->Jump(200);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            if (dog_servo_) dog_servo_->Sweep(45, 90, 300);
+            break;
+
+        case kPhaseClosingDoor:
+            if (bird_door_) {
+                bird_door_->Reverse(80);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                bird_door_->Stop();
+            }
+            break;
+
+        case kPhaseChiming: {
+            // 敲钟：播放 0013.mp3，重复整点次数
+            if (mp3_ && total_calls_ >= 1 && total_calls_ <= 12) {
+                mp3_->PlayBell(total_calls_);
+                // 等钟声播完（非阻塞，在播放任务中异步进行）
+                int wait_start = 0;
+                while (wait_start < 6 && is_running_ && !mp3_->IsPlaying()) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    wait_start++;
+                }
+                while (is_running_ && mp3_->IsPlaying()) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                }
+            }
+            // 钟声播完后 AdvancePhase 会自动进入 kPhaseDance
+            break;
+        }
+
+        case kPhaseDance:
+            // 启动跳舞+水车
+            if (m1_) m1_->Forward(70);
+            if (m2_) m2_->Forward(60);
+            if (m3_) m3_->Forward(50);
+            if (m4_) m4_->Forward(50);
+            if (violin_servo_) violin_servo_->Sweep(45, 135, 1000);
+            // 播放对应整点的背景音乐（异步，在播放任务中解码）
+            if (mp3_ && total_calls_ >= 1 && total_calls_ <= 12) {
+                mp3_->PlayBgMusic(total_calls_);
+                // 等音乐开始播放（PlayBgMusic 异步，最多等3秒）
+                int wait_start = 0;
+                while (wait_start < 6 && is_running_ && !mp3_->IsPlaying()) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    wait_start++;
+                }
+                // 等音乐播完（IsPlaying 在音乐结束时自动变 false）
+                while (is_running_ && mp3_->IsPlaying()) {
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                }
+            } else if (mp3_) {
+                // 手动触发表演：10秒
+                vTaskDelay(pdMS_TO_TICKS(10000));
+            }
+            // 音乐结束或手动停止，进入收尾
+            break;
+
+        case kPhaseWaterwheel:
+            // 已合并到 kPhaseDance，这里实际上不会被执行
+            break;
+
+        case kPhaseDone:
+            if (m1_) m1_->Stop();
+            if (m2_) m2_->Stop();
+            if (m3_) m3_->Stop();
+            if (m4_) m4_->Stop();
+            if (violin_servo_) violin_servo_->SetAngle(90);
+            // 停止背景音乐
+            if (mp3_) mp3_->Stop();
+            is_running_ = false;
+            current_performance_ = kPerformanceNone;
+            current_phase_ = kPhaseIdle;
+            ESP_LOGI(TAG, "Performance complete");
+            break;
+
+        default:
+            break;
+    }
+}
+
+void CuckooStateMachine::AdvancePhase() {
+    if (!is_running_) return;
+    switch (current_phase_) {
+        case kPhaseOpeningDoor: StartPhase(kPhaseBirdOut, 800); break;
+        case kPhaseBirdOut: StartPhase(kPhaseCalling, 500); break;
+        case kPhaseCalling:
+            // 还有叫声剩余 → 1.5秒后再次叫
+            if (call_count_ > 0) {
+                StartPhase(kPhaseCalling, 1500);
+            } else {
+                // 叫完了，进入鸟回笼
+                StartPhase(kPhaseBirdIn, 1000);
+            }
+            break;
+        case kPhaseBirdIn: StartPhase(kPhaseClosingDoor, 1800); break;
+        case kPhaseClosingDoor:
+            // 整点：敲钟后再跳舞；半点：直接结束
+            if (current_performance_ == kPerformanceHour) {
+                StartPhase(kPhaseChiming, 0);
+            } else {
+                StartPhase(kPhaseDone, 0);
+            }
+            break;
+        case kPhaseChiming: StartPhase(kPhaseDance, 0); break;
+        case kPhaseDance: StartPhase(kPhaseDone, 0); break;
+        default: is_running_ = false; break;
+    }
+}
+
+void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
+    if (is_running_) { ESP_LOGW(TAG, "Already performing"); return; }
+    
+    // 如果 AI 正在说话/监听，先打断它
+    auto& app = Application::GetInstance();
+    auto state = app.GetDeviceState();
+    if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
+        ESP_LOGI(TAG, "Aborting AI speaking before performance (state=%d)", (int)state);
+        app.AbortSpeaking(kAbortReasonNone);
+        vTaskDelay(pdMS_TO_TICKS(200));  // 等状态机切换到 idle
+    }
+    
+    is_running_ = true;
+    current_performance_ = type;
+    switch (type) {
+        case kPerformanceHour:
+            if (hour > 12) hour -= 12;
+            if (hour <= 0) hour = 12;
+            total_calls_ = hour;       // 记录是几点（敲钟用）
+            call_count_ = 3;           // 固定叫三声
+            break;
+        case kPerformanceHalf:
+            total_calls_ = 0;
+            call_count_ = 3;           // 半点也固定叫三声
+            break;
+        case kPerformanceManual:
+            total_calls_ = call_count_ = 3;
+            break;
+        default: is_running_ = false; return;
+    }
+    // 启动独立任务执行表演（线性执行，无竞态）
+    xTaskCreate(
+        PerformanceTask,
+        "cuckoo_perf",
+        4096,
+        this,
+        3,
+        nullptr
+    );
+}
+
+
+void CuckooStateMachine::PerformanceTask(void* arg) {
+    auto* sm = static_cast<CuckooStateMachine*>(arg);
+    ESP_LOGI(TAG, "Performance task started");
+
+    // 静音 AI 输出，清空播放队列，防止钟声和 Opus 混叠
+    auto& app = Application::GetInstance();
+    app.GetAudioService().SetOutputMuted(true);
+
+    // ====== 整点报时简化版（电机无安装，只走音频流程） ======
+    if (sm->current_performance_ == kPerformanceHour) {
+        // Phase 1: 布谷鸟叫声 x3 (cuckoo.mp3 或 BellSoundPlayer)
+        for (int i = 0; i < sm->call_count_; i++) {
+            if (sm->bird_jump_) sm->bird_jump_->Jump(150);
+            if (sm->bell_player_) {
+                sm->bell_player_->PlayCuckooSoundSync();
+            }
+            if (i < sm->call_count_ - 1) {
+                vTaskDelay(pdMS_TO_TICKS(300));
+            }
+        }
+
+        // Phase 2: bell chime - 解码0013.mp3到PCM缓冲区，循环播避免MP3解码器抖动
+        // 一次性解码到PSRAM，用OutputRawPcm重复播放，跳过MP3解码器反复打开的抖动
+        if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
+            int16_t* bell_pcm = nullptr;
+            size_t bell_samples = 0;
+            int bell_sr = 0;
+            int dec_ret = sm->mp3_->DecodeToBuffer(13, &bell_pcm, &bell_samples, &bell_sr);
+            if (dec_ret == 0 && bell_pcm && bell_samples > 0) {
+                ESP_LOGI(TAG, "Bell PCM loaded: %zu samples @ %d Hz", bell_samples, bell_sr);
+                // 放大音量 1.8x，限幅防止爆音
+                const float kVolume = 1.8f;
+                for (size_t s = 0; s < bell_samples; s++) {
+                    int32_t sample = (int32_t)(bell_pcm[s] * kVolume);
+                    if (sample > 32767) sample = 32767;
+                    else if (sample < -32768) sample = -32768;
+                    bell_pcm[s] = (int16_t)sample;
+                }
+                for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
+                    app.GetAudioService().OutputRawPcm(bell_pcm, bell_samples, bell_sr);
+                    // OutputRawPcm 是阻塞的，播完才返回
+                    if (!sm->is_running_) break;
+                    if (i < sm->total_calls_ - 1) {
+                        vTaskDelay(pdMS_TO_TICKS(300));
+                    }
+                }
+                heap_caps_free(bell_pcm);
+            } else {
+                // 回退：用 PlayIndex
+                ESP_LOGW(TAG, "DecodeToBuffer failed, falling back to PlayIndex");
+                for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
+                    sm->mp3_->PlayIndex(13);
+                    int wait_start = 0;
+                    while (wait_start < 5 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        wait_start++;
+                    }
+                    int wait_done = 0;
+                    while (wait_done < 50 && sm->is_running_ && sm->mp3_->IsPlaying()) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        wait_done++;
+                    }
+                    if (!sm->is_running_) break;
+                    if (i < sm->total_calls_ - 1) {
+                        vTaskDelay(pdMS_TO_TICKS(300));
+                    }
+                }
+            }
+        }
+
+
+        // Phase 3: 播放对应整点的音乐，最长 5 分钟
+        // 先恢复 AI 输出，支持音乐用 Mp3Player（不走 AudioService I2S）
+        app.GetAudioService().SetOutputMuted(false);
+        if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
+            sm->mp3_->PlayBgMusic(sm->total_calls_);
+            // 等音乐开始
+            int wait_start = 0;
+            while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                wait_start++;
+            }
+            // 等音乐自然播完（IsPlaying 播完自动变 false），加兜底超时防止异常
+            int max_wait_sec = 3 * 60;  // 最长等 3 分钟（兜底）
+            int elapsed = 0;
+            while (sm->is_running_ && sm->mp3_->IsPlaying() && elapsed < max_wait_sec) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                elapsed++;
+            }
+            if (elapsed >= max_wait_sec) {
+                ESP_LOGW(TAG, "Hourly chime music timed out (10 min), stopping");
+                sm->mp3_->Stop();
+            }
+        }
+
+    // ====== 半点报时：布谷鸟叫声 x3，无音乐无敲钟 ======
+    } else if (sm->current_performance_ == kPerformanceHalf) {
+        for (int i = 0; i < sm->call_count_; i++) {
+            if (sm->bird_jump_) sm->bird_jump_->Jump(150);
+            if (sm->bell_player_) {
+                sm->bell_player_->PlayCuckooSoundSync();
+            }
+            if (i < sm->call_count_ - 1) {
+                vTaskDelay(pdMS_TO_TICKS(300));
+            }
+        }
+        // 半点结束后恢复 AI
+        app.GetAudioService().SetOutputMuted(false);
+    }
+
+    // ====== Done ======
+    if (sm->mp3_) sm->mp3_->Stop();
+    // 兜底恢复 AI 输出（确保不管什么路径都不会卡在静音状态）
+    app.GetAudioService().SetOutputMuted(false);
+    sm->is_running_ = false;
+    sm->current_performance_ = kPerformanceNone;
+    sm->current_phase_ = kPhaseIdle;
+    ESP_LOGI(TAG, "Performance complete");
+
+    vTaskDelete(NULL);
+} 
+void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
+    is_dark_ = dark;
+    if (is_running_) return;
+    
+    // AI 忙时不报时（说话/监听/连接中等）
+    auto state = Application::GetInstance().GetDeviceState();
+    if (state != kDeviceStateIdle) {
+        ESP_LOGI(TAG, "Skipping chime: device busy (state=%d)", state);
+        return;
+    }
+    
+    // 夜间模式（20:00-7:00）不报时
+    if ((is_dark_ && hour >= 20) || hour < 7) {
+        return;
+    }
+
+    // 由调用方决定是整点报时还是半点报时
+    // 使用 last_hour_ 和 last_half_hour_ 防重复（由 cuckoo_clock_task 管理）
+
+    // 整点报时（分钟 == 0）
+    if (min == 0) {
+        ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
+        StartPerformance(kPerformanceHour, hour);
+    }
+    // 半点报时（分钟 == 30）
+    else if (min == 30) {
+        ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
+        StartPerformance(kPerformanceHalf, hour);
+    }
+}
+
+void CuckooStateMachine::SetTime(int hour, int min, int sec) {
+    current_hour_ = hour % 24;
+    current_min_ = min % 60;
+    current_sec_ = sec % 60;
+    time_set_ = true;
+    ESP_LOGI(TAG, "Time set to %02d:%02d:%02d", current_hour_, current_min_, current_sec_);
+}
+
+void CuckooStateMachine::GetTime(int &hour, int &min) {
+    hour = current_hour_;
+    min = current_min_;
+}
+
+void CuckooStateMachine::Dance() {
+    if (is_running_) return;
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    if (m1_) m1_->Forward(80);
+    if (m2_) m2_->Forward(60);
+    if (violin_servo_) violin_servo_->Sweep(45, 135, 1500);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    if (m1_) m1_->Stop();
+    if (m2_) m2_->Stop();
+    if (violin_servo_) violin_servo_->SetAngle(90);
+    is_running_ = false;
+}
+
+
+void CuckooStateMachine::StartShow() {
+    // 如果正在播放则先停止
+    if (is_running_) {
+        ESP_LOGW(TAG, "Already performing, stopping first");
+        StopAll();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    ESP_LOGI(TAG, "Show starting: dance + waterwheel + music");
+
+    // 用独立任务线性执行，不阻塞MCP调用线程
+    xTaskCreate(
+        ShowTask,
+        "cuckoo_show",
+        4096,
+        this,
+        3,
+        nullptr
+    );
+}
+
+void CuckooStateMachine::ShowTask(void* arg) {
+    auto* sm = static_cast<CuckooStateMachine*>(arg);
+    ESP_LOGI(TAG, "Show task started");
+
+    // 开门
+    if (sm->bird_door_) {
+        sm->bird_door_->Forward(80);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        sm->bird_door_->Stop();
+    }
+    // 鸟出来
+    if (sm->bird_jump_) sm->bird_jump_->Jump(200);
+    // 启动跳舞+水车
+    if (sm->m1_) sm->m1_->Forward(70);
+    if (sm->m2_) sm->m2_->Forward(60);
+    if (sm->m3_) sm->m3_->Forward(50);
+    if (sm->m4_) sm->m4_->Forward(50);
+    if (sm->violin_servo_) sm->violin_servo_->Sweep(45, 135, 1000);
+    // 播第1首音乐
+    if (sm->mp3_) sm->mp3_->PlayBgMusic(1);
+
+    // 等音乐开始播放（最多等3秒）
+    int wait_start = 0;
+    while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        wait_start++;
+    }
+    // 等音乐播完（IsPlaying 在音乐结束时自动变 false）
+    while (sm->is_running_ && sm->mp3_->IsPlaying()) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    // 恢复初始状态
+    if (sm->m1_) sm->m1_->Stop();
+    if (sm->m2_) sm->m2_->Stop();
+    if (sm->m3_) sm->m3_->Stop();
+    if (sm->m4_) sm->m4_->Stop();
+    if (sm->violin_servo_) sm->violin_servo_->SetAngle(90);
+    if (sm->bird_door_) {
+        sm->bird_door_->Reverse(80);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        sm->bird_door_->Stop();
+    }
+
+    sm->is_running_ = false;
+    sm->current_performance_ = kPerformanceNone;
+    ESP_LOGI(TAG, "Show task finished");
+    vTaskDelete(NULL);
+}
+
+void CuckooStateMachine::PlayMusic(int index) {
+    if (mp3_) mp3_->PlayBgMusic(index);
+}
+
+void CuckooStateMachine::StopAll() {
+    is_running_ = false;
+    current_performance_ = kPerformanceNone;
+    current_phase_ = kPhaseIdle;
+    if (phase_timer_) esp_timer_stop(phase_timer_);
+    if (m1_) m1_->Stop();
+    if (m2_) m2_->Stop();
+    if (m3_) m3_->Stop();
+    if (m4_) m4_->Stop();
+    if (bird_door_) bird_door_->Stop();
+    if (violin_servo_) violin_servo_->SetAngle(90);
+    if (dog_servo_) dog_servo_->SetAngle(90);
+    if (bird_jump_) bird_jump_->Set(false);
+    if (mp3_) mp3_->Stop();
+    ESP_LOGI(TAG, "All motors stopped");
+}
+
+void CuckooStateMachine::OpenDoor() {
+    if (bird_door_) {
+        bird_door_->Forward(80);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        bird_door_->Stop();
+    }
+}
+
+void CuckooStateMachine::CloseDoor() {
+    if (bird_door_) {
+        bird_door_->Reverse(80);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        bird_door_->Stop();
+    }
+}
+
+void CuckooStateMachine::BirdJumpOnce() {
+    if (bird_jump_) bird_jump_->Jump(300);
+}
+
+void CuckooStateMachine::SetServoAngle(int servo_id, int angle) {
+    if (servo_id == 0 && violin_servo_) violin_servo_->SetAngle(angle);
+    else if (servo_id == 1 && dog_servo_) dog_servo_->SetAngle(angle);
+}
+
+void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
+    switch (motor_id) {
+        case 1: if (m1_) m1_->SetSpeed(speed); break;
+        case 2: if (m2_) m2_->SetSpeed(speed); break;
+        case 3: if (m3_) m3_->SetSpeed(speed); break;
+        case 4: if (m4_) m4_->SetSpeed(speed); break;
+        default: break;
+    }
+}
+
+void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
+    if (bird_door_) bird_door_->SetSpeed(speed);
+}
+
+// ============================================
+// CuckooTools MCP注册
+// ============================================
+CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
+
+void CuckooTools::RegisterAll() {
+    auto& mcp = McpServer::GetInstance();
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
+        mcp.AddTool("cuckoo.performance",
+            "PERFORM HOURLY CHIME: Open door, bird comes out, chime the hour (bell sound), close door, then dance + waterwheel + music. ONLY use this when the user asks for the TIME or HOURLY CHIME (e.g. '几点了', '报时', '整点表演'). Do NOT use for general 'start show'. Use cuckoo.start_show for that.",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int hour = props["hour"].value<int>();
+                state_machine_->StartPerformance(CuckooStateMachine::kPerformanceHour, hour);
+                return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
+            });
+    }
+
+    mcp.AddTool("cuckoo.dance",
+        "Make the cuckoo clock's violinist dancer perform a dance (M1+M2 + violin servo)",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->Dance();
+            return std::string("{\"status\": \"dancing\"}");
+        });
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
+        mcp.AddTool("cuckoo.play_music",
+            "Play a background music track from the MP3 module (1-12)",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int track = props["track"].value<int>();
+                state_machine_->PlayMusic(track);
+                return std::string("{\"status\": \"playing\", \"track\": " + std::to_string(track) + "}");
+            });
+    }
+
+    {
+        PropertyList empty_pl;
+        mcp.AddTool("cuckoo.start_show",
+            "START SHOW: Dance + waterwheel motors + background music (no door, no bird, no chime). Use this when the user says '开始表演', '表演', '跳舞', '放音乐', '转水车' or anything about starting a general show/music/dance. This is NOT an hourly chime - do NOT use cuckoo.performance.",
+            empty_pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                state_machine_->StartShow();
+                return std::string("{\"status\": \"show_started\"}");
+            });
+    }
+
+    mcp.AddTool("cuckoo.stop_all",
+        "Emergency stop all motors, servos, and MP3 playback immediately",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->StopAll();
+            return std::string("{\"status\": \"stopped\"}");
+        });
+
+    mcp.AddTool("cuckoo.open_door",
+        "Open the bird door",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->OpenDoor();
+            return std::string("{\"status\": \"door opened\"}");
+        });
+
+    mcp.AddTool("cuckoo.close_door",
+        "Close the bird door",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->CloseDoor();
+            return std::string("{\"status\": \"door closed\"}");
+        });
+
+    mcp.AddTool("cuckoo.bird_jump",
+        "Make the bird jump once (electromagnet pulse)",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->BirdJumpOnce();
+            return std::string("{\"status\": \"bird jumped\"}");
+        });
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
+        pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
+        mcp.AddTool("cuckoo.set_time",
+            "SET THE INTERNAL CLOCK TIME. Call this when the device gets the current wall clock time (e.g. from server or user). Required for automatic hourly/half-hourly chimes to work.",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int h = props["hour"].value<int>();
+                int m = props["minute"].value<int>();
+                state_machine_->SetTime(h, m, 0);
+                char json[64];
+                snprintf(json, sizeof(json), "{\"status\": \"ok\", \"time\": \"%02d:%02d\"}", h, m);
+                return std::string(json);
+            });
+    }
+
+    mcp.AddTool("cuckoo.get_time",
+        "GET THE CURRENT INTERNAL CLOCK TIME. Returns the current hour and minute. Use this to know what time the cuckoo clock thinks it is.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            int h, m;
+            state_machine_->GetTime(h, m);
+            char json[64];
+            snprintf(json, sizeof(json), "{\"hour\": %d, \"minute\": %d}", h, m);
+            return std::string(json);
+        });
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("servo_id", kPropertyTypeInteger, 0, 1));
+        pl.AddProperty(Property("angle", kPropertyTypeInteger, 0, 180));
+        mcp.AddTool("cuckoo.set_servo",
+            "Set servo angle (0=violinist, 1=dog head shake), angle 0-180",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int id = props["servo_id"].value<int>();
+                int angle = props["angle"].value<int>();
+                state_machine_->SetServoAngle(id, angle);
+                return std::string("{\"status\": \"ok\", \"servo\": " + std::to_string(id) +
+                                   ", \"angle\": " + std::to_string(angle) + "}");
+            });
+    }
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("motor_id", kPropertyTypeInteger, 1, 4));
+        pl.AddProperty(Property("speed", kPropertyTypeInteger, -100, 100));
+        mcp.AddTool("cuckoo.set_motor",
+            "Set motor speed (motor_id 1-4, speed -100 to 100, 0=stop)",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int id = props["motor_id"].value<int>();
+                int speed = props["speed"].value<int>();
+                state_machine_->SetMotorSpeed(id, speed);
+                return std::string("{\"status\": \"ok\"}");
+            });
+    }
+
+    mcp.AddTool("cuckoo.get_status",
+        "Get the current cuckoo clock status (running/idle, time, dark mode)",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            char json[128];
+            snprintf(json, sizeof(json),
+                "{\"running\": %s, \"dark_mode\": %s}",
+                state_machine_->IsRunning() ? "true" : "false",
+                "false");
+            return std::string(json);
+        });
+}
+
+// ============================================
+// 钟控 FreeRTOS 任务 (Core 1)
+// ============================================
+void cuckoo_clock_task(void* params) {
+    ESP_LOGI(TAG, "Cuckoo clock task started on core %d", xPortGetCoreID());
+
+    auto* sm = static_cast<CuckooStateMachine*>(params);
+
+    // 关掉 WiFi 省电模式的尝试
+    // 小智框架在 idle/activating/speaking->idle 时都会重设省电为 LOW_POWER，
+    // 所以这里每隔 30 秒强制关一次
+    for (int i = 0; i < 3; i++) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        ESP_LOGI(TAG, "Forced WiFi power save off (attempt %d/3)", i + 1);
+    }
+
+    // 内部秒数计数器（不依赖真实 RTC，可通过 cuckoo.set_time MCP 工具校准）
+    int tick_sec = 0;
+
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        tick_sec++;
+
+        // 每 5 秒检查音频输出状态——防止唤醒后 output_enabled 被电源管理误关
+        if (tick_sec % 5 == 0) {
+            auto state = Application::GetInstance().GetDeviceState();
+            auto* codec = Board::GetInstance().GetAudioCodec();
+            if (codec && state == kDeviceStateIdle && !codec->output_enabled()) {
+                // Idle 状态下输出被关了 → 恢复输出和唤醒词检测
+                codec->EnableOutput(true);
+                Application::GetInstance().GetAudioService().EnableWakeWordDetection(true);
+            }
+        }
+
+        // 每 30 秒强制关 WiFi 省电（防止框架重新打开）
+        if (tick_sec % 30 == 0) {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+        }
+
+        // 如果时间已通过 MCP 设置，用内部时间
+        if (sm->time_set_) {
+            // 内部时钟每秒递增
+            sm->current_sec_++;
+            if (sm->current_sec_ >= 60) {
+                sm->current_sec_ = 0;
+                sm->current_min_++;
+                if (sm->current_min_ >= 60) {
+                    sm->current_min_ = 0;
+                    sm->current_hour_ = (sm->current_hour_ + 1) % 24;
+                }
+            }
+
+            // 整点和半点检查
+            int h = sm->current_hour_;
+            int m = sm->current_min_;
+
+            // 整点报时（每分钟 == 0 时触发，用 NeedHourlyChime 防重复）
+            if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
+                ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
+                sm->CheckTime(h, m, sm->is_dark_);
+            }
+            // 半点报时（每分钟 == 30 时触发，用 NeedHalfHourlyChime 防重复）
+            else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
+                ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
+                sm->CheckTime(h, m, sm->is_dark_);
+            }
+        } else {
+            // 时间未设置，尝试从系统 SNTP 自动获取
+            if (tick_sec % 5 == 0) {
+                time_t now = time(nullptr);
+                if (now > 100000) {  // 时间已同步（非 1970 年）
+                    struct tm* t = localtime(&now);
+                    sm->SetTime(t->tm_hour, t->tm_min, t->tm_sec);
+                    sm->time_set_ = true;
+                    ESP_LOGI(TAG, "Auto time set from SNTP: %02d:%02d:%02d",
+                             t->tm_hour, t->tm_min, t->tm_sec);
+                } else {
+                    ESP_LOGW(TAG, "Clock time not set yet (running for %d sec). SNTP not ready.",
+                             tick_sec);
+                }
+            }
+        }
+    }
+}

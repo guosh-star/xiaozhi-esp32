@@ -2,6 +2,7 @@
 #include <esp_log.h>
 
 #define PROCESSOR_RUNNING 0x01
+#define AFE_DIGITAL_GAIN 1.5f  // Digital gain multiplier for mic input (1.0=no boost)
 
 #define TAG "AfeAudioProcessor"
 
@@ -37,8 +38,8 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     char* ns_model_name = esp_srmodel_filter(models, ESP_NSNET_PREFIX, NULL);
     char* vad_model_name = esp_srmodel_filter(models, ESP_VADN_PREFIX, NULL);
     
-    afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_HIGH_PERF);
-    afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
+    afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_LOW_COST);
+    afe_config->aec_mode = AEC_MODE_VOIP_LOW_COST;
     afe_config->vad_mode = VAD_MODE_0;
     afe_config->vad_min_noise_ms = 100;
     if (vad_model_name != nullptr) {
@@ -67,11 +68,11 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
     
-    xTaskCreate([](void* arg) {
+    xTaskCreatePinnedToCore([](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
         vTaskDelete(NULL);
-    }, "audio_communication", 4096, this, 3, NULL);
+    }, "audio_communication", 4096, this, 3, NULL, 0);
 }
 
 AfeAudioProcessor::~AfeAudioProcessor() {
@@ -166,8 +167,13 @@ void AfeAudioProcessor::AudioProcessorTask() {
         if (output_callback_) {
             size_t samples = res->data_size / sizeof(int16_t);
             
-            // Add data to buffer
-            output_buffer_.insert(output_buffer_.end(), res->data, res->data + samples);
+            // Apply digital gain and add to buffer
+            for (size_t i = 0; i < samples; i++) {
+                int32_t s = (int32_t)(res->data[i] * AFE_DIGITAL_GAIN);
+                if (s > 32767) s = 32767;
+                if (s < -32768) s = -32768;
+                output_buffer_.push_back((int16_t)s);
+            }
             
             // Output complete frames when buffer has enough data
             while (output_buffer_.size() >= frame_samples_) {

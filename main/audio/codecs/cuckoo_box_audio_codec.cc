@@ -1,24 +1,42 @@
-#include "box_audio_codec.h"
+#include "cuckoo_box_audio_codec.h"
 
 #include <esp_log.h>
+#include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-#define TAG "BoxAudioCodec"
+#define TAG "CuckooBoxAudioCodec"
 
-BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
+CuckooBoxAudioCodec::CuckooBoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference) {
-    duplex_ = true; // 是否双工
-    input_reference_ = input_reference; // 是否使用参考输入，实现回声消除
-    input_channels_ = input_reference_ ? 2 : 1; // 输入通道数
+    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference,
+    gpio_num_t en_pin)
+    : en_pin_(en_pin) {
+    duplex_ = true;
+    input_reference_ = input_reference;
+    input_channels_ = input_reference_ ? 2 : 1;
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 42;  // ES7210 mic gain max (was 30, too quiet)
+    input_gain_ = 30;
+
+    // EN pin: module power enable
+    if (en_pin_ != GPIO_NUM_NC) {
+        gpio_config_t en_cfg = {
+            .pin_bit_mask = (1ULL << en_pin_),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_ENABLE,  // default off before PowerUp
+        };
+        gpio_config(&en_cfg);
+        gpio_set_level(en_pin_, 0);
+    }
+    PowerUp();  // power on for init
 
     CreateDuplexChannels(mclk, bclk, ws, dout, din);
 
-    // Do initialize of related interface: data_if, ctrl_if and gpio_if
+    // Initialize data interface (shared I2S)
     audio_codec_i2s_cfg_t i2s_cfg = {
         .port = I2S_NUM_0,
         .rx_handle = rx_handle_,
@@ -27,9 +45,9 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
     data_if_ = audio_codec_new_i2s_data(&i2s_cfg);
     assert(data_if_ != NULL);
 
-    // Output
+    // Output (ES8311)
     audio_codec_i2c_cfg_t i2c_cfg = {
-        .port = (i2c_port_t)0,
+        .port = I2S_NUM_0,
         .addr = es8311_addr,
         .bus_handle = i2c_master_handle,
     };
@@ -58,14 +76,14 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
     output_dev_ = esp_codec_dev_new(&dev_cfg);
     assert(output_dev_ != NULL);
 
-    // Input
+    // Input (ES7210) - same I2C bus
     i2c_cfg.addr = es7210_addr;
     in_ctrl_if_ = audio_codec_new_i2c_ctrl(&i2c_cfg);
     assert(in_ctrl_if_ != NULL);
 
     es7210_codec_cfg_t es7210_cfg = {};
     es7210_cfg.ctrl_if = in_ctrl_if_;
-    es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4;
+    es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2;
     in_codec_if_ = es7210_codec_new(&es7210_cfg);
     assert(in_codec_if_ != NULL);
 
@@ -74,10 +92,10 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
     input_dev_ = esp_codec_dev_new(&dev_cfg);
     assert(input_dev_ != NULL);
 
-    ESP_LOGI(TAG, "BoxAudioDevice initialized");
+    ESP_LOGI(TAG, "CuckooBoxAudioDevice initialized");
 }
 
-BoxAudioCodec::~BoxAudioCodec() {
+CuckooBoxAudioCodec::~CuckooBoxAudioCodec() {
     ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
     esp_codec_dev_delete(output_dev_);
     ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
@@ -89,9 +107,11 @@ BoxAudioCodec::~BoxAudioCodec() {
     audio_codec_delete_ctrl_if(out_ctrl_if_);
     audio_codec_delete_gpio_if(gpio_if_);
     audio_codec_delete_data_if(data_if_);
+
+    PowerDown();
 }
 
-void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din) {
+void CuckooBoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din) {
     assert(input_sample_rate_ == output_sample_rate_);
 
     i2s_chan_config_t chan_cfg = {
@@ -105,6 +125,7 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
     };
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
 
+    // TX (standard I2S) for ES8311 DAC output
     i2s_std_config_t std_cfg = {
         .clk_cfg = {
             .sample_rate_hz = (uint32_t)output_sample_rate_,
@@ -138,6 +159,7 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
         }
     };
 
+    // RX (TDM) for ES7210 dual-mic input
     i2s_tdm_config_t tdm_cfg = {
         .clk_cfg = {
             .sample_rate_hz = (uint32_t)input_sample_rate_,
@@ -150,7 +172,7 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
             .data_bit_width = I2S_DATA_BIT_WIDTH_16BIT,
             .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
             .slot_mode = I2S_SLOT_MODE_STEREO,
-            .slot_mask = i2s_tdm_slot_mask_t(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3),
+            .slot_mask = i2s_tdm_slot_mask_t(I2S_TDM_SLOT0 | I2S_TDM_SLOT1),
             .ws_width = I2S_TDM_AUTO_WS_WIDTH,
             .ws_pol = false,
             .bit_shift = true,
@@ -181,20 +203,34 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
     ESP_LOGI(TAG, "Duplex channels created");
 }
 
-void BoxAudioCodec::SetOutputVolume(int volume) {
+void CuckooBoxAudioCodec::SetOutputVolume(int volume) {
     ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, volume));
     AudioCodec::SetOutputVolume(volume);
 }
 
-void BoxAudioCodec::EnableInput(bool enable) {
+void CuckooBoxAudioCodec::PowerUp() {
+    if (en_pin_ == GPIO_NUM_NC) return;
+    gpio_set_level(en_pin_, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));  // wait for chip startup
+    ESP_LOGI(TAG, "Audio module power ON");
+}
+
+void CuckooBoxAudioCodec::PowerDown() {
+    if (en_pin_ == GPIO_NUM_NC) return;
+    gpio_set_level(en_pin_, 0);
+    ESP_LOGI(TAG, "Audio module power OFF");
+}
+
+void CuckooBoxAudioCodec::EnableInput(bool enable) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (enable == input_enabled_) {
         return;
     }
     if (enable) {
+        PowerUp();
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
-            .channel = 4,
+            .channel = 2,
             .channel_mask = ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0),
             .sample_rate = (uint32_t)output_sample_rate_,
             .mclk_multiple = 0,
@@ -203,23 +239,24 @@ void BoxAudioCodec::EnableInput(bool enable) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, 0xF, input_gain_));  // 0xF = all 4 mics
+        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        // 不自动断电: 唤醒词需要模块在线
     }
     AudioCodec::EnableInput(enable);
 }
 
-void BoxAudioCodec::EnableOutput(bool enable) {
+void CuckooBoxAudioCodec::EnableOutput(bool enable) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (enable == output_enabled_) {
         return;
     }
     if (enable) {
-        // Play 16bit 1 channel
+        PowerUp();
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
-            .channel = 1,
+            .channel = 2,
             .channel_mask = 0,
             .sample_rate = (uint32_t)output_sample_rate_,
             .mclk_multiple = 0,
@@ -228,18 +265,19 @@ void BoxAudioCodec::EnableOutput(bool enable) {
         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+        // 不自动断电: 唤醒词需要模块在线
     }
     AudioCodec::EnableOutput(enable);
 }
 
-int BoxAudioCodec::Read(int16_t* dest, int samples) {
+int CuckooBoxAudioCodec::Read(int16_t* dest, int samples) {
     if (input_enabled_) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
     }
     return samples;
 }
 
-int BoxAudioCodec::Write(const int16_t* data, int samples) {
+int CuckooBoxAudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
     }

@@ -252,6 +252,15 @@ int NoAudioCodec::Read(int16_t* dest, int samples) {
         int32_t value = bit32_buffer[i] >> 12;
         dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
     }
+
+    // Apply input gain (like PDM version does)
+    if (input_gain_ > 0.0f) {
+        int gain_factor = (int)input_gain_;
+        for (int i = 0; i < samples; i++) {
+            int32_t amplified = dest[i] * gain_factor;
+            dest[i] = (amplified > INT16_MAX) ? INT16_MAX : (amplified < -INT16_MAX) ? -INT16_MAX : (int16_t)amplified;
+        }
+    }
     return samples;
 }
 

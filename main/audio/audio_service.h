@@ -93,6 +93,7 @@ struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
     uint32_t timestamp;
+    bool bypass_mute = false;  // true = play even when output_muted_ is set
 };
 
 struct DebugStatistics {
@@ -130,9 +131,19 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+    void PushRawPcmToPlayback(const int16_t* data, size_t num_samples, int sample_rate);
+    void OutputRawPcm(const int16_t* data, size_t num_samples, int sample_rate);
+    void PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate);
+    void SetBackgroundAudioGain(float gain);
+    void ClearBackgroundAudio();
+    void SetOutputMuted(bool muted);
+    void RefreshOutputTimestamp() { last_output_time_ = std::chrono::steady_clock::now(); }
+    void RefreshInputTimestamp() { last_input_time_ = std::chrono::steady_clock::now(); }
+    void FlushOutputDma();
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+    bool HasWakeWord() const { return wake_word_ != nullptr; }
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -179,10 +190,15 @@ private:
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+    bool output_muted_ = false;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
     std::chrono::steady_clock::time_point last_output_time_;
+
+    // DEBUG: packet counters
+    int decode_pushed_ = 0;
+    int decode_dropped_ = 0;
 
     void AudioInputTask();
     void AudioOutputTask();
@@ -190,6 +206,16 @@ private:
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();
+    void MixBackgroundAudio(std::vector<int16_t>& pcm);
+
+    // Background audio mixing (music ducking during AI speech)
+    static constexpr size_t BG_AUDIO_RING_SIZE = 96000;  // ~6 seconds at 16kHz
+    std::vector<int16_t> bg_audio_ring_;
+    size_t bg_audio_write_pos_ = 0;
+    size_t bg_audio_read_pos_ = 0;
+    float bg_audio_gain_ = 0.3f;
+    bool bg_audio_active_ = false;
+    std::mutex bg_audio_mutex_;
 };
 
 #endif

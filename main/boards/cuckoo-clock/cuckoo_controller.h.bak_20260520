@@ -1,0 +1,322 @@
+#ifndef __CUCKOO_CONTROLLER_H__
+#define __CUCKOO_CONTROLLER_H__
+
+#include "mcp_server.h"
+#include "config.h"
+#include "assets.h"
+#include <driver/gpio.h>
+#include <driver/ledc.h>
+#include <driver/i2c_master.h>
+#include <driver/gpio.h>
+#include <esp_timer.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+
+#include <vector>
+#include <functional>
+
+// MP3 decoder
+#include <esp_audio_types.h>
+#include <decoder/esp_audio_dec.h>
+#include <decoder/impl/esp_mp3_dec.h>
+
+// 布谷鸟唤醒声音数�?
+#include "cuckoo_wake_sound.h"
+
+// ============================================
+// 布谷鸟钟外设控制�?
+// ============================================
+
+/**
+ * TB6612 单路电机驱动封装
+ * 支持正反�?+ PWM调�?
+ */
+class Motor {
+
+    // Check if this hour needs chime (dedup check)
+private:
+    gpio_num_t pwm_pin_;
+    gpio_num_t in1_pin_;
+    gpio_num_t in2_pin_;
+    int speed_;       // 0-100
+    bool reverse_;    // 方向
+    ledc_channel_t ledc_channel_;
+
+public:
+    Motor(gpio_num_t pwm_pin, gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t channel);
+    void SetSpeed(int speed);       // 0=停止, 1-100=正转, -1~-100=反转
+    void Stop();
+    void Forward(int speed = 80);
+    void Reverse(int speed = 80);
+};
+
+/**
+ * SG90 舵机封装
+ * 使用 PWM 控制�?0Hz�?.5-2.5ms 脉冲
+ */
+class Servo {
+private:
+    gpio_num_t pin_;
+    int angle_;       // 0-180�?
+    ledc_channel_t ledc_channel_;
+
+public:
+    Servo(gpio_num_t pin, ledc_channel_t channel);
+    void SetAngle(int angle);       // 0-180�?
+    int GetAngle() { return angle_; }
+    void Sweep(int from, int to, int duration_ms = 500);  // 渐进摆动
+};
+
+/**
+ * 小鸟跳跃电磁铁控�?
+ */
+class BirdJump {
+private:
+    gpio_num_t gpio_;
+    bool active_;
+
+public:
+    BirdJump(gpio_num_t gpio);
+    void Jump(int duration_ms = 200);  // 弹跳一�?
+    void Set(bool on);
+};
+
+
+class BellSoundPlayer {
+public:
+    BellSoundPlayer() = default;
+    ~BellSoundPlayer() = default;
+
+    // 初始化总是成功（复�?AI 音频系统�?
+    bool Init() { return true; }
+
+    // 播放布谷鸟叫声（同步，阻塞直到播放完成）
+    void PlayCuckooSoundSync();
+    void PlayBellSoundSync();
+
+    // 验证初始化状�?
+    bool IsInitialized() { return true; }
+};
+
+/**
+ * PCF8563 RTC 驱动 (I2C)
+ */
+
+/**
+ * MP3 软件解码播放�?
+ * �?assets 分区读取 MP3 文件 �?esp_mp3_dec 软解�?�?AudioService::OutputRawPcm �?I2S 扬声�?
+ * 内部使用 FreeRTOS 任务异步播放，MCP 调用不会阻塞
+ */
+class Mp3Player {
+private:
+    Assets* assets_ = nullptr;
+    void* mp3_dec_handle_ = nullptr;
+    volatile bool is_playing_ = false;
+    volatile bool stop_requested_ = false;
+
+    // 播放任务
+    TaskHandle_t play_task_ = nullptr;
+    int pending_track_ = 0;       // 待播放曲目编�?1-13)�?=无待�?
+    int pending_bell_hour_ = 0;   // 待播钟声重复次数
+
+    // 解码缓冲�?
+    static constexpr size_t kInputBufSize = 8192;      // MP3 帧最大大�?
+    static constexpr size_t kOutputBufSize = 8192;     // PCM 输出缓冲区（1152样本*2字节*2声道�?
+    uint8_t input_buf_[kInputBufSize];
+    uint8_t output_buf_[kOutputBufSize];
+
+    // 钟声播放器（PCM header，短促撞击声）
+    BellSoundPlayer bell_player_;
+
+    // 播放任务入口
+    static void PlayTaskEntry(void* arg);
+
+public:
+    Mp3Player() = default;
+    ~Mp3Player();
+
+    void Init(Assets* assets);
+
+    // 解码单个文件并播放，返回实际播放时长（ms），0=失败或被中断
+    int DecodeSingleFile(int index);
+
+    // 解码单个文件到 PCM 缓冲区（不播放），返回样本数和采样率
+    // 调用者负责 free() out_buf
+    int DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate);
+
+    void PlayTrack(uint8_t folder, uint8_t track);  // folder=1钟声, folder=2音乐, track=索引
+    void PlayIndex(uint16_t index);                  // 直接播放序号�?001.mp3~0013.mp3�?
+    void Stop();
+    void ResetForNextPlay();
+    void Pause();
+    void Resume();
+    void SetVolume(uint8_t vol);
+    void VolumeUp();
+    void VolumeDown();
+    void Next();
+    void Prev();
+    void PlayBell(int hour);                         // 播放钟声(1-12�? �?0013.mp3 重复播放
+    void PlayBgMusic(int index);                     // 播放背景音乐(1-12) �?0001~0012.mp3
+    bool IsPlaying() { return is_playing_; }
+};
+
+/**
+ * 鸟叫播放�?
+ * 通过小智 AI �?AudioService 输出原始 PCM 数据到板载扬声器
+ * 不再使用独立�?I2S 通道（避免与 AI 音频冲突�?
+ */
+class RtcPcf8563 {
+private:
+    i2c_port_t i2c_port_;
+    uint8_t bcd_to_dec(uint8_t bcd);
+    uint8_t dec_to_bcd(uint8_t dec);
+
+public:
+    RtcPcf8563(i2c_port_t port);
+    bool Init();
+    bool GetTime(int &year, int &month, int &day, int &hour, int &min, int &sec);
+    bool GetHourMin(int &hour, int &min);   // 只读取时和分
+};
+
+/**
+ * 光敏电阻 (昼夜检�?
+ */
+class LdrSensor {
+private:
+    gpio_num_t adc_pin_;
+    // adc_channel_ removed - using GPIO level directly
+    int threshold_;     // �?亮阈�?0-4095)
+
+public:
+    LdrSensor(gpio_num_t adc_pin, int threshold = 2000);
+    int ReadRaw();
+    bool IsDark();
+    void SetThreshold(int threshold);
+};
+
+/**
+ * 布谷鸟钟状态机
+ * 管理整套表演动作序列
+ */
+class CuckooStateMachine {
+public:
+    enum PerformanceType {
+        kPerformanceNone,       // 空闲
+        kPerformanceHour,       // 整点表演(带钟�?
+        kPerformanceHalf,       // 半点表演(简�?
+        kPerformanceManual,     // 手动触发
+        kPerformanceBgMusic,    // 播放背景音乐
+    };
+
+    enum Phase {
+        kPhaseIdle,
+        kPhaseOpeningDoor,      // 开�?
+        kPhaseBirdOut,          // 小鸟弹出
+        kPhaseCalling,          // 咕咕�?固定三声)
+        kPhaseBirdIn,           // 小鸟回去
+        kPhaseClosingDoor,      // 关门
+        kPhaseChiming,          // 敲钟(0013.mp3重复整点次数)
+        kPhaseDance,            // 跳舞+水车+背景音乐
+        kPhaseWaterwheel,       // 水车表演
+        kPhaseDone,             // 完成
+    };
+
+
+    // Dedup check for hourly/half-hourly chime
+    bool NeedHourlyChime(int hour) { bool r = (hour != last_hour_); if (r) { last_hour_ = hour; last_half_hour_ = -1; } return r; }
+    bool NeedHalfHourlyChime(int hour) { bool r = (hour != last_half_hour_); if (r) { last_half_hour_ = hour; last_hour_ = -1; } return r; }
+private:
+    Motor* m1_;          // 舞蹈电机
+    Motor* m2_;          // 小提琴电�?
+    Motor* m3_;          // 水车电机
+    Motor* m4_;          // 大门电机(�?
+    Motor* bird_door_;   // 鸟门电机(独立)
+    Servo* violin_servo_;
+    Servo* dog_servo_;
+    BirdJump* bird_jump_;
+    Mp3Player* mp3_;
+    BellSoundPlayer* bell_player_;  // 鸟叫播放器（复用AI音频系统�?
+    RtcPcf8563* rtc_;
+    LdrSensor* ldr_;
+
+    PerformanceType current_performance_;
+    Phase current_phase_;
+    int call_count_;        // 还剩余叫几声
+    int total_calls_;       // 总共要叫几声(=整点�?
+    bool is_running_;
+    int last_hour_;         // 上次整点(防重�?
+    int last_half_hour_;    // 上次半点(防重�?
+    
+    TaskHandle_t task_handle_;
+    esp_timer_handle_t phase_timer_;   // 阶段计时�?
+
+    static void PhaseTimerCallback(void* arg);
+
+    void StartPhase(Phase phase, int duration_ms);
+    void AdvancePhase();
+
+public:
+    // 内部时钟（钟控任务访问，设为 public�?
+    int current_hour_;      // 内部小时(0-23)
+    int current_min_;       // 内部分钟(0-59)
+    int current_sec_;       // 内部�?0-59)
+    bool time_set_;         // 时间是否已设�?
+    bool is_dark_;          // 夜间模式(晚上不表�?
+
+    CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
+                       Motor* bird_door, Servo* violin, Servo* dog,
+                       BirdJump* bird_jump, Mp3Player* mp3,
+                       BellSoundPlayer* bell_player,
+                       RtcPcf8563* rtc, LdrSensor* ldr);
+    ~CuckooStateMachine();
+
+    // 一次性表演（非阻塞，在独立任务中执行�?
+    void StartPerformance(PerformanceType type, int hour = 0);
+
+    // 内部：表演执行任务（线性执行所有阶段，无竞态问题）
+    static void PerformanceTask(void* arg);
+
+    // 整点/半点检�?
+    void CheckTime(int hour, int min, bool dark);
+
+    // 控制命令
+    void Dance();           // 单独跳舞
+    void StartShow();       // 表演开�?跳舞+水车+音乐, 在ShowTask中线性执�?
+    static void ShowTask(void* arg);  // StartShow的线性执行任�?
+    void PlayMusic(int index);  // 播放背景音乐
+    void StopAll();         // 紧急停�?
+    void OpenDoor();        // 单独开�?
+    void CloseDoor();       // 单独关门
+    void BirdJumpOnce();    // 小鸟跳一�?
+    void SetServoAngle(int servo_id, int angle);  // 舵机控制 0=小提�?1=小狗
+    void SetMotorSpeed(int motor_id, int speed);   // 电机控制 1-4
+    void SetBirdDoorSpeed(int speed);              // 鸟门电机
+
+    // 设置内部时间（由 MCP cuckoo.set_time 调用，或由服务器同步时调用）
+    void SetTime(int hour, int min, int sec = 0);
+    // 获取当前内部时间
+    void GetTime(int &hour, int &min);
+
+    bool IsRunning() { return is_running_; }
+    void SetDark(bool dark) { is_dark_ = dark; }
+};
+
+/**
+ * 布谷鸟钟 MCP 工具�?
+ * 注册所有钟�?MCP 工具到小�?
+ */
+class CuckooTools {
+private:
+    CuckooStateMachine* state_machine_;
+
+public:
+    CuckooTools(CuckooStateMachine* sm);
+    void RegisterAll();  // 注册所有MCP工具
+};
+
+// 钟控FreeRTOS任务 - 运行在Core 1
+void cuckoo_clock_task(void* params);
+
+#endif // __CUCKOO_CONTROLLER_H__

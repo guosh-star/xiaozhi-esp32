@@ -10,6 +10,10 @@
 #include "assets.h"
 #include "settings.h"
 
+#ifdef CONFIG_BOARD_TYPE_CUCKOO_CLOCK
+#include "boards/cuckoo-clock/cuckoo_wake_sound.h"
+#endif
+
 #include <cstring>
 #include <esp_log.h>
 #include <cJSON.h>
@@ -72,6 +76,12 @@ void Application::Initialize() {
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
     audio_service_.Start();
+
+    // If no wake word model was loaded via assets partition (e.g. cuckoo-clock board),
+    // try to initialize the wake word directly from the model partition
+    if (!audio_service_.HasWakeWord()) {
+        audio_service_.SetModelsList(nullptr);
+    }
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
@@ -498,6 +508,12 @@ void Application::InitializeProtocol() {
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+        } else {
+            static int dropped_due_state = 0;
+            dropped_due_state++;
+            if (dropped_due_state % 10 == 0) {
+                ESP_LOGW(TAG, "AUDIO-DROP: state=%d total_state_drops=%d", (int)GetDeviceState(), dropped_due_state);
+            }
         }
     });
     
@@ -529,7 +545,9 @@ void Application::InitializeProtocol() {
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
+                ESP_LOGI(TAG, "TTS-STOP received");
                 Schedule([this]() {
+                    ESP_LOGI(TAG, "TTS-STOP scheduled, state=%d", (int)GetDeviceState());
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -779,12 +797,47 @@ void Application::HandleWakeWordDetectedEvent() {
     }
 
     auto state = GetDeviceState();
-    auto wake_word = audio_service_.GetLastWakeWord();
+    auto wake_word = std::string("xiao niao xiao niao");
     ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);
 
+    // Auto-stop alarm on wake-up: silence alarm, stay idle, no conversation
+    if (Board::GetInstance().IsAlarmRinging()) {
+        Board::GetInstance().StopAlarm();
+        // Wait for alarm task to drain and cleanup (calls SetOutputMuted(false) internally)
+        vTaskDelay(pdMS_TO_TICKS(500));
+        // Explicitly disable output to avoid I2S conflict before re-enabling wake word
+        auto* codec = Board::GetInstance().GetAudioCodec();
+        if (codec) {
+            codec->EnableOutput(false);
+        }
+        audio_service_.EnableWakeWordDetection(true);
+        ESP_LOGI(TAG, "Alarm ringing, stopped and returning to idle");
+        return;
+    }
+
     if (state == kDeviceStateIdle) {
+        // Start encoding wake word data first so it runs in parallel with wake sound
         audio_service_.EncodeWakeWord();
-        auto wake_word = audio_service_.GetLastWakeWord();
+
+#ifdef CONFIG_BOARD_TYPE_CUCKOO_CLOCK
+        // Play cuckoo sound on wake
+        auto* codec = Board::GetInstance().GetAudioCodec();
+        if (codec) {
+            codec->EnableOutput(true);
+            audio_service_.RefreshOutputTimestamp();
+            for (int repeat = 0; repeat < 2; repeat++) {
+                std::vector<int16_t> audio_data(
+                    cuckoo_wake_sound,
+                    cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
+                );
+                codec->OutputData(audio_data);
+                if (repeat < 1) {
+                    vTaskDelay(pdMS_TO_TICKS(50));
+                }
+            }
+        }
+#endif
+        auto wake_word = std::string("xiao niao xiao niao");
 
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
@@ -795,7 +848,8 @@ void Application::HandleWakeWordDetectedEvent() {
             });
             return;
         }
-        // Channel already opened, continue directly
+        // Channel already opened, set state and continue directly
+        SetDeviceState(kDeviceStateConnecting);
         ContinueWakeWordInvoke(wake_word);
     } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
@@ -1031,7 +1085,8 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
             });
             return;
         }
-        // Channel already opened, continue directly
+        // Channel already opened, set state and continue directly
+        SetDeviceState(kDeviceStateConnecting);
         ContinueWakeWordInvoke(wake_word);
     } else if (state == kDeviceStateSpeaking) {
         Schedule([this]() {

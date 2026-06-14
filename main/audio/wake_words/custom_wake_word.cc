@@ -1,5 +1,4 @@
 #include "custom_wake_word.h"
-#include "audio_service.h"
 #include "system_info.h"
 #include "assets.h"
 
@@ -8,8 +7,42 @@
 #include <esp_mn_models.h>
 #include <esp_mn_speech_commands.h>
 #include <cJSON.h>
+#include <esp_audio_enc.h>
+#include <esp_opus_enc.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_timer.h>
+
+// Opus encoder configuration macros (from audio_service.h)
+#define OPUS_FRAME_DURATION_MS 60
+#define AS_OPUS_GET_FRAME_DRU_ENUM(duration_ms)                   \
+    ((duration_ms) == 5 ? ESP_OPUS_ENC_FRAME_DURATION_5_MS :      \
+     (duration_ms) == 10 ? ESP_OPUS_ENC_FRAME_DURATION_10_MS :    \
+     (duration_ms) == 20 ? ESP_OPUS_ENC_FRAME_DURATION_20_MS :    \
+     (duration_ms) == 40 ? ESP_OPUS_ENC_FRAME_DURATION_40_MS :    \
+     (duration_ms) == 60 ? ESP_OPUS_ENC_FRAME_DURATION_60_MS :    \
+     (duration_ms) == 80 ? ESP_OPUS_ENC_FRAME_DURATION_80_MS :    \
+     (duration_ms) == 100 ? ESP_OPUS_ENC_FRAME_DURATION_100_MS :  \
+     (duration_ms) == 120 ? ESP_OPUS_ENC_FRAME_DURATION_120_MS : -1)
+
+#define AS_OPUS_ENC_CONFIG() {                                                                                    \
+        .sample_rate        = ESP_AUDIO_SAMPLE_RATE_16K,                                                          \
+        .channel            = ESP_AUDIO_MONO,                                                                     \
+        .bits_per_sample    = ESP_AUDIO_BIT16,                                                                    \
+        .bitrate            = ESP_OPUS_BITRATE_AUTO,                                                              \
+        .frame_duration     = (esp_opus_enc_frame_duration_t)AS_OPUS_GET_FRAME_DRU_ENUM(OPUS_FRAME_DURATION_MS),  \
+        .application_mode   = ESP_OPUS_ENC_APPLICATION_AUDIO,                                                     \
+        .complexity         = 0,                                                                                  \
+        .enable_fec         = false,                                                                              \
+        .enable_dtx         = true,                                                                               \
+        .enable_vbr         = true,                                                                               \
+    }
 
 #define TAG "CustomWakeWord"
+
+const std::string& CustomWakeWord::GetLastDetectedWakeWord() const {
+    return last_detected_wake_word_;
+}
 
 CustomWakeWord::CustomWakeWord()
     : wake_word_pcm_(), wake_word_opus_() {

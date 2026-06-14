@@ -30,7 +30,7 @@ public:
     size_t GetFeedSize();
     void EncodeWakeWordData();
     bool GetWakeWordOpus(std::vector<uint8_t>& opus);
-    const std::string& GetLastDetectedWakeWord() const { return last_detected_wake_word_; }
+    const std::string& GetLastDetectedWakeWord() const;
 
 private:
     struct Command {

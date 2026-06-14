@@ -126,6 +126,12 @@ void AudioService::Start() {
     service_stopped_ = false;
     xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING | AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING);
 
+    // Initialize background audio ring buffer (PSRAM)
+    bg_audio_ring_.resize(BG_AUDIO_RING_SIZE, 0);
+    bg_audio_write_pos_ = 0;
+    bg_audio_read_pos_ = 0;
+    bg_audio_active_ = false;
+
     esp_timer_start_periodic(audio_power_timer_, 1000000);
 
 #if CONFIG_USE_AUDIO_PROCESSOR
@@ -217,7 +223,7 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     debug_statistics_.input_count++;
 
 #if CONFIG_USE_AUDIO_DEBUGGER
-    // 音频调试：发送原始音频数据
+    // 音频调试：发送原始音频数�?
     if (audio_debugger_ == nullptr) {
         audio_debugger_ = std::make_unique<AudioDebugger>();
     }
@@ -270,6 +276,11 @@ void AudioService::AudioInputTask() {
             int samples = 160; // 10ms
             std::vector<int16_t> data;
             if (ReadAudioData(data, 16000, samples)) {
+                // Boost mic signal for better wake word sensitivity (INMP441 is quiet)
+                for (auto& s : data) {
+                    int32_t v = (int32_t)s * 2;
+                    s = (v > 32767) ? 32767 : (v < -32768) ? -32768 : (int16_t)v;
+                }
                 if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
                     wake_word_->Feed(data);
                 }
@@ -306,6 +317,11 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
+        if (output_muted_ && !task->bypass_mute) {
+            // 静音时丢弃 Opus 解码的音频数据，不让其写 I2S
+            continue;
+        }
+        MixBackgroundAudio(task->pcm);
         codec_->OutputData(task->pcm);
 
         /* Update the last output time */
@@ -509,8 +525,13 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
         if (wait) {
             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
         } else {
+            decode_dropped_++;
             return false;
         }
+    }
+    decode_pushed_++;
+    if (decode_pushed_ % 20 == 0 || decode_dropped_ > 0) {
+        ESP_LOGI(TAG, "DECODE-Q: pushed=%d dropped=%d q_size=%d", decode_pushed_, decode_dropped_, audio_decode_queue_.size());
     }
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();
@@ -660,9 +681,33 @@ bool AudioService::IsIdle() {
 
 void AudioService::WaitForPlaybackQueueEmpty() {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    ESP_LOGI(TAG, "WAIT-PLAYBACK: dq=%d pq=%d pushed=%d dropped=%d",
+        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
     audio_queue_cv_.wait(lock, [this]() { 
         return service_stopped_ || (audio_decode_queue_.empty() && audio_playback_queue_.empty()); 
     });
+    ESP_LOGI(TAG, "WAIT-DONE: dq=%d pq=%d pushed=%d dropped=%d",
+        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
+}
+
+
+void AudioService::SetOutputMuted(bool muted) {
+    output_muted_ = muted;
+    if (muted) {
+        // 清空 playback queue，防止排队的音频在恢复后突然播放
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_playback_queue_.clear();
+        ESP_LOGI("AudioService", "Output muted, playback queue cleared");
+    }
+}
+
+void AudioService::FlushOutputDma() {
+    // disable I2S TX 通道 → 清空 DMA FIFO
+    codec_->EnableOutput(false);
+    // 立即重新使能，muted 状态下 audio_output_task 不会写新数据
+    codec_->EnableOutput(true);
+    // 给 I2S 一点时间稳定
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 void AudioService::ResetDecoder() {
@@ -672,11 +717,15 @@ void AudioService::ResetDecoder() {
         esp_opus_dec_reset(opus_decoder_);
     }
     decoder_lock.unlock();
+    ESP_LOGI(TAG, "RESET-DECODER: dq=%d pq=%d pushed=%d dropped=%d",
+        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
     timestamp_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
     audio_testing_queue_.clear();
     audio_queue_cv_.notify_all();
+    decode_pushed_ = 0;
+    decode_dropped_ = 0;
 }
 
 void AudioService::CheckAndUpdateAudioPowerState() {
@@ -701,15 +750,22 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
     models_list_ = models_list;
 
 #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4
-    if (esp_srmodel_filter(models_list_, ESP_MN_PREFIX, NULL) != nullptr) {
+    if (models_list_ != nullptr && esp_srmodel_filter(models_list_, ESP_MN_PREFIX, NULL) != nullptr) {
         wake_word_ = std::make_unique<CustomWakeWord>();
-    } else if (esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
+    } else if (models_list_ != nullptr && esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
         wake_word_ = std::make_unique<AfeWakeWord>();
+    } else if (models_list_ == nullptr) {
+        // No assets partition (e.g. cuckoo-clock board), try to init model directly
+#ifdef CONFIG_USE_CUSTOM_WAKE_WORD
+        wake_word_ = std::make_unique<CustomWakeWord>();
+#else
+        wake_word_ = nullptr;
+#endif
     } else {
         wake_word_ = nullptr;
     }
 #else
-    if (esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
+    if (models_list_ != nullptr && esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
         wake_word_ = std::make_unique<EspWakeWord>();
     } else {
         wake_word_ = nullptr;
@@ -731,4 +787,118 @@ bool AudioService::IsAfeWakeWord() {
 #else
     return false;
 #endif
+}
+void AudioService::PushRawPcmToPlayback(const int16_t* data, size_t num_samples, int sample_rate) {
+    // 包装为 AudioTask 推入播放队列，由 AudioOutputTask 串行化写入 I2S
+    // 避免和 Opus 音频路径争抢 codec_->OutputData()
+    auto task = std::make_unique<AudioTask>();
+    // 先重采样到 codec 的输出采样率，因为 AudioOutputTask 不做重采样
+    if (sample_rate != codec_->output_sample_rate()) {
+        float ratio = (float)codec_->output_sample_rate() / (float)sample_rate;
+        size_t out_samples = (size_t)(num_samples * ratio);
+        task->pcm.resize(out_samples);
+        for (size_t i = 0; i < out_samples; i++) {
+            float src_pos = i / ratio;
+            size_t idx = (size_t)src_pos;
+            float frac = src_pos - idx;
+            if (idx + 1 < num_samples) {
+                task->pcm[i] = (int16_t)(data[idx] * (1.0f - frac) + data[idx + 1] * frac);
+            } else {
+                task->pcm[i] = data[idx];
+            }
+        }
+    } else {
+        task->pcm.assign(data, data + num_samples);
+    }
+    task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task->bypass_mute = true;  // 钟声应绕过 output_muted_ 检查
+
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_playback_queue_.push_back(std::move(task));
+    }
+    audio_queue_cv_.notify_all();
+}
+
+void AudioService::OutputRawPcm(const int16_t* data, size_t num_samples, int sample_rate) {
+    if (!codec_) return;
+    if (!codec_->output_enabled()) {
+        esp_timer_stop(audio_power_timer_);
+        esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+        codec_->EnableOutput(true);
+    }
+    if (sample_rate != codec_->output_sample_rate()) {
+        float ratio = (float)codec_->output_sample_rate() / (float)sample_rate;
+        size_t out_samples = (size_t)(num_samples * ratio);
+        std::vector<int16_t> resampled(out_samples);
+        for (size_t i = 0; i < out_samples; i++) {
+            float src_pos = i / ratio;
+            size_t idx = (size_t)src_pos;
+            float frac = src_pos - idx;
+            if (idx + 1 < num_samples) {
+                resampled[i] = (int16_t)(data[idx] * (1.0f - frac) + data[idx + 1] * frac);
+            } else {
+                resampled[i] = data[idx];
+            }
+        }
+        codec_->OutputData(resampled);
+    } else {
+        std::vector<int16_t> vec(data, data + num_samples);
+        codec_->OutputData(vec);
+    }
+    last_output_time_ = std::chrono::steady_clock::now();
+    debug_statistics_.playback_count++;
+}
+
+void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate) {
+    if (!bg_audio_active_ || sample_rate != 16000) return;
+    std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    for (size_t i = 0; i < samples; i++) {
+        bg_audio_ring_[bg_audio_write_pos_] = data[i];
+        bg_audio_write_pos_ = (bg_audio_write_pos_ + 1) % BG_AUDIO_RING_SIZE;
+        // If ring is full, advance read pos (drop oldest sample)
+        if (bg_audio_write_pos_ == bg_audio_read_pos_) {
+            bg_audio_read_pos_ = (bg_audio_read_pos_ + 1) % BG_AUDIO_RING_SIZE;
+        }
+    }
+}
+
+void AudioService::SetBackgroundAudioGain(float gain) {
+    bg_audio_gain_ = gain;
+    bg_audio_active_ = (gain > 0.0f);
+    if (bg_audio_active_) {
+        // Reset ring buffer to avoid playing stale data
+        std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+        bg_audio_read_pos_ = bg_audio_write_pos_;
+    }
+}
+
+void AudioService::ClearBackgroundAudio() {
+    bg_audio_active_ = false;
+    std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    bg_audio_read_pos_ = bg_audio_write_pos_;
+}
+
+void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
+    if (!bg_audio_active_) return;
+    std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    
+    size_t available;
+    if (bg_audio_write_pos_ >= bg_audio_read_pos_) {
+        available = bg_audio_write_pos_ - bg_audio_read_pos_;
+    } else {
+        available = BG_AUDIO_RING_SIZE - bg_audio_read_pos_ + bg_audio_write_pos_;
+    }
+    
+    if (available == 0) return;
+    size_t mix_count = (pcm.size() < available) ? pcm.size() : available;
+    float gain = bg_audio_gain_;
+    
+    for (size_t i = 0; i < mix_count; i++) {
+        int32_t mixed = (int32_t)pcm[i] + (int32_t)(bg_audio_ring_[bg_audio_read_pos_] * gain);
+        if (mixed > 32767) mixed = 32767;
+        else if (mixed < -32768) mixed = -32768;
+        pcm[i] = (int16_t)mixed;
+        bg_audio_read_pos_ = (bg_audio_read_pos_ + 1) % BG_AUDIO_RING_SIZE;
+    }
 }
