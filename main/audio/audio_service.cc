@@ -581,6 +581,15 @@ void AudioService::EnableWakeWordDetection(bool enable) {
 
     ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
     if (enable) {
+        // Echo guard: don't enable wake word while speaker audio is still
+        // echoing in the room. Without this, TTS output gets picked up by the mic,
+        // triggering wake word and causing echo loops (AI talks to itself).
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
+        if (elapsed < 300) {
+            vTaskDelay(pdMS_TO_TICKS(300 - elapsed));
+        }
+
         if (!wake_word_initialized_) {
             if (!wake_word_->Initialize(codec_, models_list_)) {
                 ESP_LOGE(TAG, "Failed to initialize wake word");

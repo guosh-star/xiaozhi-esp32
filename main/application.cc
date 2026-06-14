@@ -930,15 +930,6 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
-            {
-                // Guard against acoustic echo: 500ms delay lets room echo decay
-                // before enabling microphone/wake word detection.
-                // Without this, the speaker's residual audio gets picked up by the mic,
-                // triggering the wake word and causing echo loops (AI talks to itself).
-                audio_service_.WaitForPlaybackQueueEmpty();
-                vTaskDelay(pdMS_TO_TICKS(500));
-            }
-
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
