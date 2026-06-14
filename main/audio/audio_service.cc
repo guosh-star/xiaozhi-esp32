@@ -328,6 +328,13 @@ void AudioService::AudioOutputTask() {
         last_output_time_ = std::chrono::steady_clock::now();
         debug_statistics_.playback_count++;
 
+        // DEBUG: count output samples
+        i2s_out_samples_ += task->pcm.size();
+        i2s_out_packets_++;
+        if (i2s_out_packets_ % 20 == 0) {
+            ESP_LOGI(TAG, "I2S-OUT: packets=%d samples=%d", i2s_out_packets_, i2s_out_samples_);
+        }
+
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
         if (task->timestamp > 0) {
@@ -692,6 +699,8 @@ void AudioService::WaitForPlaybackQueueEmpty() {
 
 
 void AudioService::SetOutputMuted(bool muted) {
+    ESP_LOGI(TAG, "SET-MUTED: %d (dq=%d pq=%d pushed=%d dropped=%d)", muted,
+        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
     output_muted_ = muted;
     if (muted) {
         // 清空 playback queue，防止排队的音频在恢复后突然播放
@@ -717,8 +726,9 @@ void AudioService::ResetDecoder() {
         esp_opus_dec_reset(opus_decoder_);
     }
     decoder_lock.unlock();
-    ESP_LOGI(TAG, "RESET-DECODER: dq=%d pq=%d pushed=%d dropped=%d",
-        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
+    ESP_LOGI(TAG, "RESET-DECODER: dq=%d pq=%d pushed=%d dropped=%d i2s_pkts=%d i2s_samp=%d",
+        audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_,
+        i2s_out_packets_, i2s_out_samples_);
     timestamp_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();

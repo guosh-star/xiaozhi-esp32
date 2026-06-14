@@ -200,6 +200,8 @@ private:
     // DEBUG: packet counters
     int decode_pushed_ = 0;
     int decode_dropped_ = 0;
+    int i2s_out_packets_ = 0;
+    int i2s_out_samples_ = 0;
 
     void AudioInputTask();
     void AudioOutputTask();
