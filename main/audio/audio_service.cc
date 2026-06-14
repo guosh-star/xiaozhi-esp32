@@ -879,6 +879,14 @@ void AudioService::ClearBackgroundAudio() {
     bg_audio_read_pos_ = bg_audio_write_pos_;
 }
 
+size_t AudioService::GetBgAudioFillLevel() {
+    std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    if (bg_audio_write_pos_ >= bg_audio_read_pos_) {
+        return bg_audio_write_pos_ - bg_audio_read_pos_;
+    }
+    return BG_AUDIO_RING_SIZE - bg_audio_read_pos_ + bg_audio_write_pos_;
+}
+
 void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
     if (!bg_audio_active_) return;
     std::lock_guard<std::mutex> lock(bg_audio_mutex_);

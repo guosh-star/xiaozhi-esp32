@@ -136,6 +136,7 @@ public:
     void PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate);
     void SetBackgroundAudioGain(float gain);
     void ClearBackgroundAudio();
+    size_t GetBgAudioFillLevel();
     void SetOutputMuted(bool muted);
     void RefreshOutputTimestamp() { last_output_time_ = std::chrono::steady_clock::now(); }
     void RefreshInputTimestamp() { last_input_time_ = std::chrono::steady_clock::now(); }
