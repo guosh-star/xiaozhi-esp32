@@ -139,7 +139,6 @@ public:
     size_t GetBgAudioFillLevel();
     void SetOutputMuted(bool muted);
     void RefreshOutputTimestamp() { last_output_time_ = std::chrono::steady_clock::now(); }
-    std::chrono::steady_clock::time_point GetLastOutputTime() const { return last_output_time_; }
     void RefreshInputTimestamp() { last_input_time_ = std::chrono::steady_clock::now(); }
     void FlushOutputDma();
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
