@@ -930,6 +930,18 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
+            // Guard against acoustic echo: wait for TTS audio to finish
+            // and room echo to decay before enabling microphone/wake word detection.
+            // Without this, the speaker's residual audio gets picked up by the mic,
+            // triggering the wake word and causing echo loops (AI talks to itself).
+            audio_service_.WaitForPlaybackQueueEmpty();
+            auto last_output = audio_service_.GetLastOutputTime();
+            auto now = std::chrono::steady_clock::now();
+            auto output_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output).count();
+            if (output_elapsed < 500) {
+                vTaskDelay(pdMS_TO_TICKS(500 - output_elapsed));
+            }
+
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
