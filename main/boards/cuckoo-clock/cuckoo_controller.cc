@@ -2340,35 +2340,26 @@ void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
     
-    // Music uses background audio layer — no need to abort AI speech.
-    // If already playing, stop old task cleanly to start new one.
-    
-    // Auto-detect format from URL path
-    // 如果是完整URL（http开头），直接使用
+    // Auto-detect format and route to right player
+    // /opus? path → PlayOpus (TCP streaming Opus)
+    // /stream? or /pcm? path → PlayUrl (HTTP MP3 download, more reliable)
+
+    // Handle full HTTP URLs
     if (strncmp(url_or_path, "http", 4) == 0) {
-        char conv_url[1280];
-        strncpy(conv_url, url_or_path, sizeof(conv_url) - 1);
-        conv_url[sizeof(conv_url) - 1] = '\0';
-        char* sp = strstr(conv_url, "/stream?");
-        if (sp) {
-            memcpy(sp, "/opus?", 6);
-            memmove(sp + 6, sp + 8, strlen(sp + 8) + 1);
+        if (strstr(url_or_path, "/opus?")) {
+            return mp3_->PlayOpus(url_or_path);
         }
-        sp = strstr(conv_url, "/pcm?");
-        if (sp) {
-            memcpy(sp, "/opus?", 6);
-            memmove(sp + 6, sp + 8, strlen(sp + 8) + 1);
-        }
-        return mp3_->PlayOpus(conv_url);
+        // /stream?, /pcm?, or any other → use PlayUrl
+        return mp3_->PlayUrl(url_or_path);
     }
     
-    // 否则用代理地址拼接
+    // Relative path: construct full URL
     if (music_proxy_host_.empty()) {
         ESP_LOGE(TAG, "Music proxy not configured. Check DEFAULT_MUSIC_PROXY_HOST in config.h.");
         return -10;
     }
     
-    // URL编码非ASCII字符（中文等），esp_http_client不支持原始中文URL
+    // URL-encode non-ASCII chars
     char encoded_path[1024];
     const char* src = url_or_path;
     char* dst = encoded_path;
@@ -2377,16 +2368,13 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     while (*src && dst < end) {
         unsigned char c = (unsigned char)*src;
         if (c < 0x80) {
-            // ASCII直接复制
             *dst++ = *src;
         } else {
-            // 非ASCII → %XX 编码
             int bytes = 0;
             if ((c & 0xE0) == 0xC0) bytes = 2;
             else if ((c & 0xF0) == 0xE0) bytes = 3;
             else if ((c & 0xF8) == 0xF0) bytes = 4;
             else bytes = 1;
-            
             for (int i = 0; i < bytes && src[i] && dst + 3 <= end; i++) {
                 dst += snprintf(dst, 4, "%%%02X", (unsigned char)src[i]);
             }
@@ -2397,20 +2385,15 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     }
     *dst = '\0';
     
-    char full_url[1280];  // http:// + host + :port + encoded_path
+    char full_url[1280];
     snprintf(full_url, sizeof(full_url), "http://%s:%d%s",
              music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
-    char* sp2 = strstr(full_url, "/stream?");
-    if (sp2) {
-        memcpy(sp2, "/opus?", 6);
-        memmove(sp2 + 6, sp2 + 8, strlen(sp2 + 8) + 1);
+    
+    // Route based on path
+    if (strstr(full_url, "/opus?")) {
+        return mp3_->PlayOpus(full_url);
     }
-    sp2 = strstr(full_url, "/pcm?");
-    if (sp2) {
-        memcpy(sp2, "/opus?", 6);
-        memmove(sp2 + 6, sp2 + 8, strlen(sp2 + 8) + 1);
-    }
-    return mp3_->PlayOpus(full_url);
+    return mp3_->PlayUrl(full_url);
 }
 
 void CuckooStateMachine::SetMusicProxy(const char* host, int port) {

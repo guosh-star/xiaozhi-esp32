@@ -108,7 +108,7 @@
 // ============================================
 // 在线音乐代理
 // ============================================
-#define DEFAULT_MUSIC_PROXY_HOST    "192.168.31.123"
+#define DEFAULT_MUSIC_PROXY_HOST    "192.168.31.18"
 #define DEFAULT_MUSIC_PROXY_PORT    8765
 
 #endif // _BOARD_CONFIG_H_
