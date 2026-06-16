@@ -552,6 +552,7 @@ void Application::InitializeProtocol() {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
+                            tts_restart_listening_ = true;
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
@@ -931,7 +932,8 @@ void Application::HandleStateChangedEvent() {
             display->SetEmotion("neutral");
 
             // Make sure the audio processor is running
-            if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
+            if (tts_restart_listening_ || play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
+                tts_restart_listening_ = false;
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
                 // This prevents audio truncation when STOP arrives late due to network jitter
                 if (listening_mode_ == kListeningModeAutoStop) {
@@ -999,7 +1001,7 @@ void Application::SetListeningMode(ListeningMode mode) {
 }
 
 ListeningMode Application::GetDefaultListeningMode() const {
-    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime;
+    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeAutoStop;  // Always AutoStop for cuckoo-clock
 }
 
 void Application::Reboot() {
