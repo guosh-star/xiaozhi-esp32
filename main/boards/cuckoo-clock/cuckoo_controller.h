@@ -17,6 +17,7 @@
 #include <vector>
 #include <functional>
 #include <atomic>
+#include <mutex>
 
 // MP3 decoder
 #include <esp_audio_types.h>
@@ -127,10 +128,10 @@ class Mp3Player {
 private:
     Assets* assets_ = nullptr;
     void* mp3_dec_handle_ = nullptr;
-    volatile bool is_playing_ = false;
-    volatile bool stop_requested_ = false;
-    float ducking_gain_ = 1.0f;           // 1.0=normal, 0.0=silent (smooth fade)
-    int64_t ducking_start_us_ = 0;         // when fading started
+    std::atomic<bool> is_playing_{false};
+    std::atomic<bool> stop_requested_{false};
+    std::atomic<float> ducking_gain_{1.0f};     // 1.0=normal, 0.0=silent (smooth fade)
+    std::atomic<int64_t> ducking_start_us_{0};  // when fading started
 
     // 播放任务
     TaskHandle_t play_task_ = nullptr;
@@ -139,7 +140,7 @@ private:
 
     // 解码缓冲�?
     static constexpr size_t kInputBufSize = 8192;      // MP3 帧最大大�?
-    static constexpr size_t kOutputBufSize = 8192;     // PCM 输出缓冲区（1152样本*2字节*2声道�?
+    static constexpr size_t kOutputBufSize = 8192;     // PCM 输出缓冲区（1152样本*2字节*2声道）
     uint8_t input_buf_[kInputBufSize];
     uint8_t output_buf_[kOutputBufSize];
 
@@ -247,8 +248,10 @@ public:
 
 
     // Dedup check for hourly/half-hourly chime
-    bool NeedHourlyChime(int hour) { bool r = (hour != last_hour_); if (r) { last_hour_ = hour; last_half_hour_ = -1; } return r; }
-    bool NeedHalfHourlyChime(int hour) { bool r = (hour != last_half_hour_); if (r) { last_half_hour_ = hour; last_hour_ = -1; } return r; }
+    bool NeedHourlyChime(int hour) const { return hour != last_hour_; }
+    bool NeedHalfHourlyChime(int hour) const { return hour != last_half_hour_; }
+    void MarkHourlyChime(int hour) { last_hour_ = hour; last_half_hour_ = -1; }
+    void MarkHalfHourlyChime(int hour) { last_half_hour_ = hour; last_hour_ = -1; }
 private:
     Motor* m1_;          // 舞蹈电机
     Motor* m2_;          // 小提琴电�?
@@ -275,11 +278,11 @@ private:
 
 public:
     // 内部时钟（钟控任务访问，设为 public�?
-    int current_hour_;      // 内部小时(0-23)
-    int current_min_;       // 内部分钟(0-59)
-    int current_sec_;       // 内部�?0-59)
-    bool time_set_;         // 时间是否已设�?
-    bool is_dark_;          // 夜间模式(晚上不表演)
+    std::atomic<int> current_hour_{0};      // 内部小时(0-23)
+    std::atomic<int> current_min_{0};       // 内部分钟(0-59)
+    std::atomic<int> current_sec_{0};       // 内部�?0-59)
+    std::atomic<bool> time_set_{false};         // 时间是否已设�?
+    std::atomic<bool> is_dark_{false};          // 夜间模式(晚上不表演)
 
     // 防AI误触发：记录设备从idle退出的时间戳（钟控任务访问，设为 public�?
     uint64_t last_idle_exit_us_ = 0;
@@ -295,15 +298,20 @@ public:
         bool repeat_daily;  // true=每天重复, false=单次（响过后自动关）
     };
 
+    mutable std::mutex alarm_mutex_;
     AlarmInfo alarms_[kMaxAlarms] = {};
-    int alarm_count_ = 0;
-    bool alarm_ringing_ = false;
-    bool alarm_stopped_ = false;
+    std::atomic<int> alarm_count_{0};
+    std::atomic<bool> alarm_ringing_{false};
+    std::atomic<bool> alarm_stopped_{false};
 
     void SetAlarm(int hour, int minute, bool repeat_daily);
     std::string GetAlarmsJson();
     bool DeleteAlarm(int index);  // 1-based index
     bool IsAlarmRinging() const { return alarm_ringing_; }
+    
+    // Alarm persistence (NVS-backed, survives reboot)
+    void SaveAlarmsToNvs();    // TODO: implement NVS write
+    void LoadAlarmsFromNvs();  // TODO: implement NVS read
     void StopAlarm();
     void CheckAlarms(int hour, int minute, int sec);
     static void AlarmTask(void* arg);
@@ -324,6 +332,7 @@ public:
 
     // 查询是否正在播放音乐（用于后台判断是否保持 WiFi 高性能）
     bool IsMusicPlaying() { return mp3_ && mp3_->IsPlaying(); }
+    void StopMusic();
 
     // 内部：表演执行任务（线性执行所有阶段，无竞态问题）
     static void PerformanceTask(void* arg);

@@ -2413,7 +2413,16 @@ void CuckooStateMachine::StopAll() {
     if (violin_servo_) violin_servo_->SetAngle(90);
     if (dog_servo_) dog_servo_->SetAngle(90);
     if (bird_jump_) bird_jump_->Set(false);
-    if (mp3_) mp3_->Stop();
+    // 背景音乐正在正常播放时不杀歌 — 防止 AI 误判网络卡后
+    // 调用 stop_all+play_url 连环重放打断音乐
+    if (mp3_) {
+        auto& audio = Application::GetInstance().GetAudioService();
+        if (audio.IsBgAudioActive()) {
+            ESP_LOGI(TAG, "StopAll: music playing, not stopping background audio");
+        } else {
+            mp3_->Stop();
+        }
+    }
 
     // 通过 Schedule 在主循环中安全切 idle + 恢复唤醒检测
     // 不直接 AbortSpeaking — TTS 可能正在正常播放，让它自然结束
@@ -2432,6 +2441,13 @@ void CuckooStateMachine::StopAll() {
     }
     ESP_LOGI(TAG, "All motors stopped");
     MotorPowerOff();
+}
+
+void CuckooStateMachine::StopMusic() {
+    if (mp3_) {
+        mp3_->Stop();
+        Application::GetInstance().GetAudioService().ClearBackgroundAudio();
+    }
 }
 
 void CuckooStateMachine::OpenDoor() {
@@ -2638,11 +2654,19 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.stop_all",
-        "Stop everything: music, motors, chime, performance. Call this when user says '停止/停下/别放了/不要放了/关了/别唱了'. This is the ONLY tool for stopping music or performance.",
+        "Stop motors, chime, performance. Does NOT stop music — use cuckoo.stop_music to stop music.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAll();
             return std::string("{\"status\": \"stopped\"}");
+        });
+
+    mcp.AddTool("cuckoo.stop_music",
+        "Stop music playback. Call ONLY when user explicitly asks to stop the music (关歌/停音乐/不要放歌/别唱了). Do NOT call this for performance or alarm — use cuckoo.stop_all for those.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->StopMusic();
+            return std::string("{\"status\": \"music_stopped\"}");
         });
 
     // === Hardware (wiring later) ===
@@ -2761,12 +2785,17 @@ void CuckooTools::RegisterAll() {
 
     // === Status ===
     mcp.AddTool("cuckoo.get_status",
-        "Get device status: running, idle.",
+        "Get status: running (performance active), music_playing (music actively streaming, buffer healthy).\n"
+        "CRITICAL: If music_playing is true, music IS playing normally. Do NOT suggest restarting, do NOT say 'playback isn\'t smooth', do NOT call stop_all or play_url. The user is hearing music just fine. Only act if the user explicitly asks to stop or change the song.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
-            char json[128];
+            auto& audio = Application::GetInstance().GetAudioService();
+            bool music_on = audio.IsBgAudioActive();
+            char json[192];
             snprintf(json, sizeof(json),
-                "{\"running\": %s}", state_machine_->IsRunning() ? "true" : "false");
+                "{\"running\": %s, \"music_playing\": %s}",
+                state_machine_->IsRunning() ? "true" : "false",
+                music_on ? "true" : "false");
             return std::string(json);
         });
 
@@ -2803,10 +2832,12 @@ void CuckooTools::RegisterAll() {
                 int ret = state_machine_->PlayOnlineMusic(url.c_str());
                 if (ret >= 0) {
                     return std::string("{\"status\": \"ok\", \"playing\": true}");
+                } else if (ret == -1) {
+                    return std::string("{\"status\": \"already_playing\", \"hint\": \"Music IS playing normally. Do NOT restart, do NOT say it failed. The user hears music fine.\"}");
                 } else {
-                    char json[64];
+                    char json[160];
                     snprintf(json, sizeof(json),
-                        "{\"status\": \"error\", \"code\": %d}", ret);
+                        "{\"status\": \"error\", \"code\": %d, \"hint\": \"Playback failed. You may retry.\"}", ret);
                     return std::string(json);
                 }
             });

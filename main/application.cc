@@ -531,6 +531,8 @@ void Application::InitializeProtocol() {
         if (audio_service_.GetBgAudioFillLevel() == 0) {
             board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         }
+        // Always transition to Idle — the Idle handler protects music
+        // (keeps VoiceProcessing on if IsBgAudioActive).
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -741,6 +743,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }
@@ -824,22 +827,28 @@ void Application::HandleWakeWordDetectedEvent() {
         // Start encoding wake word data first so it runs in parallel with wake sound
         audio_service_.EncodeWakeWord();
 
+        bool music_playing = audio_service_.IsBgAudioActive();
 #ifdef CONFIG_BOARD_TYPE_CUCKOO_CLOCK
-        // Play cuckoo sound on wake
-        auto* codec = Board::GetInstance().GetAudioCodec();
-        if (codec) {
-            codec->EnableOutput(true);
-            audio_service_.RefreshOutputTimestamp();
-            for (int repeat = 0; repeat < 2; repeat++) {
-                std::vector<int16_t> audio_data(
-                    cuckoo_wake_sound,
-                    cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
-                );
-                codec->OutputData(audio_data);
-                if (repeat < 1) {
-                    vTaskDelay(pdMS_TO_TICKS(50));
+        // Skip cuckoo sound if music is playing — sound would overlap music
+        // and re-enabling output could reset the I2S channel mid-stream
+        if (!music_playing) {
+            auto* codec = Board::GetInstance().GetAudioCodec();
+            if (codec) {
+                codec->EnableOutput(true);
+                audio_service_.RefreshOutputTimestamp();
+                for (int repeat = 0; repeat < 2; repeat++) {
+                    std::vector<int16_t> audio_data(
+                        cuckoo_wake_sound,
+                        cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
+                    );
+                    codec->OutputData(audio_data);
+                    if (repeat < 1) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                    }
                 }
             }
+        } else {
+            ESP_LOGI(TAG, "Wake word while music playing, skipping cuckoo sound");
         }
 #endif
         auto wake_word = std::string("xiao niao xiao niao");
@@ -887,6 +896,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
             audio_service_.EnableWakeWordDetection(true);
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }

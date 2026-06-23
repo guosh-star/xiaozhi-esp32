@@ -341,6 +341,12 @@ std::string WifiBoard::GetDeviceStatusJson() {
     cJSON_AddStringToObject(network, "signal", signal);
     cJSON_AddItemToObject(root, "network", network);
 
+    // Music playback status: AI checks this before saying "network lag"
+    auto music = cJSON_CreateObject();
+    bool playing = Application::GetInstance().GetAudioService().IsBgAudioActive();
+    cJSON_AddBoolToObject(music, "playing", playing);
+    cJSON_AddItemToObject(root, "music", music);
+
     // Chip temperature
     float temp = 0.0f;
     if (board.GetTemperature(temp)) {
