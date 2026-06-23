@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/select.h>
@@ -23,6 +24,45 @@
 #include "esp_opus_dec.h"
 #include "ogg_demuxer.h"
 
+
+// Helper: convert server /stream or /opus URL to /pcm URL for ESP32 background audio
+static void ConvertToPcmUrl(char* url, size_t url_sz) {
+    // /stream?q=... → /pcm?q=...
+    char* pos = strstr(url, "/stream?");
+    if (pos) {
+        // "/stream" = 7 chars, "/pcm" = 4 chars, keep "?..." at pos+7
+        size_t tail = strlen(pos + 7) + 1;
+        memmove(pos + 4, pos + 7, tail);
+        memcpy(pos, "/pcm", 4);
+        return;
+    }
+    // /opus?q=... → /pcm?q=...
+    pos = strstr(url, "/opus?");
+    if (pos) {
+        // "/opus" = 6 chars, "/pcm" = 4 chars, keep "?..." at pos+5
+        size_t tail = strlen(pos + 5) + 1;
+        memmove(pos + 4, pos + 5, tail);
+        memcpy(pos, "/pcm", 4);
+        return;
+    }
+    // Also handle without leading slash (AI sometimes sends "stream?q=..." or "opus?q=...")
+    pos = strstr(url, "stream?");
+    if (pos && (pos == url || *(pos-1) != '/')) {
+        // "stream" = 6 chars, "pcm" = 3 chars, keep "?..." at pos+6
+        size_t tail = strlen(pos + 6) + 1;
+        memmove(pos + 3, pos + 6, tail);
+        memcpy(pos, "pcm", 3);
+        return;
+    }
+    pos = strstr(url, "opus?");
+    if (pos && (pos == url || *(pos-1) != '/')) {
+        // "opus" = 4 chars, "pcm" = 3 chars, keep "?..." at pos+4
+        size_t tail = strlen(pos + 4) + 1;
+        memmove(pos + 3, pos + 4, tail);
+        memcpy(pos, "pcm", 3);
+        return;
+    }
+}
 #define TAG "CuckooCtrl"
 
 // ============================================
@@ -270,11 +310,15 @@ void BirdJump::Set(bool on) {
 
 Mp3Player::~Mp3Player() {
     stop_requested_ = true;
-    is_playing_ = false;
+    // Give task a chance to exit cleanly (unblock recv, close sockets)
+    for (int i = 0; i < 100 && is_playing_; i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));  // 5s total grace period
+    }
     if (play_task_) {
         vTaskDelete(play_task_);
         play_task_ = nullptr;
     }
+    is_playing_ = false;
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -329,9 +373,7 @@ int Mp3Player::DecodeSingleFile(int index) {
     int sample_rate = 22050;
     int channels = 1;
 
-    // 解码前静音 AI 的 Opus 输出，防止 AI 声音打断音乐
-    // SetOutputMuted(true) 仅静音 Opus 解码后的音频，不影响 OutputRawPcm
-        // 解码循环
+    // 解码循环
     uint8_t* input_ptr = (uint8_t*)mp3_data;
     size_t remaining = mp3_size;
 
@@ -458,7 +500,7 @@ int Mp3Player::DecodeSingleFile(int index) {
     }
     app.GetAudioService().SetOutputMuted(false);
 
-    ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, (int)stop_requested_);
+    ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, stop_requested_.load() ? 1 : 0);
     return !stop_requested_;
 }
 
@@ -577,10 +619,14 @@ void Mp3Player::PlayUrlTask(void* arg) {
 
     // 重采样缓冲区（立体声→单声道 + 采样率转换用）
     const int kOutRate = 24000;
-    int16_t* resample_buf1 = (int16_t*)heap_caps_malloc(1152 * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    int16_t* resample_buf2 = (int16_t*)heap_caps_malloc(1152 * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    if (!resample_buf1) resample_buf1 = (int16_t*)malloc(1152 * 2 * sizeof(int16_t));
-    if (!resample_buf2) resample_buf2 = (int16_t*)malloc(1152 * 2 * sizeof(int16_t));
+    // Buffer for worst-case MP3 frame (1152 stereo) upsampled from 8000→24000
+    //   mono_ns = 1152, ratio_max = 24000/8000 = 3.0, out_ns_max = 3456
+    // Use 4096 to be safe with nearest-neighbor upsample
+    const int kResampBufSamples = 4096;
+    int16_t* resample_buf1 = (int16_t*)heap_caps_malloc(kResampBufSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    int16_t* resample_buf2 = (int16_t*)heap_caps_malloc(kResampBufSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!resample_buf1) resample_buf1 = (int16_t*)malloc(kResampBufSamples * sizeof(int16_t));
+    if (!resample_buf2) resample_buf2 = (int16_t*)malloc(kResampBufSamples * sizeof(int16_t));
     ESP_LOGI(TAG, "PlayUrl: resamp bufs %s", (resample_buf1 && resample_buf2) ? "ok" : "WARN");
 
     esp_audio_dec_info_t dec_info = {};
@@ -635,7 +681,6 @@ void Mp3Player::PlayUrlTask(void* arg) {
     batch_seq = 1;
 
     while (1) {
-        printf("DL r%u\n", (unsigned)rem);
         while (rem > 0 && !self->stop_requested_) {
             size_t feed = (rem < self->kInputBufSize) ? rem : self->kInputBufSize;
             memcpy(self->input_buf_, ptr, feed);
@@ -750,7 +795,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                 }
             }
         }
-        printf("DD b%d r%u s%d\n", batch_seq, (unsigned)rem, self->stop_requested_ ? 1 : 0);
+        ESP_LOGD(TAG, "PlayUrl: batch#%d rem=%u stop=%d", batch_seq, (unsigned)rem, self->stop_requested_.load() ? 1 : 0);
         if (self->stop_requested_) { printf("DD stop_break\n"); break; }
 
         // ----- 保留上批末尾未消费字节，拼接到下批头部 -----
@@ -779,16 +824,16 @@ void Mp3Player::PlayUrlTask(void* arg) {
             size_t s = 1;
             while (s + 3 < rem && !IsValidMpegHeader(ptr + s)) s++;
             if (s + 3 < rem) {
-                printf("SK%d ", (int)s);
+                ESP_LOGD(TAG, "PlayUrl: skip %d bytes to next frame", (int)s);
                 ptr += s; rem -= s;
             } else {
                 rem = 0; // 整批无有效帧头，放弃
             }
         }
-        printf("BA b%d r%u %02X%02X%02X%02X...\n", batch_seq, (unsigned)rem,
+        ESP_LOGD(TAG, "PlayUrl: batch#%d ready rem=%u %02X%02X%02X%02X...", batch_seq, (unsigned)rem,
                rem>0?ptr[0]:0, rem>1?ptr[1]:0, rem>2?ptr[2]:0, rem>3?ptr[3]:0);
     }
-    printf("DD OUT rem=%u stop=%d\n", (unsigned)rem, self->stop_requested_ ? 1 : 0);
+    ESP_LOGD(TAG, "PlayUrl: decode loop done rem=%u stop=%d", (unsigned)rem, self->stop_requested_.load() ? 1 : 0);
 
 cleanup:
 
@@ -871,7 +916,7 @@ void Mp3Player::PlayPcmTask(void* arg) {
     }
 
     // Download PCM in chunks, push to playback queue
-    const size_t CHUNK = 48 * 1024;  // 24K samples = 1 second of audio
+    const size_t CHUNK = sizeof(self->output_buf_);  // never exceed buffer size
     const int SAMPLE_RATE = 24000;
     int64_t t0 = esp_timer_get_time();
 
@@ -895,13 +940,9 @@ void Mp3Player::PlayPcmTask(void* arg) {
             } else {
                 int64_t elapsed = esp_timer_get_time() - self->ducking_start_us_;
                 self->ducking_gain_ = 1.0f - (float)elapsed / 400000.0f;
-                if (self->ducking_gain_ <= 0.0f) {
-                    self->ducking_gain_ = 0.0f;
-                    self->stop_requested_ = true;
-                    self->is_playing_ = false;
-                    app.GetAudioService().FlushOutputDma();
-                    ESP_LOGI(TAG, "PlayPcm: fade complete, stopping");
-                    break;
+                if (self->ducking_gain_ < 0.01f) {
+                    self->ducking_gain_ = 0.0f;  // hold at silent, don't kill music
+                    ESP_LOGI(TAG, "PlayPcm: fade complete, holding at 0%%");
                 }
             }
         }
@@ -917,7 +958,7 @@ void Mp3Player::PlayPcmTask(void* arg) {
         app.GetAudioService().PushRawPcmToPlayback(pcm, samples, SAMPLE_RATE);
 
         // Throttle: yield CPU every ~4s of audio to avoid starving WiFi
-        static int bytes_yielded = 0;
+        static int bytes_yielded = 0;  // OK: PlayPcmTask is only ever instantiated once
         bytes_yielded += read;
         if (bytes_yielded >= 192 * 1024) {  // ~4 seconds
             bytes_yielded = 0;
@@ -946,7 +987,8 @@ int Mp3Player::PlayOpus(const char* url) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
         if (is_playing_) {
-            ESP_LOGW(TAG, "PlayOpus: old task still running, forcing stop");
+            ESP_LOGW(TAG, "PlayOpus: old task still running, refusing to start");
+            return -1;
         }
     }
     ESP_LOGI(TAG, "PlayOpus: launching for %s", url);
@@ -954,6 +996,10 @@ int Mp3Player::PlayOpus(const char* url) {
     stop_requested_ = false;  // 清除上次 Stop() 残留的标记
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
+    if (strlen(url) >= 512) {
+        ESP_LOGE(TAG, "PlayOpus: URL too long (%zu bytes)", strlen(url));
+        return -1;
+    }
     struct OpusCtx { Mp3Player* self; char url[512]; };
     auto* ctx = new OpusCtx();
     ctx->self = this;
@@ -1023,31 +1069,48 @@ void Mp3Player::PlayOpusTask(void* arg) {
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    inet_aton(host, &addr.sin_addr);
+    // Try dotted-decimal first, then DNS resolution
+    if (!inet_aton(host, &addr.sin_addr)) {
+        struct addrinfo hints = {}, *res = nullptr;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        int ga_ret = getaddrinfo(host, nullptr, &hints, &res);
+        if (ga_ret == 0 && res) {
+            memcpy(&addr.sin_addr, &((struct sockaddr_in*)res->ai_addr)->sin_addr, 4);
+            freeaddrinfo(res);
+        } else {
+            ESP_LOGE(TAG, "PlayOpus: DNS lookup failed for %s", host);
+            close(sock);
+            goto serial_fallback;
+        }
+    }
     
     ESP_LOGI(TAG, "PlayOpus: connecting to %s:%d...", host, port);
     
     // Non-blocking connect with 5s timeout (SO_SNDTIMEO doesn't work on lwip connect)
-    int sock_flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
-    int cret = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
-    if (cret < 0 && errno == EINPROGRESS) {
-        fd_set wfds;
-        FD_ZERO(&wfds);
-        FD_SET(sock, &wfds);
-        struct timeval ct = { .tv_sec = 5, .tv_usec = 0 };
-        cret = select(sock + 1, NULL, &wfds, NULL, &ct);
-        if (cret <= 0) {
-            ESP_LOGE(TAG, "PlayOpus: connect timeout, falling back to serial...");
+    // Wrapped in a scope block so goto serial_fallback doesn't cross these variable initializations
+    {
+        int sock_flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
+        int cret = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+        if (cret < 0 && errno == EINPROGRESS) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(sock, &wfds);
+            struct timeval ct = { .tv_sec = 5, .tv_usec = 0 };
+            cret = select(sock + 1, NULL, &wfds, NULL, &ct);
+            if (cret <= 0) {
+                ESP_LOGE(TAG, "PlayOpus: connect timeout, falling back to serial...");
+                close(sock);
+                goto serial_fallback;
+            }
+        } else if (cret < 0) {
+            ESP_LOGE(TAG, "PlayOpus: connect() failed errno=%d, falling back to serial...", errno);
             close(sock);
             goto serial_fallback;
         }
-    } else if (cret < 0) {
-        ESP_LOGE(TAG, "PlayOpus: connect() failed errno=%d, falling back to serial...", errno);
-        close(sock);
-        goto serial_fallback;
+        fcntl(sock, F_SETFL, sock_flags);  // restore blocking mode
     }
-    fcntl(sock, F_SETFL, sock_flags);  // restore blocking mode
     
     if (false) {  // gate for serial fallback
 serial_fallback:
@@ -1094,7 +1157,9 @@ serial_fallback:
                 // Prevent AFE power management from disabling MIC
                 uint64_t now_ms = esp_timer_get_time() / 1000;
                 if (now_ms - last_refresh_ms > 8000) {  // every 8s
-                    app.GetAudioService().RefreshInputTimestamp();
+                // HACK: Prevent audio watchdog timeout during long downloads
+                app.GetAudioService().RefreshInputTimestamp();
+
                     last_refresh_ms = now_ms;
                 }
             } else {
@@ -1303,7 +1368,7 @@ serial_fallback:
         int read = recv(sock, buf, CHUNK, 0);
         if (read > 0) {
             total_dl += read;
-            recv_errors = 0;  // reset error count on success
+            recv_errors = 0;
             app.GetAudioService().PushBackgroundAudio(
                 reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
         } else if (read == 0) {
@@ -1362,46 +1427,51 @@ serial_fallback:
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
     const int sample_rate = 16000;
+    const int chunk_ms = 100;  // 100ms chunks for responsive stop
     const int total_ms = 2000;
-    const int total_samples = sample_rate * total_ms / 1000;
+    const int chunk_samples = sample_rate * chunk_ms / 1000;
+    const int total_chunks = total_ms / chunk_ms;
 
-    // 分配 PCM 缓冲区
-    size_t buf_bytes = total_samples * sizeof(int16_t);
+    const int freq_a = 880;   // A5
+    const int freq_b = 1100;  // C#6
+    const int base_amplitude = 8000;
+    const int beep_on_ms = 80;
+    const int beep_off_ms = 80;
+    const int cycle_ms = beep_on_ms + beep_off_ms;
+
+    // Generate and play in 100ms chunks — stop_requested_ checked between chunks
+    size_t buf_bytes = chunk_samples * sizeof(int16_t);
     int16_t* pcm = (int16_t*)malloc(buf_bytes);
     if (!pcm) {
         ESP_LOGE(TAG, "Alarm: failed to allocate PCM buffer");
         return;
     }
 
-    // 生成闹钟蜂鸣：双音交替（880Hz/1100Hz 正弦波），80ms on / 80ms off，重复 ~2秒
-    const int beep_on_ms = 80;
-    const int beep_off_ms = 80;
-    const int cycle_ms = beep_on_ms + beep_off_ms;
-    const int freq_a = 880;   // A5
-    const int freq_b = 1100;  // C#6
-    const int base_amplitude = 8000;
+    ESP_LOGI(TAG, "Playing alarm ring: PCM beep %d/%dHz, %dms in %dms chunks",
+             freq_a, freq_b, total_ms, chunk_ms);
 
-    for (int i = 0; i < total_samples; i++) {
-        int ms = i * 1000 / sample_rate;
-        int cycle = ms / cycle_ms;
-        int phase = ms % cycle_ms;
-        if (phase < beep_on_ms && !stop_requested_) {
-            int freq = (cycle % 2 == 0) ? freq_a : freq_b;
-            double t = (double)i / sample_rate;
-            int16_t val = (int16_t)(sin(2.0 * M_PI * freq * t) * base_amplitude * volume);
-            pcm[i] = val;
-        } else {
-            pcm[i] = 0;
+    for (int chunk = 0; chunk < total_chunks && !stop_requested_; chunk++) {
+        int sample_offset = chunk * chunk_samples;
+        for (int i = 0; i < chunk_samples; i++) {
+            int global_i = sample_offset + i;
+            int ms = global_i * 1000 / sample_rate;
+            int cycle = ms / cycle_ms;
+            int phase = ms % cycle_ms;
+            if (phase < beep_on_ms) {
+                int freq = (cycle % 2 == 0) ? freq_a : freq_b;
+                double t = (double)global_i / sample_rate;
+                int16_t val = (int16_t)(sin(2.0 * M_PI * freq * t) * base_amplitude * volume);
+                pcm[i] = val;
+            } else {
+                pcm[i] = 0;
+            }
         }
+        app.GetAudioService().OutputRawPcm(pcm, chunk_samples, sample_rate);
+        vTaskDelay(pdMS_TO_TICKS(chunk_ms));
     }
 
-    ESP_LOGI(TAG, "Playing alarm ring: PCM beep %d/%dHz, %dms", freq_a, freq_b, total_ms);
-
-    app.GetAudioService().OutputRawPcm(pcm, total_samples, sample_rate);
-    vTaskDelay(pdMS_TO_TICKS(total_ms));
-
     free(pcm);
-    ESP_LOGI(TAG, "Alarm ring finished (stopped=%d)", (int)stop_requested_);
+    ESP_LOGI(TAG, "Alarm ring finished (stopped=%d)", stop_requested_.load() ? 1 : 0);
 }
 
 // 播放任务入口
@@ -1943,7 +2013,8 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
     sm->current_performance_ = kPerformanceNone;
     sm->current_phase_ = kPhaseIdle;
     sm->MotorPowerOff();
-    // 恢复唤醒词检测（idle 状态只需要唤醒词，VoiceProcessing 由会话流程自动启动）
+    // 恢复语音处理和唤醒词检测
+    app.GetAudioService().EnableVoiceProcessing(true);
     app.GetAudioService().EnableWakeWordDetection(true);
     ESP_LOGI(TAG, "Performance complete");
 
@@ -1968,15 +2039,17 @@ void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     // 由调用方决定是整点报时还是半点报时
     // 使用 last_hour_ 和 last_half_hour_ 防重复（由 cuckoo_clock_task 管理）
 
-    // 整点报时（分钟 == 0）
+    // 整点报时
     if (min == 0) {
         ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
         StartPerformance(kPerformanceHour, hour);
+        MarkHourlyChime(hour);  // dedup after successful trigger
     }
-    // 半点报时（分钟 == 30）
+    // 半点报时
     else if (min == 30) {
         ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
         StartPerformance(kPerformanceHalf, hour);
+        MarkHalfHourlyChime(hour);  // dedup after successful trigger
     }
 }
 
@@ -1985,7 +2058,7 @@ void CuckooStateMachine::SetTime(int hour, int min, int sec) {
     current_min_ = min % 60;
     current_sec_ = sec % 60;
     time_set_ = true;
-    ESP_LOGI(TAG, "Time set to %02d:%02d:%02d", current_hour_, current_min_, current_sec_);
+    ESP_LOGI(TAG, "Time set to %02d:%02d:%02d", current_hour_.load(), current_min_.load(), current_sec_.load());
 }
 
 void CuckooStateMachine::GetTime(int &hour, int &min) {
@@ -1997,6 +2070,7 @@ void CuckooStateMachine::GetTime(int &hour, int &min) {
 // 闹钟功能
 // ============================================
 void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     if (alarm_count_ >= kMaxAlarms) {
         ESP_LOGW(TAG, "Alarm list full (max %d)", kMaxAlarms);
         return;
@@ -2016,10 +2090,11 @@ void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
     alarms_[alarm_count_].repeat_daily = repeat_daily;
     alarm_count_++;
     ESP_LOGI(TAG, "Alarm set: %02d:%02d (repeat=%d, total=%d)",
-             hour, minute, repeat_daily, alarm_count_);
+             hour, minute, repeat_daily, alarm_count_.load());
 }
 
 std::string CuckooStateMachine::GetAlarmsJson() {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     std::string json = "[";
     for (int i = 0; i < alarm_count_; i++) {
         if (i > 0) json += ", ";
@@ -2036,8 +2111,9 @@ std::string CuckooStateMachine::GetAlarmsJson() {
 }
 
 bool CuckooStateMachine::DeleteAlarm(int index) {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     if (index < 1 || index > alarm_count_) {
-        ESP_LOGW(TAG, "Invalid alarm index: %d (have %d alarms)", index, alarm_count_);
+        ESP_LOGW(TAG, "Invalid alarm index: %d (have %d alarms)", index, alarm_count_.load());
         return false;
     }
     // Shift remaining alarms down
@@ -2045,7 +2121,7 @@ bool CuckooStateMachine::DeleteAlarm(int index) {
         alarms_[i] = alarms_[i + 1];
     }
     alarm_count_--;
-    ESP_LOGI(TAG, "Alarm %d deleted (remaining: %d)", index, alarm_count_);
+    ESP_LOGI(TAG, "Alarm %d deleted (remaining: %d)", index, alarm_count_.load());
     return true;
 }
 
@@ -2053,13 +2129,16 @@ void CuckooStateMachine::StopAlarm() {
     alarm_stopped_ = true;
     alarm_ringing_ = false;
     // For one-shot alarms, disable after user stops it
-    for (int i = 0; i < alarm_count_; i++) {
-        if (alarms_[i].enabled && !alarms_[i].repeat_daily
-            && alarms_[i].hour == current_hour_
-            && alarms_[i].minute == current_min_) {
-            alarms_[i].enabled = false;
-            ESP_LOGI(TAG, "One-shot alarm %02d:%02d disabled after stop",
-                     alarms_[i].hour, alarms_[i].minute);
+    {
+        std::lock_guard<std::mutex> lock(alarm_mutex_);
+        for (int i = 0; i < alarm_count_; i++) {
+            if (alarms_[i].enabled && !alarms_[i].repeat_daily
+                && alarms_[i].hour == current_hour_
+                && alarms_[i].minute == current_min_) {
+                alarms_[i].enabled = false;
+                ESP_LOGI(TAG, "One-shot alarm %02d:%02d disabled after stop",
+                         alarms_[i].hour, alarms_[i].minute);
+            }
         }
     }
     // Stop any playing audio
@@ -2071,21 +2150,24 @@ void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
     if (alarm_ringing_) return;  // already ringing
     if (!time_set_) return;      // clock not set yet
 
-    for (int i = 0; i < alarm_count_; i++) {
-        if (!alarms_[i].enabled) continue;
-        if (alarms_[i].hour == hour && alarms_[i].minute == minute && sec == 0) {
-            ESP_LOGI(TAG, "Alarm triggered! %02d:%02d", hour, minute);
-            alarm_ringing_ = true;
-            alarm_stopped_ = false;
-            xTaskCreate(
-                AlarmTask,
-                "cuckoo_alarm",
-                4096,
-                this,
-                3,
-                nullptr
-            );
-            break;  // only trigger one alarm at a time
+    {
+        std::lock_guard<std::mutex> lock(alarm_mutex_);
+        for (int i = 0; i < alarm_count_; i++) {
+            if (!alarms_[i].enabled) continue;
+            if (alarms_[i].hour == hour && alarms_[i].minute == minute && sec == 0) {
+                ESP_LOGI(TAG, "Alarm triggered! %02d:%02d", hour, minute);
+                alarm_ringing_ = true;
+                alarm_stopped_ = false;
+                xTaskCreate(
+                    AlarmTask,
+                    "cuckoo_alarm",
+                    4096,
+                    this,
+                    3,
+                    nullptr
+                );
+                break;  // only trigger one alarm at a time
+            }
         }
     }
 }
@@ -2419,16 +2501,7 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
         char conv_url[1280];
         strncpy(conv_url, url_or_path, sizeof(conv_url) - 1);
         conv_url[sizeof(conv_url) - 1] = '\0';
-        char* sp = strstr(conv_url, "/stream?");
-        if (sp) {
-            memcpy(sp, "/pcm?", 5);
-            memmove(sp + 5, sp + 8, strlen(sp + 8) + 1);
-        }
-        sp = strstr(conv_url, "/opus?");
-        if (sp) {
-            memcpy(sp, "/pcm?", 5);
-            memmove(sp + 5, sp + 6, strlen(sp + 6) + 1);
-        }
+        ConvertToPcmUrl(conv_url, sizeof(conv_url));
         return mp3_->PlayOpus(conv_url);
     }
     
@@ -2468,19 +2541,15 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     *dst = '\0';
     
     char full_url[1280];  // http:// + host + :port + encoded_path
-    snprintf(full_url, sizeof(full_url), "http://%s:%d%s",
-             music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
-    char* sp2 = strstr(full_url, "/stream?");
-    if (sp2) {
-        memcpy(sp2, "/pcm?", 5);
-        memmove(sp2 + 5, sp2 + 8, strlen(sp2 + 8) + 1);
+    // Ensure path starts with /
+    if (encoded_path[0] != '/') {
+        snprintf(full_url, sizeof(full_url), "http://%s:%d/%s",
+                 music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
+    } else {
+        snprintf(full_url, sizeof(full_url), "http://%s:%d%s",
+                 music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
     }
-    // Convert /opus to /pcm for background audio ducking (AI uses /opus?q= paths)
-    char* sp3 = strstr(full_url, "/opus?");
-    if (sp3) {
-        memcpy(sp3, "/pcm?", 5);
-        memmove(sp3 + 5, sp3 + 6, strlen(sp3 + 6) + 1);
-    }
+    ConvertToPcmUrl(full_url, sizeof(full_url));
     return mp3_->PlayOpus(full_url);
 }
 
@@ -2752,20 +2821,19 @@ void cuckoo_clock_task(void* params) {
 
     auto* sm = static_cast<CuckooStateMachine*>(params);
 
-    // 关掉 WiFi 省电模式的尝试
-    // 小智框架在 idle/activating/speaking->idle 时都会重设省电为 LOW_POWER，
-    // 所以这里每隔 30 秒强制关一次
-    // ⚠️ 立即刷新音频时间戳（AudioService::Start 在 ~100ms 后启动电源定时器，
-    //    第一次检查在 ~1100ms，不刷新的话 epoch 时间戳会让 I2S 立即被关闭）
+    // === Workaround: WiFi power-save + audio timestamp hacks ===
+    // The Xiaozhi framework resets WiFi to LOW_POWER on every state transition.
+    // We force it off at startup. TODO: Fix root cause in Application::OnStateChanged.
+    // Also refresh audio timestamps to prevent I2S shutdown during startup.
     auto& as = Application::GetInstance().GetAudioService();
     as.RefreshOutputTimestamp();
     as.RefreshInputTimestamp();
     for (int i = 0; i < 3; i++) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        as.RefreshOutputTimestamp();
+        esp_wifi_set_ps(WIFI_PS_NONE);  // HACK: fight framework's LOW_POWER
+        as.RefreshOutputTimestamp();    // HACK: prevent audio watchdog timeout
         as.RefreshInputTimestamp();
-        ESP_LOGI(TAG, "Forced WiFi power save off (attempt %d/3)", i + 1);
+        ESP_LOGI(TAG, "WiFi PM off + timestamp refresh (startup %d/3)", i + 1);
     }
 
     // 内部秒数计数器（不依赖真实 RTC，可通过 cuckoo.set_time MCP 工具校准）
@@ -2783,7 +2851,7 @@ void cuckoo_clock_task(void* params) {
             sm->current_sec_ = timeinfo.tm_sec;
             sm->time_set_ = true;
             ESP_LOGI(TAG, "Auto-synced clock from NTP: %02d:%02d:%02d",
-                     sm->current_hour_, sm->current_min_, sm->current_sec_);
+                     sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
         } else {
             ESP_LOGW(TAG, "NTP not synced yet, internal clock waiting for cuckoo.set_time");
         }
@@ -2794,6 +2862,10 @@ void cuckoo_clock_task(void* params) {
 
     uint32_t tick_sec = 0;
 
+    // TODO(#22): Replace 1s polling with event-driven approach:
+    //   - Register OnDeviceStateChanged callback for idle/active transitions
+    //   - Use a software timer for NTP sync instead of tick_sec counter
+    //   - This would let Core 1 sleep most of the time, saving power
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         tick_sec++;
@@ -2818,7 +2890,7 @@ void cuckoo_clock_task(void* params) {
                 sm->current_min_ = timeinfo.tm_min;
                 sm->current_sec_ = timeinfo.tm_sec;
                 ESP_LOGI(TAG, "Daily NTP sync: %02d:%02d:%02d",
-                         sm->current_hour_, sm->current_min_, sm->current_sec_);
+                         sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
             }
         }
 
