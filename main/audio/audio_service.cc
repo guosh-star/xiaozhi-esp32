@@ -9,7 +9,7 @@
         .dest_rate       = (uint32_t)(_dest_rate),           \
         .channel         = (uint8_t)(_channel),              \
         .bits_per_sample = ESP_AUDIO_BIT16,                  \
-        .complexity      = 2,                                \
+        .complexity      = 3,                                \
         .perf_type       = ESP_AE_RATE_CVT_PERF_TYPE_SPEED,  \
     }
 

@@ -1365,6 +1365,14 @@ serial_fallback:
                      ai_now ? "speaking" : "idle", ai_now ? 30 : 100);
         }
 
+        // When AI is speaking, pause TCP download to free WiFi airtime for
+        // UDP audio packets (prevents WiFi buffer starvation → TTS stutter).
+        // Only pause if buffer sufficient to ride through typical AI reply.
+        if (ai_speaking && app.GetAudioService().GetBgAudioFillLevel() > 16000) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
         int read = recv(sock, buf, CHUNK, 0);
         if (read > 0) {
             total_dl += read;

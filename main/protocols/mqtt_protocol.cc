@@ -86,6 +86,11 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         if (on_disconnected_ != nullptr) {
             on_disconnected_();
         }
+        // Force device to idle on MQTT disconnect so the state machine
+        // doesn't get stuck in speaking/listening forever without TTS-STOP.
+        Application::GetInstance().Schedule([]() {
+            Application::GetInstance().SetDeviceState(kDeviceStateIdle);
+        });
         ESP_LOGI(TAG, "MQTT disconnected, schedule reconnect in %d seconds", MQTT_RECONNECT_INTERVAL_MS / 1000);
         esp_timer_start_once(reconnect_timer_, MQTT_RECONNECT_INTERVAL_MS * 1000);
     });
