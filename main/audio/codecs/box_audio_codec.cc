@@ -7,14 +7,18 @@
 #define TAG "BoxAudioCodec"
 
 BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
-    gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-    gpio_num_t pa_pin, uint8_t es8311_addr, uint8_t es7210_addr, bool input_reference) {
-    duplex_ = true; // 是否双工
-    input_reference_ = input_reference; // 是否使用参考输入，实现回声消除
-    input_channels_ = input_reference_ ? 2 : 1; // 输入通道数
+                             gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout,
+                             gpio_num_t din, gpio_num_t pa_pin, uint8_t es8311_addr,
+                             uint8_t es7210_addr, bool input_reference, float input_gain,
+                             int reference_gain_channel, float reference_gain) {
+    duplex_ = true;                              // 是否双工
+    input_reference_ = input_reference;          // 是否使用参考输入，实现回声消除
+    input_channels_ = input_reference_ ? 2 : 1;  // 输入通道数
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 42;  // ES7210 mic gain max (was 30, too quiet)
+    input_gain_ = input_gain;
+    reference_gain_channel_ = reference_gain_channel;
+    reference_gain_ = reference_gain;
 
     CreateDuplexChannels(mclk, bclk, ws, dout, din);
 
@@ -203,7 +207,14 @@ void BoxAudioCodec::EnableInput(bool enable) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, 0xF, input_gain_));  // 0xF = all 4 mics
+        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
+            input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
+        if (input_reference_ && reference_gain_channel_ >= 0) {
+            // ES7210 增益掩码使用物理 MIC 编号，不同于 TDM 时隙顺序 (MIC1, MIC3, MIC2, MIC4)
+            ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
+                input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(reference_gain_channel_),
+                reference_gain_));
+        }
     } else {
         ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
     }

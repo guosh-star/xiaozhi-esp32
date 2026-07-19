@@ -217,9 +217,14 @@ public:
             AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN,
             AUDIO_CODEC_PA_PIN,
             AUDIO_CODEC_ES8311_ADDR, AUDIO_CODEC_ES7210_ADDR,
-            AUDIO_INPUT_REFERENCE
+            AUDIO_INPUT_REFERENCE,
+            42.0f  // input_gain：提升麦克风灵敏度改善唤醒率
         );
         return &audio_codec;
+    }
+
+    // 覆盖默认 input_gain（30→42），提升麦克风灵敏度改善唤醒率
+    virtual AudioCodec* GetAudioCodec() override = delete;
     }
 
     virtual Display* GetDisplay() override {
