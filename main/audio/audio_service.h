@@ -44,7 +44,7 @@
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
 #define MAX_TIMESTAMPS_IN_QUEUE 3
 
-#define AUDIO_POWER_TIMEOUT_MS 15000
+#define AUDIO_POWER_TIMEOUT_MS 30000
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
 
 #define AS_EVENT_AUDIO_TESTING_RUNNING      (1 << 0)
@@ -122,6 +122,8 @@ public:
     bool IsAfeWakeWord();
 
     void EnableWakeWordDetection(bool enable);
+    void SetWakeWordThreshold(float threshold) { if (wake_word_) wake_word_->SetThreshold(threshold); }
+    void SetInputGain(float db) { if (codec_) codec_->SetInputGain(db); }
     void EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
@@ -137,9 +139,16 @@ public:
     void SetBackgroundAudioGain(float gain);
     void ClearBackgroundAudio();
     size_t GetBgAudioFillLevel();
+    bool IsBgAudioActive() { return bg_audio_active_ && bg_audio_drain_enabled_; }
+    void EnableBgAudioDrain(bool enable);
     void SetOutputMuted(bool muted);
     void RefreshOutputTimestamp() { last_output_time_ = std::chrono::steady_clock::now(); }
     void RefreshInputTimestamp() { last_input_time_ = std::chrono::steady_clock::now(); }
+    // Returns milliseconds since last audio output; large value = silent
+    int64_t MsSinceLastOutput() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - last_output_time_).count();
+    }
     void FlushOutputDma();
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
@@ -212,12 +221,14 @@ private:
     void MixBackgroundAudio(std::vector<int16_t>& pcm);
 
     // Background audio mixing (music ducking during AI speech)
-    static constexpr size_t BG_AUDIO_RING_SIZE = 96000;  // ~6 seconds at 16kHz
+    static constexpr size_t BG_AUDIO_RING_SIZE = 480000;  // ~30 seconds at 16kHz
     std::vector<int16_t> bg_audio_ring_;
     size_t bg_audio_write_pos_ = 0;
     size_t bg_audio_read_pos_ = 0;
-    float bg_audio_gain_ = 0.3f;
+    float bg_audio_gain_ = 1.0f;
+    float bg_audio_target_gain_ = 1.0f;
     bool bg_audio_active_ = false;
+    bool bg_audio_drain_enabled_ = false;
     std::mutex bg_audio_mutex_;
 };
 

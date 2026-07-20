@@ -13,35 +13,35 @@ load:0x3fce2820,len:0x548
 load:0x403c8700,len:0xc3c
 load:0x403cb700,len:0x2d9c
 entry 0x403c8908
-I (35) octal_psram: vendor id    : 0x0d (AP)
-I (35) octal_psram: dev id       : 0x02 (generation 3)
-I (35) octal_psram: density      : 0x03 (64 Mbit)
-I (37) octal_psram: good-die     : 0x01 (Pass)
-I (41) octal_psram: Latency      : 0x01 (Fixed)
+I (34) octal_psram: vendor id    : 0x0d (AP)
+I (34) octal_psram: dev id       : 0x02 (generation 3)
+I (34) octal_psram: density      : 0x03 (64 Mbit)
+I (36) octal_psram: good-die     : 0x01 (Pass)
+I (40) octal_psram: Latency      : 0x01 (Fixed)
 I (45) octal_psram: VCC          : 0x01 (3V)
 I (49) octal_psram: SRF          : 0x01 (Fast Refresh)
-I (54) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
-I (59) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (53) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (58) octal_psram: BurstLen     : 0x01 (32 Byte)
 I (63) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
 I (68) octal_psram: DriveStrength: 0x00 (1/1)
-I (73) MSPI Timing: Enter psram timing tuning
+I (72) MSPI Timing: Enter psram timing tuning
 I (77) esp_psram: Found 8MB PSRAM device
 I (80) esp_psram: Speed: 80MHz
-I (83) cpu_start: Multicore app
+I (82) cpu_start: Multicore app
 I (97) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
-I (98) cpu_start: Pro cpu start user code
-I (98) cpu_start: cpu freq: 240000000 Hz
+I (97) cpu_start: Pro cpu start user code
+I (97) cpu_start: cpu freq: 240000000 Hz
 I (99) app_init: Application information:
-I (103) app_init: Project name:     xiaozhi
-I (107) app_init: App version:      2.2.6
-I (111) app_init: Compile time:     Jun 14 2026 15:08:26
-I (116) app_init: ELF file SHA256:  00dfe3e64...
-I (120) app_init: ESP-IDF:          v5.5.4
+I (102) app_init: Project name:     xiaozhi
+I (106) app_init: App version:      2.2.6
+I (110) app_init: Compile time:     Jul 19 2026 21:57:57
+I (115) app_init: ELF file SHA256:  bf6986073...
+I (119) app_init: ESP-IDF:          v5.5.4-dirty
 I (124) efuse_init: Min chip rev:     v0.0
 I (128) efuse_init: Max chip rev:     v0.99 
 I (132) efuse_init: Chip rev:         v0.2
-I (136) heap_init: Initializing. RAM available for dynamic allocation:
-I (142) heap_init: At 3FCAE7B0 len 0003AF60 (235 KiB): RAM
+I (135) heap_init: Initializing. RAM available for dynamic allocation:
+I (142) heap_init: At 3FCAB2B0 len 0003E460 (249 KiB): RAM
 I (147) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
 I (152) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
 I (157) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM
@@ -56,428 +56,525 @@ I (219) main_task: Calling app_main()
 I (229) Board: UUID=2ff40775-df4a-413b-abe6-3c962b942fdf SKU=cuckoo-clock
 I (229) button: IoT Button Version: 4.1.6
 I (229) CuckooBoard: === Cuckoo Clock Board ===
-I (229) CuckooBoard: Install SSD1306 driver
-I (339) Display: Power management not supported
-I (339) OledDisplay: Initialize LVGL
-I (339) OledDisplay: Adding OLED display
-I (339) LVGL: Starting LVGL task
-I (339) CuckooBoard: Initializing cuckoo clock peripherals...
-I (339) CuckooBoard: M1 dance motor ready (DRV8833 IN1/IN2: GPIO 4/5, ch0/1)
-I (349) CuckooBoard: M2 violin motor ready (DRV8833 IN3/IN4: GPIO 6/7, ch2/3)
-I (359) CuckooBoard: Bell sound player ready
-I (359) Assets: The storage free size is 21568 KB
-I (369) Assets: The partition size is 8192 KB
-I (729) Assets: The checksum calculation time is 364 ms
-I (729) CuckooCtrl: Mp3Player initialized (async task-based software decode)
-I (739) CuckooBoard: MP3 soft decoder ready
-I (739) CuckooBoard: Peripherals initialized
-I (739) CuckooBoard: State machine created
-I (749) MCP: Add tool: cuckoo.performance
-I (749) MCP: Add tool: cuckoo.set_time
-I (749) MCP: Add tool: cuckoo.get_time
-I (759) MCP: Add tool: cuckoo.play_music
-I (759) MCP: Add tool: cuckoo.start_show
-I (759) MCP: Add tool: cuckoo.stop_all
-I (769) MCP: Add tool: cuckoo.dance
-I (769) MCP: Add tool: cuckoo.open_door
-I (779) MCP: Add tool: cuckoo.close_door
-I (779) MCP: Add tool: cuckoo.bird_jump
-I (779) MCP: Add tool: cuckoo.set_servo
-I (789) MCP: Add tool: cuckoo.set_motor
-I (789) MCP: Add tool: cuckoo.set_alarm
-I (789) MCP: Add tool: cuckoo.get_alarms
-I (799) MCP: Add tool: cuckoo.delete_alarm
-I (799) MCP: Add tool: cuckoo.stop_alarm
+I (229) CuckooBoard: Initializing cuckoo clock peripherals...
+I (239) CuckooBoard: M1 dance ready (GPIO 4/5, GPIO)
+I (239) CuckooBoard: M2 door ready (GPIO 6/7, GPIO)
+I (249) CuckooBoard: M3 dog ready (GPIO 10/11, ch4/5)
+I (249) CuckooBoard: M2 violin motor ready (GPIO 18/45, GPIO)
+I (259) CuckooBoard: M5 bird door ready (GPIO 9/46, timer2 ch2/3)
+I (269) CuckooBoard: Violin servo ready (GPIO 40, ch0)
+I (269) CuckooBoard: Dog servo ready (GPIO 42, ch1)
+I (269) CuckooBoard: Bell sound player ready
+I (279) Assets: The storage free size is 22144 KB
+I (279) Assets: The partition size is 8192 KB
+I (699) Assets: The checksum calculation time is 412 ms
+I (699) CuckooCtrl: Mp3Player initialized (async task-based software decode)
+I (699) CuckooBoard: MP3 soft decoder ready
+I (699) CuckooBoard: Water+bird motor ready (GPIO 8/39, GPIO)
+I (709) CuckooCtrl: LDR sensor on GPIO 3 (ADC0_CH2), threshold 600
+I (719) CuckooBoard: Peripherals initialized
+I (719) CuckooBoard: State machine created
+I (719) MCP: Add tool: cuckoo.performance
+I (729) MCP: Add tool: cuckoo.cantonese_lookup
+I (729) MCP: Add tool: cuckoo.set_time
+I (739) MCP: Add tool: cuckoo.get_time
+I (739) MCP: Add tool: cuckoo.play_music
+I (739) MCP: Add tool: cuckoo.start_show
+I (749) MCP: Add tool: cuckoo.stop_all
+I (749) MCP: Add tool: cuckoo.stop_music
+I (749) MCP: Add tool: cuckoo.dance
+I (759) MCP: Add tool: cuckoo.motor_test
+I (759) MCP: Add tool: cuckoo.open_door
+I (759) MCP: Add tool: cuckoo.close_door
+I (769) MCP: Add tool: cuckoo.bird_jump
+I (769) MCP: Add tool: cuckoo.set_servo
+I (769) MCP: Add tool: cuckoo.set_motor
+I (779) MCP: Add tool: cuckoo.set_alarm
+I (779) MCP: Add tool: cuckoo.get_alarms
+I (789) MCP: Add tool: cuckoo.delete_alarm
+I (789) MCP: Add tool: cuckoo.stop_alarm
+I (789) MCP: Add tool: cuckoo.set_quiet_mode
+I (799) MCP: Add tool: cuckoo.get_quiet_mode
 I (799) MCP: Add tool: cuckoo.get_status
-I (809) MCP: Add tool: cuckoo.set_music_proxy
+I (799) MCP: Add tool: cuckoo.set_music_proxy
 I (809) MCP: Add tool: cuckoo.play_url
-I (819) CuckooBoard: MCP tools registered
-I (819) CuckooBoard: Clock task started on core 1
-I (819) CuckooCtrl: Cuckoo clock task started on core 1
-I (819) CuckooBoard: Cuckoo board ready! Core 0: AI voice, Core 1: Clock control
-I (839) StateMachine: State: unknown -> starting
+I (809) MCP: Add tool: cuckoo.dog_show
+I (819) MCP: Add tool: cuckoo.linda_show
+I (819) MCP: Add tool: cuckoo.garden_show
+I (819) MCP: Add tool: cuckoo.set_hourly_performance
+I (829) MCP: Add tool: cuckoo.get_hourly_performance
+I (829) CuckooBoard: MCP tools registered
+I (839) CuckooBoard: Clock task started on core 1
+I (839) CuckooCtrl: Reset reason: cpu0=1 cpu1=1
+I (839) CuckooBoard: Cuckoo board ready! Core 0: AI voice, Core 1: Clock control
+I (839) CuckooCtrl: Cuckoo clock task started on core 1, stack=6752
+I (849) StateMachine: State: unknown -> starting
+W (859) CuckooCtrl: NTP not synced yet, internal clock waiting for cuckoo.set_time
+W (859) Display: Role:system
+I (869) CuckooCtrl: Music proxy set to 120.55.47.160:8765
+W (869) Display:      cuckoo-clock/2.2.6
+I (879) CuckooCtrl: LoadAlarms: no saved alarms (nvs_open 4354)
 W (879) i2s_common: dma frame num is out of dma buffer size, limited to 511
-I (879) BoxAudioCodec: Duplex channels created
-I (889) ES8311: Work in Slave mode
-I (899) ES7210: Work in Slave mode
-I (899) ES7210: Enable ES7210_INPUT_MIC1
-I (909) ES7210: Enable ES7210_INPUT_MIC2
-I (929) ES7210: Enable ES7210_INPUT_MIC3
-I (929) ES7210: Enable ES7210_INPUT_MIC4
-I (939) ES7210: Enable TDM mode
-I (939) BoxAudioCodec: BoxAudioDevice initialized
-I (939) AudioCodec: Audio codec started
+I (889) BoxAudioCodec: Duplex channels created
+I (899) ES8311: Work in Slave mode
+I (909) ES7210: Work in Slave mode
+I (919) ES7210: Enable ES7210_INPUT_MIC1
+I (919) ES7210: Enable ES7210_INPUT_MIC2
+I (919) ES7210: Enable ES7210_INPUT_MIC3
+I (919) ES7210: Enable ES7210_INPUT_MIC4
+I (929) ES7210: Enable TDM mode
+I (929) BoxAudioCodec: BoxAudioDevice initialized
+I (929) AudioCodec: Audio codec started
 I (949) MCP: Add tool: self.get_device_status
 I (949) MCP: Add tool: self.audio_speaker.set_volume
-I (949) MCP: Add tool: self.screen.set_theme
 I (949) MCP: Add tool: self.get_system_info [user]
 I (959) MCP: Add tool: self.reboot [user]
 I (959) MCP: Add tool: self.upgrade_firmware [user]
-I (959) MCP: Add tool: self.screen.get_info [user]
-I (969) MCP: Add tool: self.screen.snapshot [user]
-I (969) MCP: Add tool: self.screen.preview_image [user]
-I (979) MCP: Add tool: self.assets.set_download_url [user]
-I (979) WifiManager: Initializing...
-I (989) pp: pp rom version: e7ae62f
-I (989) net80211: net80211 rom version: e7ae62f
-I (999) wifi:wifi driver task: 3fcb7008, prio:23, stack:6144, core=0
-I (999) wifi:wifi firmware version: 0947e8b
-I (999) wifi:wifi certification version: v7.0
-I (1009) wifi:config NVS flash: disabled
-I (1009) wifi:config nano formatting: enabled
-I (1019) wifi:Init data frame dynamic rx buffer num: 24
-I (1019) wifi:Init dynamic rx mgmt buffer num: 5
-I (1029) wifi:Init management short buffer num: 32
-I (1029) wifi:Init dynamic tx buffer num: 10
-I (1029) wifi:Init static tx FG buffer num: 2
-I (1039) wifi:Init static rx buffer size: 1600
-I (1039) wifi:Init static rx buffer num: 8
-I (1049) wifi:Init dynamic rx buffer num: 24
-I (1049) wifi_init: rx ba win: 6
-I (1049) wifi_init: accept mbox: 6
-I (1059) wifi_init: tcpip mbox: 64
-I (1059) wifi_init: udp mbox: 64
-I (1059) wifi_init: tcp mbox: 32
-I (1069) wifi_init: tcp tx win: 5760
-I (1069) wifi_init: tcp rx win: 5760
-I (1069) wifi_init: tcp mss: 1440
-I (1079) WifiManager: Initialized
-I (1079) WifiBoard: Starting WiFi connection attempt
-I (1079) WifiManager: Starting station
-I (1089) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10
-I (1119) wifi:mode : sta (d8:85:ac:a2:53:b4)
-I (1129) wifi:enable tsf
-I (1129) WifiBoard: WiFi scanning
-I (3529) WifiStation: Found AP: Guo-D-Link_2.4G, BSSID: 58:ea:1f:67:4a:ee, RSSI: -44, Channel: 5, Authmode: 3
-I (3529) WifiStation: Found AP: Guo-D-Link_2.4G, BSSID: 04:67:61:82:b5:da, RSSI: -66, Channel: 10, Authmode: 3
-I (3539) WifiBoard: WiFi connecting to Guo-D-Link_2.4G
-W (3569) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
-I (4129) wifi:new:<5,0>, old:<1,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
-I (4129) wifi:state: init -> auth (0xb0)
-I (4139) wifi:state: auth -> assoc (0x0)
-I (4149) wifi:state: assoc -> init (0x2c0)
-I (4149) wifi:new:<5,0>, old:<5,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
-I (4149) WifiStation: WiFi disconnected, reason: 203
-I (4149) WifiStation: Reconnecting Guo-D-Link_2.4G (attempt 1 / 5)
-I (5239) wifi:new:<10,0>, old:<5,0>, ap:<255,255>, sta:<10,0>, prof:1, snd_ch_cfg:0x0
-I (5239) wifi:state: init -> auth (0xb0)
-I (5249) wifi:state: auth -> assoc (0x0)
-I (5259) wifi:state: assoc -> run (0x10)
-I (5289) wifi:connected with Guo-D-Link_2.4G, aid = 3, channel 10, BW20, bssid = 04:67:61:82:b5:da
-I (5289) wifi:security: WPA2-PSK, phy: bgn, rssi: -64, cipher(pairwise:0x3, group:0x3), pmf:0
-I (5289) wifi:pm start, type: 1
+I (969) MCP: Add tool: self.assets.set_download_url [user]
+I (969) WifiManager: Initializing...
+I (969) pp: pp rom version: e7ae62f
+I (979) net80211: net80211 rom version: e7ae62f
+I (989) wifi:wifi driver task: 3fce68e8, prio:23, stack:6144, core=0
+I (989) wifi:wifi firmware version: 0947e8b
+I (989) wifi:wifi certification version: v7.0
+I (999) wifi:config NVS flash: disabled
+I (999) wifi:config nano formatting: enabled
+I (999) wifi:Init data frame dynamic rx buffer num: 16
+I (1009) wifi:Init dynamic rx mgmt buffer num: 5
+I (1009) wifi:Init management short buffer num: 32
+I (1019) wifi:Init dynamic tx buffer num: 32
+I (1019) wifi:Init static tx FG buffer num: 2
+I (1019) wifi:Init static rx buffer size: 1600
+I (1029) wifi:Init static rx buffer num: 3
+I (1029) wifi:Init dynamic rx buffer num: 16
+I (1039) wifi_init: rx ba win: 3
+I (1039) wifi_init: accept mbox: 6
+I (1039) wifi_init: tcpip mbox: 16
+I (1049) wifi_init: udp mbox: 20
+I (1049) wifi_init: tcp mbox: 6
+I (1049) wifi_init: tcp tx win: 5760
+I (1049) wifi_init: tcp rx win: 5760
+I (1059) wifi_init: tcp mss: 1440
+I (1059) WifiManager: Initialized
+I (1059) WifiBoard: Starting WiFi connection attempt
+I (1069) WifiManager: Starting station
+I (1069) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10
+I (1109) wifi:mode : sta (d8:85:ac:a2:53:b4)
+I (1109) wifi:enable tsf
+I (1109) WifiBoard: WiFi scanning
+W (1109) Display: ShowNotification: Êâ´Êèè Wi-Fi...
+I (3519) WifiStation: Found AP: Guo-D-Link_2.4G, BSSID: 58:ea:1f:67:4a:ee, RSSI: -35, Channel: 5, Authmode: 3
+I (3519) WifiBoard: WiFi connecting to Guo-D-Link_2.4G
+W (3519) Display: ShowNotification: ËøûÊé• Guo-D-Link_2.4G...
+W (3529) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
+I (4089) wifi:new:<5,0>, old:<1,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (4089) wifi:state: init -> auth (0xb0)
+I (4099) wifi:state: auth -> assoc (0x0)
+I (4099) wifi:state: assoc -> init (0x2c0)
+I (4109) wifi:new:<5,0>, old:<5,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (4109) WifiStation: WiFi disconnected, reason: 203
+I (4309) WifiStation: Reconnecting Guo-D-Link_2.4G (attempt 1 / 15)
+I (6709) WifiStation: WiFi disconnected, reason: 205
+I (6909) WifiStation: Reconnecting Guo-D-Link_2.4G (attempt 2 / 15)
+I (6909) wifi:new:<5,0>, old:<5,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (6919) wifi:state: init -> auth (0xb0)
+I (6919) wifi:state: auth -> assoc (0x0)
+I (6929) wifi:state: assoc -> run (0x10)
+I (6939) wifi:connected with Guo-D-Link_2.4G, aid = 2, channel 5, BW20, bssid = 58:ea:1f:67:4a:ee
+I (6939) wifi:security: WPA2-PSK, phy: bgn, rssi: -35, cipher(pairwise:0x3, group:0x3), pmf:0
+I (6949) wifi:pm start, type: 1
 
-I (5299) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us
-I (5299) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000
-I (5329) wifi:<ba-add>idx:0 (ifx:0, 04:67:61:82:b5:da), tid:6, ssn:2, winSize:64
-I (5339) wifi:AP's beacon interval = 102400 us, DTIM period = 1
-I (5829) wifi:Set ps type: 0, coexist: 0
+I (6949) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us
+I (6959) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000
+I (6989) wifi:<ba-add>idx:0 (ifx:0, 58:ea:1f:67:4a:ee), tid:6, ssn:2, winSize:64
+I (7019) wifi:AP's beacon interval = 102400 us, DTIM period = 1
+I (7979) esp_netif_handlers: sta ip: 192.168.31.113, mask: 255.255.255.0, gw: 192.168.31.1
+I (7979) WifiStation: Got IP: 192.168.31.113
+I (7979) WifiBoard: Connected to WiFi: Guo-D-Link_2.4G
+W (7979) Display: ShowNotification: Â∑≤ËøûÊé• Guo-D-Link_2.4G
+I (7989) Application: Network connected
+I (7989) StateMachine: State: starting -> activating
+I (7999) MODEL_LOADER: Successfully load srmodels
+I (7999) Assets: Refreshing display theme...
+W (7999) Display: Role:system
+W (8009) Display:      
+W (8009) Display: SetEmotion: microchip_ai
+W (8009) Display: SetStatus: Ê£ÄÊü•Êñ∞ÁâàÊú¨...
+I (8019) Ota: Current version: 2.2.6
+I (8049) wifi:<ba-add>idx:1 (ifx:0, 58:ea:1f:67:4a:ee), tid:0, ssn:4, winSize:64
+I (8189) esp-x509-crt-bundle: Certificate validated
+I (8509) HttpClient: Established new connection to api.tenclass.net:443
+I (8619) HttpClient: HTTP connection closed
+I (8619) Ota: Current is the latest version
+I (8619) Ota: Running partition: ota_0
+W (8619) Display: SetStatus: ÁôªÂΩïÊúçÂä°Âô®...
+I (8619) MQTT: Connecting to endpoint mqtt.xiaozhi.me
+I (8759) esp-x509-crt-bundle: Certificate validated
+I (9139) MQTT: Connected to endpoint
+I (9139) Application: Activation done
+I (9139) SystemInfo: free sram: 112855 minimal sram: 106695
+I (9139) StateMachine: State: activating -> idle
+I (9139) CuckooCtrl: Device sleeping ÔøΩÔøΩ closing bird door
+W (9139) Display: ShowNotification: ÁâàÊú¨ 2.2.6
+W (9149) Display: Role:system
+W (9159) Display:      
+I (9159) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+I (9169) wifi:Set ps type: 2, coexist: 0
 
-I (5829) CuckooCtrl: Forced WiFi power save off (attempt 1/3)
-I (6319) esp_netif_handlers: sta ip: 192.168.31.113, mask: 255.255.255.0, gw: 192.168.31.1
-I (6319) WifiStation: Got IP: 192.168.31.113
-I (6319) WifiBoard: Connected to WiFi: Guo-D-Link_2.4G
-I (6329) Application: Network connected
-I (6329) StateMachine: State: starting -> activating
-W (6329) SingleLed: SingleLed initialized with GPIO_NUM_NC, LED will not function
-create static modelsI (6339) MODEL_LOADER: Successfully load srmodels
-I (6339) Assets: Refreshing display theme...
-I (6349) Ota: Current version: 2.2.6
-I (6369) wifi:<ba-add>idx:1 (ifx:0, 04:67:61:82:b5:da), tid:0, ssn:4, winSize:64
-I (6539) esp-x509-crt-bundle: Certificate validated
-I (6859) HttpClient: Established new connection to api.tenclass.net:443
-I (6979) HttpClient: HTTP connection closed
-I (6979) Ota: Current is the latest version
-I (6979) Ota: Running partition: ota_0
-I (6979) MQTT: Connecting to endpoint mqtt.xiaozhi.me
-I (7109) esp-x509-crt-bundle: Certificate validated
-I (7459) MQTT: Connected to endpoint
-I (7459) Application: Activation done
-I (7459) SystemInfo: free sram: 91679 minimal sram: 87439
-I (7459) StateMachine: State: activating -> idle
-I (7459) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
-I (7469) wifi:Set ps type: 2, coexist: 0
-
-I (7499) CustomWakeWord: Command: xiao niao xiao niao, Text: xiaoniao xiaoniao, Action: wake
+W (9169) Display: SetStatus: ÂæÖÂëΩ
+W (9169) Display: SetEmotion: neutral
+I (9179) CustomWakeWord: Command: xiao niao xiao niao, Text: xiaoniao xiaoniao, Action: wake
+I (9749) AudioCodec: Set input gain to 37.5
 Build fst from commands.
-Quantized MultiNet7:rnnt_ctc_2.0, name:mn7_cn, (Dec 16 2025 14:45:55)
+Quantized MultiNet7:rnnt_ctc_2.0, name:mn7_cn, (May 25 2026 15:51:00)
 Quantized MultiNet7 search method: 2, time out:3.0 s
-set det threshold to 0.050000
+set det threshold to 0.020000
 Build fst from commands.
 1 active speech commands:
 Command 1: xiao niao xiao niao
-I (8849) I2S_IF: Paired data: 0x3fcdc88c, current mode: playback, paired in_enable: 0, paired out_enable: 0
-I (8849) I2S_IF: STD: TX, data_bit: 16, slot_bit: 16, ws_width: 16, slot_mode: MONO, slot_mask: 0x1
-I (8859) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
-I (8879) Adev_Codec: Open codec device OK
-I (8879) AudioCodec: Set output enable to true
-I (8879) I2S_IF: Peer mode playback need extend bits 32 to 64
-I (8889) I2S_IF: TDM: RX, data_bit: 16, slot_bit: 16, ws_width: 32, total_slot: 4, slot_mask: 0x3
-I (8889) I2S_IF: TDM: RX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
-I (8909) I2S_IF: STD: TX, data_bit: 16, slot_bit: 32, ws_width: 32, slot_mode: MONO, slot_mask: 0x1
-I (8909) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
-I (8919) ES7210: Bits 16
-I (8929) ES7210: Enable ES7210_INPUT_MIC1
-I (8929) ES7210: Enable ES7210_INPUT_MIC2
-I (8929) ES7210: Enable ES7210_INPUT_MIC3
-I (8939) ES7210: Enable ES7210_INPUT_MIC4
-I (8939) ES7210: Enable TDM mode
-I (8949) ES7210: Unmuted
-I (8949) Adev_Codec: Open codec device OK
-I (8949) AudioCodec: Set input enable to true
-I (10829) wifi:Set ps type: 0, coexist: 0
+I (10529) I2S_IF: Paired data: 0x3fcd7e38, current mode: playback, paired in_enable: 0, paired out_enable: 0
+I (10529) I2S_IF: STD: TX, data_bit: 16, slot_bit: 16, ws_width: 16, slot_mode: MONO, slot_mask: 0x1
+I (10539) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10559) Adev_Codec: Open codec device OK
+I (10559) AudioCodec: Set output enable to true
+I (10559) I2S_IF: Peer mode playback need extend bits 32 to 64
+I (10559) I2S_IF: TDM: RX, data_bit: 16, slot_bit: 16, ws_width: 32, total_slot: 4, slot_mask: 0x3
+I (10569) I2S_IF: TDM: RX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10579) I2S_IF: STD: TX, data_bit: 16, slot_bit: 32, ws_width: 32, slot_mode: MONO, slot_mask: 0x1
+I (10589) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10599) ES7210: Bits 16
+I (10609) ES7210: Enable ES7210_INPUT_MIC1
+I (10609) ES7210: Enable ES7210_INPUT_MIC2
+I (10609) ES7210: Enable ES7210_INPUT_MIC3
+I (10619) ES7210: Enable ES7210_INPUT_MIC4
+I (10619) ES7210: Enable TDM mode
+I (10629) ES7210: Unmuted
+I (10629) Adev_Codec: Open codec device OK
+I (10629) AudioCodec: Set input enable to true
+I (18949) SystemInfo: free sram: 93347 minimal sram: 80871
+I (23419) CustomWakeWord: Custom wake word detected: command_id=1, string= xiao niao xiao niao, prob=0.032818
+I (23419) Application: Wake word detected: xiao niao xiao niao (state: 3)
+I (23659) CustomWakeWord: Encode wake word opus 35 packets in 234 ms
+I (26719) StateMachine: State: idle -> connecting
+W (26719) Display: SetStatus: ËøûÊé•‰∏≠...
+W (26719) Display: SetEmotion: neutral
+W (26719) Display: Role:system
+W (26729) Display:      
+I (26749) CuckooCtrl: Device woke up ÔøΩÔøΩ opening bird door
+I (26789) MQTT: Session ID: 8d1d688f
+I (26789) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (26789) wifi:Set ps type: 0, coexist: 0
 
-I (10829) CuckooCtrl: Forced WiFi power save off (attempt 2/3)
-I (15829) wifi:Set ps type: 0, coexist: 0
-
-I (15829) CuckooCtrl: Forced WiFi power save off (attempt 3/3)
-I (15829) CuckooCtrl: Auto-synced clock from NTP: 17:18:20
-I (15829) CuckooCtrl: Music proxy set to 192.168.31.123:8765
-I (16949) SystemInfo: free sram: 106247 minimal sram: 56527
-I (21629) CustomWakeWord: Custom wake word detected: command_id=1, string= xiao niao xiao niao, prob=0.374933
-I (21629) Application: Wake word detected: xiao niao xiao niao (state: 3)
-I (21869) CustomWakeWord: Encode wake word opus 35 packets in 229 ms
-I (24979) StateMachine: State: idle -> connecting
-I (25069) MQTT: Session ID: 03ce5468
-I (25069) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
-I (25069) wifi:Set ps type: 0, coexist: 0
-
-W (25069) Application: Server sample rate 24000 does not match device output sample rate 16000, resampling may cause distortion
-I (25089) Application: Wake word detected: xiao niao xiao niao
-I (25109) StateMachine: State: connecting -> listening
-I (25139) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=18 dropped=0
-I (25139) AudioService: WAIT-DONE: dq=0 pq=0 pushed=18 dropped=0
-I (25169) Application: >> xiao niao xiao niao
-I (25659) AFE: AFE Version: (1MIC_V251128)
-I (25659) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
-I (25659) AFE: AFE Pipeline: [input] -> |AEC(VOIP_LOW_COST)| -> [output]
-I (25669) AudioService: RESET-DECODER: dq=0 pq=0 pushed=18 dropped=0 i2s_pkts=18 i2s_samp=17280
-I (25669) StateMachine: State: listening -> speaking
-I (25679) AfeAudioProcessor: Audio communication task started, feed size: 256 fetch size: 512
-I (25709) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0 i2s_pkts=18 i2s_samp=17280
-I (25779) Application: << Œ“‘⁄ƒÿ£¨’¶ªÿ ¬£ø
-I (25849) AudioService: Resampling audio from 24000 to 16000
-I (25869) AudioService: I2S-OUT: packets=20 samples=19200
-I (26869) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (27029) AudioService: I2S-OUT: packets=40 samples=38400
-I (27339) Application: TTS-STOP received
-I (27349) Application: TTS-STOP scheduled, state=6
-I (27349) StateMachine: State: speaking -> listening
-I (27369) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=27 dropped=0
-I (27369) AudioService: WAIT-DONE: dq=0 pq=0 pushed=27 dropped=0
-I (30639) StateMachine: State: listening -> speaking
-I (30649) Application: >> ƒ„Ω≤∏ˆ–¶ª∞°£
-I (30669) AudioService: RESET-DECODER: dq=0 pq=0 pushed=27 dropped=0 i2s_pkts=45 i2s_samp=43200
-I (31759) Application: << % get_random_jokes...
-I (32469) Application: << ”–“ª∏ˆ¬∑»À√‘¬∑¡À£¨æÕ√˛◊≈“ª∏ˆ–°ƒ–∫¢µƒÕ∑Œ £∫"’‚ «ƒƒ¿Ô£ø"–°ƒ–∫¢£∫"’‚ «Œ“µƒÕ∑∞°°£"
-I (33249) Application: TTS-STOP received
-I (33249) Application: TTS-STOP scheduled, state=6
-I (33249) StateMachine: State: speaking -> listening
-I (33259) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=14 dropped=0
-I (33259) AudioService: WAIT-DONE: dq=0 pq=0 pushed=14 dropped=0
-I (34559) StateMachine: State: listening -> speaking
-I (34569) AudioService: RESET-DECODER: dq=0 pq=0 pushed=14 dropped=0 i2s_pkts=59 i2s_samp=56640
-I (34569) Application: >> Œ“°£
-I (35099) Application: << ’¶¡À£ø
-I (35409) AudioService: I2S-OUT: packets=60 samples=57600
-I (35939) Application: TTS-STOP received
-I (35939) Application: TTS-STOP scheduled, state=6
-I (35939) StateMachine: State: speaking -> listening
-I (35979) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=11 dropped=0
-I (35979) AudioService: WAIT-DONE: dq=0 pq=0 pushed=11 dropped=0
-I (40479) StateMachine: State: listening -> speaking
-I (40479) AudioService: RESET-DECODER: dq=0 pq=0 pushed=11 dropped=0 i2s_pkts=70 i2s_samp=67200
-I (40489) Application: >> ƒ„Ω≤∏ˆ–¶ª∞°£
-I (41339) Application: << % get_random_jokes...
-I (42609) AudioService: I2S-OUT: packets=80 samples=76800
-I (42849) Application: TTS-STOP received
-I (42849) Application: TTS-STOP scheduled, state=6
-I (42849) StateMachine: State: speaking -> listening
-I (42879) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=14 dropped=0
-I (42879) AudioService: WAIT-DONE: dq=0 pq=0 pushed=14 dropped=0
-I (44549) StateMachine: State: listening -> speaking
-I (44559) Application: >>  ÷ ıÃ®…œ°£
-I (44569) AudioService: RESET-DECODER: dq=0 pq=0 pushed=14 dropped=0 i2s_pkts=84 i2s_samp=80640
-I (45839) wifi:Set ps type: 0, coexist: 0
-
-I (47439) Application: << æÕπ˝»•¡À°£≤°»À∫‹„¬£¨Àµ£∫Œ“≤ªΩ–David°£“Ω…˙∑ˆ¡À∑ˆ—€æµ£¨Àµ£∫Œ“÷™µ¿£¨Œ“Ω–David°£
-I (48279) AudioService: I2S-OUT: packets=100 samples=96000
-I (48489) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (48629) Application: TTS-STOP received
-I (48629) Application: TTS-STOP scheduled, state=6
-I (48629) StateMachine: State: speaking -> listening
-I (48639) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=22 dropped=0
-I (48639) AudioService: WAIT-DONE: dq=0 pq=0 pushed=22 dropped=0
-I (49269) StateMachine: State: listening -> speaking
-I (49269) Application: >>  «¬°£
-I (49279) AudioService: RESET-DECODER: dq=0 pq=0 pushed=22 dropped=0 i2s_pkts=106 i2s_samp=101760
-I (50009) Application: <<  «∞°£¨Õ¶∫√–¶µƒ∞…£ø
+W (26789) Application: Server sample rate 24000 does not match device output sample rate 16000, resampling may cause distortion
+I (26809) Application: Wake word detected: xiao niao xiao niao
+I (26829) StateMachine: State: connecting -> listening
+W (26829) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (26829) Display: SetEmotion: neutral
+I (26829) Application: LISTENING-START: t=26665552 us
+I (26829) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=18 dropped=0
+I (26839) AudioService: WAIT-DONE: dq=0 pq=0 pushed=18 dropped=0
+I (26869) AFE: AFE Version: (1MIC_V251128)
+I (26869) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
+I (26869) AFE: AFE Pipeline: [input] -> |AEC(FD_HIGH_PERF, NLP_VERY_AGGRESSIVE)| -> |AGC(WebRTC)| -> [output]
+I (26879) AudioService: RESET-DECODER: dq=0 pq=0 pushed=18 dropped=0
+I (26879) AfeAudioProcessor: Audio communication task started, feed size: 512 fetch size: 512
+I (26899) Application: SERVER-FIRST-MSG: type=stt delay=74 ms
+I (26899) Application: >> xiao niao xiao niao
+W (26899) Display: Role:user
+W (26909) Display:      xiao niao xiao niao
+I (27079) StateMachine: State: listening -> speaking
+W (27089) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (27089) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+set det threshold to 0.300000
+I (27349) CustomWakeWord: Wake word threshold set to 0.30
+I (27349) AudioCodec: Set input gain to 30.0
+W (27449) Display: SetEmotion: happy
+I (27769) Application: << Â∞èÈ∏üÊù•Âï¶ÔΩûÊúâ‰ªÄ‰πàÂèØ‰ª•Â∏ÆÊÇ®ÁöÑÂêóÔºü
+W (27769) Display: Role:assistant
+W (27769) Display:      Â∞èÈ∏üÊù•Âï¶ÔΩûÊúâ‰ªÄ‰πàÂèØ‰ª•Â∏ÆÊÇ®ÁöÑÂêóÔºü
+W (28299) EspUdp: UDP recv gap: 1505 ms
+I (28299) Application: SERVER-FIRST-AUDIO: delay=1469 ms
+I (29319) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (30519) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (31479) Application: TTS-STOP received
+I (31479) Application: TTS-STOP scheduled, state=6
+I (31479) StateMachine: State: speaking -> listening
+W (31479) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (31479) Display: SetEmotion: neutral
+I (31489) Application: LISTENING-START: t=31322163 us
+I (31489) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=55 dropped=0
+I (31499) AudioService: WAIT-DONE: dq=0 pq=0 pushed=55 dropped=0
+I (31499) AudioService: RESET-DECODER: dq=0 pq=0 pushed=55 dropped=0
+I (37719) Application: SERVER-FIRST-MSG: type=stt delay=6234 ms
+I (37719) Application: >> ÊàëÊÉ≥Âê¨Êò®Â§úÊòüËæ∞„ÄÇ
+W (37719) Display: Role:user
+W (37719) Display:      ÊàëÊÉ≥Âê¨Êò®Â§úÊòüËæ∞„ÄÇ
+I (37729) StateMachine: State: listening -> speaking
+W (37729) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (37739) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (38179) Application: << % self.get_device_status...
+W (38179) Display: Role:assistant
+W (38179) Display:      % self.get_device_status...
+I (39289) Application: << % cuckoo.play_url...
+W (39289) Display: Role:assistant
+W (39289) Display:      % cuckoo.play_url...
+I (39329) CuckooCtrl: CheckMultiArtist: GET http://120.55.47.160:8765/pcm?q=%E6%98%A8%E5%A4%9C%E6%98%9F%E8%BE%B0
+I (39979) CuckooCtrl: CheckMultiArtist: status=200 content_len=205
+I (39979) CuckooCtrl: CheckMultiArtist: detected multi-artist, 205 bytes
+W (40439) Display: SetEmotion: happy
+W (41029) EspUdp: UDP recv gap: 9550 ms
+I (41029) Application: SERVER-FIRST-AUDIO: delay=9543 ms
+I (42049) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (42649) Application: << „ÄäÊò®Â§úÊòüËæ∞„ÄãÊúâÂ•ΩÂá†‰∏™ÁâàÊú¨Âë¢ÔºåÊúâÊûóÊ∑ëÂÆπ„ÄÅËé´Ëø™ÂÖ∞„ÄÅÁ∫∏È£ûÊú∫„ÄÅÈæôÈ£òÈ£ò„ÄÅËíãÂ∞èÈõ®Âî±ÁöÑÔºåÊÇ®ÊÉ≥Âê¨Ë∞ÅÁöÑÂëÄÔºü
+W (42649) Display: Role:assistant
+W (42649) Display:      „ÄäÊò®Â§úÊòüËæ∞„ÄãÊúâÂ•ΩÂá†‰∏™ÁâàÊú¨Âë¢ÔºåÊúâÊûóÊ∑ëÂÆπ„ÄÅËé´Ëø™ÂÖ∞„ÄÅÁ∫∏È£ûÊú∫„ÄÅÈæôÈ£òÈ£ò„ÄÅËíãÂ∞èÈõ®Âî±ÁöÑÔºåÊÇ®ÊÉ≥Âê¨Ë∞ÅÁöÑÂëÄÔºü
+I (43249) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (44449) AudioService: DECODE-Q: pushed=60 dropped=0 q_size=0
+I (45649) AudioService: DECODE-Q: pushed=80 dropped=0 q_size=0
+I (46849) AudioService: DECODE-Q: pushed=100 dropped=0 q_size=0
+I (46949) SystemInfo: free sram: 112595 minimal sram: 72683
+I (48049) AudioService: DECODE-Q: pushed=120 dropped=0 q_size=0
+I (49249) AudioService: DECODE-Q: pushed=140 dropped=0 q_size=0
 I (50209) Application: TTS-STOP received
 I (50209) Application: TTS-STOP scheduled, state=6
 I (50209) StateMachine: State: speaking -> listening
-I (50209) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
-I (50219) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
-I (51519) StateMachine: State: listening -> speaking
-I (51519) Application: >>  ≤√¥∂´Œ˜π˝»•¡À£ø
-I (51549) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0 i2s_pkts=106 i2s_samp=101760
-I (52249) Application: <<  « ÷ ıπ˝»•¡À—Ω£¨“Ω…˙‘⁄∞≤Œø≤°»Àƒÿ°£
-I (53179) Application: TTS-STOP received
-I (53179) Application: TTS-STOP scheduled, state=6
-I (53179) StateMachine: State: speaking -> listening
-I (53189) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=11 dropped=0
-I (53189) AudioService: WAIT-DONE: dq=0 pq=0 pushed=11 dropped=0
-I (54629) StateMachine: State: listening -> speaking
-I (54639) Application: >> Àµ ÷…œ°£
-I (54669) AudioService: RESET-DECODER: dq=0 pq=0 pushed=11 dropped=0 i2s_pkts=117 i2s_samp=112320
-I (55579) Application: TTS-STOP received
-I (55579) Application: TTS-STOP scheduled, state=6
-I (55579) StateMachine: State: speaking -> listening
-I (55619) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
-I (55619) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
-I (57829) StateMachine: State: listening -> speaking
-I (57839) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0 i2s_pkts=117 i2s_samp=112320
-I (57839) Application: >> ƒ„Ω≤ª∞Ω≤∞Îæ‰µƒ°£
-I (58669) Application: << ±ß«∏±ß«∏£¨∏’≤≈√ªÀµÕÍ£¨ «“Ω…˙‘⁄∞≤Œø≤°»ÀÀµ ÷ ı∫‹øÏæÕª·π˝»•µƒ°£
-I (58749) AudioService: I2S-OUT: packets=120 samples=115200
-I (59739) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (59959) AudioService: I2S-OUT: packets=140 samples=134400
-I (60929) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
-I (61139) AudioService: I2S-OUT: packets=160 samples=153600
-I (62129) AudioService: DECODE-Q: pushed=60 dropped=0 q_size=0
-I (62359) AudioService: I2S-OUT: packets=180 samples=172800
-I (63099) Application: TTS-STOP received
-I (63099) Application: TTS-STOP scheduled, state=6
-I (63099) StateMachine: State: speaking -> listening
-I (63129) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=76 dropped=0
-I (63129) AudioService: WAIT-DONE: dq=0 pq=0 pushed=76 dropped=0
-I (64309) StateMachine: State: listening -> speaking
-I (64309) Application: >> À´ ÷À˚ ÷°£
-I (64319) AudioService: RESET-DECODER: dq=0 pq=0 pushed=76 dropped=0 i2s_pkts=193 i2s_samp=185280
-I (65469) Application: << ƒ„ «œÎÃ˝πÿ”⁄ ÷µƒ–¶ª∞¬£ø
-I (66199) AudioService: I2S-OUT: packets=200 samples=192000
-I (66459) Application: TTS-STOP received
-I (66459) Application: TTS-STOP scheduled, state=6
-I (66459) StateMachine: State: speaking -> listening
-I (66459) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=12 dropped=0
-I (66459) AudioService: WAIT-DONE: dq=0 pq=0 pushed=12 dropped=0
-I (67929) StateMachine: State: listening -> speaking
-I (67929) Application: >> ∫√œÒ¥Úπ§°£
-I (67939) AudioService: RESET-DECODER: dq=0 pq=0 pushed=12 dropped=0 i2s_pkts=205 i2s_samp=196800
-I (68619) Application: << ¥Úπ§»∑ µ–¡ø‡ƒÿ£¨“™≤ª“™‘ŸÃ˝∏ˆ–¶ª∞∑≈À…“ªœ¬£ø
-I (69749) AudioService: I2S-OUT: packets=220 samples=211200
-I (69829) Application: TTS-STOP received
-I (69829) Application: TTS-STOP scheduled, state=6
-I (69829) StateMachine: State: speaking -> listening
-I (69859) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=16 dropped=0
-I (69859) AudioService: WAIT-DONE: dq=0 pq=0 pushed=16 dropped=0
-I (70469) StateMachine: State: listening -> speaking
-I (70479) Application: >> ¥Úπ§»∑ µƒÿ°£
-I (70509) AudioService: RESET-DECODER: dq=0 pq=0 pushed=16 dropped=0 i2s_pkts=221 i2s_samp=212160
-I (71089) Application: <<  «∞°£¨¥Úπ§≤ª»›“◊£¨“™◊¢“‚–›œ¢—Ω°£
-I (72399) AudioService: I2S-OUT: packets=240 samples=230400
-I (72429) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (73619) AudioService: I2S-OUT: packets=260 samples=249600
-I (73629) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
-I (74289) Application: TTS-STOP received
-I (74289) Application: TTS-STOP scheduled, state=6
-I (74289) StateMachine: State: speaking -> listening
-I (74299) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=50 dropped=0
-I (74299) AudioService: WAIT-DONE: dq=0 pq=0 pushed=50 dropped=0
-I (75839) wifi:Set ps type: 0, coexist: 0
+W (50209) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (50209) Display: SetEmotion: neutral
+I (50219) Application: LISTENING-START: t=50052155 us
+I (50219) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=155 dropped=0
+I (50229) AudioService: WAIT-DONE: dq=0 pq=0 pushed=155 dropped=0
+I (50229) AudioService: RESET-DECODER: dq=0 pq=0 pushed=155 dropped=0
+I (52399) Application: SERVER-FIRST-MSG: type=stt delay=2180 ms
+I (52399) Application: >> Âê¨Á¨¨‰∏Ä‰∏™„ÄÇ
+W (52399) Display: Role:user
+W (52399) Display:      Âê¨Á¨¨‰∏Ä‰∏™„ÄÇ
+I (52399) StateMachine: State: listening -> speaking
+W (52409) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (52409) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (54749) Application: << % cuckoo.play_url...
+W (54749) Display: Role:assistant
+W (54749) Display:      % cuckoo.play_url...
+I (54749) CuckooCtrl: CheckMultiArtist: GET http://120.55.47.160:8765/pcm?q=%E6%98%A8%E5%A4%9C%E6%98%9F%E8%BE%B0%20%E6%9E%97%E6%B7%91%E5%AE%B9
+I (56389) CuckooCtrl: CheckMultiArtist: status=200 content_len=0
+I (56389) CuckooCtrl: PlayOnlineMusic: AI speaking, music will overlap (ducked)
+I (56389) CuckooCtrl: PlayOpus: launching for http://120.55.47.160:8765/pcm?q=%E6%98%A8%E5%A4%9C%E6%98%9F%E8%BE%B0%20%E6%9E%97%E6%B7%91%E5%AE%B9
+I (56399) CuckooCtrl: PlayOpus: task started for http://120.55.47.160:8765/pcm?q=%E6%98%A8%E5%A4%9C%E6%98%9F%E8%BE%B0%20%E6%9E%97%E6%B7%91%E5%AE%B9
+I (56419) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (56419) wifi:Set ps type: 0, coexist: 0
 
-I (80789) StateMachine: State: listening -> speaking
-I (80789) AudioService: RESET-DECODER: dq=0 pq=0 pushed=50 dropped=0 i2s_pkts=271 i2s_samp=260160
-I (80789) Application: >> Œ“œÎÃ˝∏Ë°£
-I (81519) Application: << œÎÃ˝ ≤√¥∏Ëƒÿ£ø
-I (82359) AudioService: I2S-OUT: packets=280 samples=268800
-I (82459) Application: TTS-STOP received
-I (82459) Application: TTS-STOP scheduled, state=6
-I (82459) StateMachine: State: speaking -> listening
-I (82459) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=11 dropped=0
-I (82469) AudioService: WAIT-DONE: dq=0 pq=0 pushed=11 dropped=0
-I (83179) StateMachine: State: listening -> speaking
-I (83179) Application: >> œÎÀµ ≤√¥£ø
-I (83189) AudioService: RESET-DECODER: dq=0 pq=0 pushed=11 dropped=0 i2s_pkts=282 i2s_samp=270720
-I (84639) Application: << Œ“ «Œ ƒ„œÎÃ˝ ≤√¥∏Ë—Ω£¨∏ÊÀﬂŒ“∏Ë√˚ªÚ’ﬂ∏Ë ÷∞…°£
-I (84859) Application: TTS-STOP received
-I (84859) Application: TTS-STOP scheduled, state=6
-I (84859) StateMachine: State: speaking -> listening
-I (84859) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=3 dropped=0
-I (84859) AudioService: WAIT-DONE: dq=0 pq=0 pushed=3 dropped=0
-I (86319) StateMachine: State: listening -> speaking
-I (86319) Application: >> ø Õ˚°£
-I (86329) AudioService: RESET-DECODER: dq=0 pq=0 pushed=3 dropped=0 i2s_pkts=285 i2s_samp=273600
-I (87519) Application: << % cuckoo.set_music_proxy...
-I (88949) Application: << % cuckoo.play_url...
-I (88949) CuckooCtrl: PlayOpus: launching for http://192.168.31.123:8765/opus?q=%E6%B8%B4%E6%9C%9B
-I (88949) CuckooCtrl: PlayOpus: task started for http://192.168.31.123:8765/opus?q=%E6%B8%B4%E6%9C%9B
-I (88959) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
-I (88969) wifi:Set ps type: 0, coexist: 0
+I (56429) CuckooCtrl: PlayOpus: connecting to 120.55.47.160:8765...
+I (56449) CuckooCtrl: PlayOpus: connected to 120.55.47.160:8765
+W (56799) Display: SetEmotion: happy
+I (57089) Application: << Â•ΩÂòûÔºåÊûóÊ∑ëÂÆπÁöÑ„ÄäÊò®Â§úÊòüËæ∞„ÄãÂºÄÂßãÊí≠ÊîæÂï¶ÔΩû
+W (57089) Display: Role:assistant
+W (57089) Display:      Â•ΩÂòûÔºåÊûóÊ∑ëÂÆπÁöÑ„ÄäÊò®Â§úÊòüËæ∞„ÄãÂºÄÂßãÊí≠ÊîæÂï¶ÔΩû
+W (57489) EspUdp: UDP recv gap: 7286 ms
+I (57499) Application: SERVER-FIRST-AUDIO: delay=7279 ms
+I (58029) CuckooCtrl: PlayOpus: HTTP 200
+I (58029) CuckooCtrl: PlayOpus: downloading raw PCM...
+I (58519) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (59719) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (59759) CuckooCtrl: PlayOpus: drain enabled (buffered 64128 samples in 1726 ms)
+I (60919) AudioService: DECODE-Q: pushed=60 dropped=0 q_size=0
+I (61449) Application: TTS-STOP received
+I (61449) Application: TTS-STOP scheduled, state=6
+I (61449) StateMachine: State: speaking -> listening
+W (61459) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (61459) Display: SetEmotion: neutral
+I (61459) Application: LISTENING-START: t=61299192 us
+I (61469) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=68 dropped=0
+I (61469) AudioService: WAIT-DONE: dq=0 pq=0 pushed=68 dropped=0
+I (61479) AudioService: RESET-DECODER: dq=0 pq=0 pushed=68 dropped=0
+I (61489) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (66089) CuckooCtrl: PlayOpus: buf=79344 samples dl=403KB rate=50.1KB/s
+I (70949) SystemInfo: free sram: 76635 minimal sram: 47747
+I (73169) CuckooCtrl: NTP sync: 22:20:05
+I (73169) CuckooCtrl: Heartbeat t=60s stack_hwm=6624 free_heap=4200508
+I (74189) CuckooCtrl: PlayOpus: buf=78768 samples dl=655KB rate=40.6KB/s
+W (76949) Application: LISTENING-TIMEOUT: no server response after 15491 ms, state=5
+I (80949) SystemInfo: free sram: 76635 minimal sram: 47731
+I (82389) CuckooCtrl: PlayOpus: buf=78640 samples dl=911KB rate=37.4KB/s
+I (86219) Application: SERVER-FIRST-MSG: type=stt delay=24756 ms
+I (86219) Application: >> Âì¶ÔºåÊàë‰∏çË¶ÅÂê¨Ëøô‰∏™‰∫ÜÔºåÊç¢‰∏ÄÈ¶ñÊ≠å„ÄÇüòä
+W (86219) Display: Role:user
+W (86219) Display:      Âì¶ÔºåÊàë‰∏çË¶ÅÂê¨Ëøô‰∏™‰∫ÜÔºåÊç¢‰∏ÄÈ¶ñÊ≠å„ÄÇüòä
+I (86229) StateMachine: State: listening -> speaking
+W (86229) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (86239) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (86289) CuckooCtrl: PlayOpus: AI speaking, music -> 50%
+W (87319) Display: SetEmotion: happy
+I (87719) Application: << Â•ΩÂòûÔºåÊÉ≥Êç¢‰ªÄ‰πàÊ≠åÂëÄÔºü
+W (87719) Display: Role:assistant
+W (87719) Display:      Â•ΩÂòûÔºåÊÉ≥Êç¢‰ªÄ‰πàÊ≠åÂëÄÔºü
+W (88139) EspUdp: UDP recv gap: 26686 ms
+I (88139) Application: SERVER-FIRST-AUDIO: delay=26679 ms
+I (89159) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (90299) Application: TTS-STOP received
+I (90299) Application: TTS-STOP scheduled, state=6
+I (90299) StateMachine: State: speaking -> listening
+W (90299) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (90309) Display: SetEmotion: neutral
+I (90309) Application: LISTENING-START: t=90147511 us
+I (90319) AudioService: WAIT-PLAYBACK: dq=0 pq=2 pushed=39 dropped=0
+I (90339) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (90389) CuckooCtrl: PlayOpus: buf=76032 samples dl=1157KB rate=35.8KB/s
+I (90399) AudioService: WAIT-DONE: dq=0 pq=0 pushed=39 dropped=0
+I (90409) AudioService: RESET-DECODER: dq=0 pq=0 pushed=39 dropped=0
+I (93509) Application: SERVER-FIRST-MSG: type=stt delay=3202 ms
+I (93509) Application: >> ÊòØÂê¶„ÄÇ
+W (93509) Display: Role:user
+W (93509) Display:      ÊòØÂê¶„ÄÇ
+I (93519) StateMachine: State: listening -> speaking
+W (93519) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (93529) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (93619) CuckooCtrl: PlayOpus: AI speaking, music -> 50%
+I (94809) Application: << % cuckoo.play_url...
+W (94809) Display: Role:assistant
+W (94809) Display:      % cuckoo.play_url...
+I (94809) CuckooCtrl: CheckMultiArtist: GET http://120.55.47.160:8765/pcm?q=%E6%98%AF%E5%90%A6
+I (95749) CuckooCtrl: CheckMultiArtist: status=200 content_len=209
+I (95749) CuckooCtrl: CheckMultiArtist: detected multi-artist, 209 bytes
+W (96179) Display: SetEmotion: happy
+I (96649) Application: << „ÄäÊòØÂê¶„ÄãÊúâÂ•ΩÂá†‰∏™ÁâàÊú¨Âë¢ÔºåÊúâÁ®ãÂìç„ÄÅÈÇìÁ¥´Ê£ã„ÄÅËãèËäÆ„ÄÅÂ¥îÂÅ•„ÄÅÁΩóÂ§ß‰Ωë„ÄÅÂ≠ôÂ´£ÁÑ∂Âî±ÁöÑÔºåÊÇ®ÊÉ≥Âê¨Ë∞ÅÁöÑÂëÄÔºü
+W (96659) Display: Role:assistant
+W (96659) Display:      „ÄäÊòØÂê¶„ÄãÊúâÂ•ΩÂá†‰∏™ÁâàÊú¨Âë¢ÔºåÊúâÁ®ãÂìç„ÄÅÈÇìÁ¥´Ê£ã„ÄÅËãèËäÆ„ÄÅÂ¥îÂÅ•„ÄÅÁΩóÂ§ß‰Ωë„ÄÅÂ≠ôÂ´£ÁÑ∂Âî±ÁöÑÔºåÊÇ®ÊÉ≥Âê¨Ë∞ÅÁöÑÂëÄÔºü
+W (96669) EspUdp: UDP recv gap: 6366 ms
+I (96679) Application: SERVER-FIRST-AUDIO: delay=6366 ms
+I (97699) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (98469) CuckooCtrl: PlayOpus: buf=65952 samples dl=1391KB rate=34.4KB/s
+I (98889) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (100089) AudioService: DECODE-Q: pushed=60 dropped=0 q_size=0
+I (101289) AudioService: DECODE-Q: pushed=80 dropped=0 q_size=0
+I (102489) AudioService: DECODE-Q: pushed=100 dropped=0 q_size=0
+I (102949) SystemInfo: free sram: 71407 minimal sram: 47443
+I (103689) AudioService: DECODE-Q: pushed=120 dropped=0 q_size=0
+I (104889) AudioService: DECODE-Q: pushed=140 dropped=0 q_size=0
+I (105429) Application: TTS-STOP received
+I (105429) Application: TTS-STOP scheduled, state=6
+I (105429) StateMachine: State: speaking -> listening
+W (105429) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (105439) Display: SetEmotion: neutral
+I (105439) Application: LISTENING-START: t=105275649 us
+I (105439) AudioService: WAIT-PLAYBACK: dq=0 pq=2 pushed=149 dropped=0
+I (105469) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (105539) AudioService: WAIT-DONE: dq=0 pq=0 pushed=149 dropped=0
+I (105539) AudioService: RESET-DECODER: dq=0 pq=0 pushed=149 dropped=0
+I (106469) CuckooCtrl: PlayOpus: buf=79792 samples dl=1665KB rate=34.4KB/s
+I (107469) Application: SERVER-FIRST-MSG: type=stt delay=2029 ms
+I (107469) Application: >> ÁΩóÂ§ß‰Ωë„ÄÇ
+W (107469) Display: Role:user
+W (107469) Display:      ÁΩóÂ§ß‰Ωë„ÄÇ
+I (107469) StateMachine: State: listening -> speaking
+W (107479) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (107489) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (107569) CuckooCtrl: PlayOpus: AI speaking, music -> 50%
+I (108699) Application: << % cuckoo.play_url...
+W (108699) Display: Role:assistant
+W (108699) Display:      % cuckoo.play_url...
+I (108709) CuckooCtrl: CheckMultiArtist: GET http://120.55.47.160:8765/pcm?q=%E6%98%AF%E5%90%A6%20%E7%BD%97%E5%A4%A7%E4%BD%91
+I (110839) CuckooCtrl: CheckMultiArtist: status=200 content_len=0
+I (110839) CuckooCtrl: PlayOnlineMusic: AI speaking, music will overlap (ducked)
+I (110839) CuckooCtrl: PlayOnlineMusic: stopping current music for new request
+I (110839) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (110869) CuckooCtrl: PlayOpus: done 52836ms, dl=1773KB
+I (111149) CuckooCtrl: PlayOpus: launching for http://120.55.47.160:8765/pcm?q=%E6%98%AF%E5%90%A6%20%E7%BD%97%E5%A4%A7%E4%BD%91
+I (111149) CuckooCtrl: PlayOpus: task started for http://120.55.47.160:8765/pcm?q=%E6%98%AF%E5%90%A6%20%E7%BD%97%E5%A4%A7%E4%BD%91
+I (111159) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (111159) wifi:Set ps type: 0, coexist: 0
 
-I (88969) CuckooCtrl: PlayOpus: connecting to 192.168.31.123:8765...
-I (89649) Application: << ∫√‡œ£¨’˝‘⁄≤•∑≈°∂ø Õ˚°∑∏¯ƒ„Ã˝°£
-I (90899) AudioService: I2S-OUT: packets=300 samples=288000
-I (91159) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (92079) AudioService: I2S-OUT: packets=320 samples=307200
-I (92359) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
-I (93129) Application: TTS-STOP received
-I (93139) Application: TTS-STOP scheduled, state=6
-I (93139) StateMachine: State: speaking -> listening
-I (93159) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=52 dropped=0
-I (93159) AudioService: WAIT-DONE: dq=0 pq=0 pushed=52 dropped=0
-E (93989) CuckooCtrl: PlayOpus: connect timeout, falling back to serial...
-MUSIC_REQhttp://192.168.31.123:8765/opus?q=%E6%B8%B4%E6%9C%9B
-I (102959) SystemInfo: free sram: 46835 minimal sram: 29299
-I (105749) StateMachine: State: listening -> speaking
-I (105759) Application: >> √ªÃ˝µΩ°£
-I (105789) AudioService: RESET-DECODER: dq=0 pq=0 pushed=52 dropped=0 i2s_pkts=337 i2s_samp=323520
-I (105839) wifi:Set ps type: 0, coexist: 0
-
-I (106289) CuckooCtrl: PlayOpus: serial voice stop (gap lums)
-I (106289) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
-I (106289) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
-I (106299) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0 i2s_pkts=337 i2s_samp=323520
-I (106309) CuckooCtrl: PlayOpus: serial done 9315ms, dl=0KB
-I (106979) Application: << % self.get_device_status...
-I (107969) Application: << “Ù¡ø“—æ≠ «80¡À£¨ø…ƒ‹Õ¯¬Á”–µ„¬˝£¨…‘µ»“ªœ¬”¶∏√æÕœÏ¡À°£
-I (108159) AudioService: I2S-OUT: packets=340 samples=326400
-I (108619) Application: TTS-STOP received
-I (108619) Application: TTS-STOP scheduled, state=6
-I (108619) StateMachine: State: speaking -> listening
-I (108629) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=11 dropped=0
-I (108629) AudioService: WAIT-DONE: dq=0 pq=0 pushed=11 dropped=0
-I (109839) StateMachine: State: listening -> speaking
-I (109839) Application: >> Œ“¡Ω°£
-I (109849) AudioService: RESET-DECODER: dq=0 pq=0 pushed=11 dropped=0 i2s_pkts=348 i2s_samp=334080
-I (110239) Application: << ƒ„ «Àµ“Ù¡øÃ´–°¡À¬£øƒ«Œ“∞Ôƒ„µ˜¥Û“ªµ„£ø
-I (111279) AudioService: I2S-OUT: packets=360 samples=345600
-I (111739) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (112499) AudioService: I2S-OUT: packets=380 samples=364800
-I (112939) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
-I (113679) AudioService: I2S-OUT: packets=400 samples=384000
-I (113889) Application: TTS-STOP received
-I (113889) Application: TTS-STOP scheduled, state=6
-I (113889) StateMachine: State: speaking -> listening
-I (113919) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=55 dropped=0
-I (113919) AudioService: WAIT-DONE: dq=0 pq=0 pushed=55 dropped=0
-I (115109) StateMachine: State: listening -> speaking
-I (115119) Application: >> ¿¥Œ“∞Ôƒ„≤È°£
-I (115129) AudioService: RESET-DECODER: dq=0 pq=0 pushed=55 dropped=0 i2s_pkts=403 i2s_samp=386880
-I (116289) Application: TTS-STOP received
-I (116289) Application: TTS-STOP scheduled, state=6
-I (116289) StateMachine: State: speaking -> listening
-I (116309) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
-I (116309) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
-I (118469) StateMachine: State: listening -> speaking
-I (118469) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0 i2s_pkts=403 i2s_samp=386880
-I (118469) Application: >> ≤ª «√ª”–…˘“Ù°£
-I (119789) Application: << ƒ«ø…ƒ‹ «Õ¯¬Áø®◊°¡À£¨Œ“÷ÿ–¬∑≈“ª±È ‘ ‘°£
-I (120979) AudioService: I2S-OUT: packets=420 samples=403200
-I (121129) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
-I (122199) AudioService: I2S-OUT: packets=440 samples=422400
-I (122329) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
-I (122989) Application: TTS-STOP received
-I (122989) Application: TTS-STOP scheduled, state=6
-I (122989) StateMachine: State: speaking -> listening
-I (122999) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=50 dropped=0
-I (122999) AudioService: WAIT-DONE: dq=0 pq=0 pushed=50 dropped=0
+I (111169) CuckooCtrl: PlayOpus: connecting to 120.55.47.160:8765...
+I (111179) CuckooCtrl: PlayOpus: connected to 120.55.47.160:8765
+W (111649) Display: SetEmotion: happy
+I (112189) Application: << Â•ΩÂòûÔºåÁΩóÂ§ß‰ΩëÁöÑ„ÄäÊòØÂê¶„ÄãÂºÄÂßãÊí≠ÊîæÂï¶ÔΩû
+W (112189) Display: Role:assistant
+W (112189) Display:      Â•ΩÂòûÔºåÁΩóÂ§ß‰ΩëÁöÑ„ÄäÊòØÂê¶„ÄãÂºÄÂßãÊí≠ÊîæÂï¶ÔΩû
+W (112619) EspUdp: UDP recv gap: 7194 ms
+I (112619) Application: SERVER-FIRST-AUDIO: delay=7183 ms
+I (113069) CuckooCtrl: PlayOpus: HTTP 200
+I (113069) CuckooCtrl: PlayOpus: downloading raw PCM...
+I (113639) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (114779) CuckooCtrl: PlayOpus: drain enabled (buffered 64127 samples in 1713 ms)
+I (114849) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (116039) Application: TTS-STOP received
+I (116039) Application: TTS-STOP scheduled, state=6
+I (116039) StateMachine: State: speaking -> listening
+W (116039) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (116049) Display: SetEmotion: neutral
+I (116049) Application: LISTENING-START: t=115887707 us
+I (116059) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=59 dropped=0
+I (116059) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (116059) AudioService: WAIT-DONE: dq=0 pq=0 pushed=59 dropped=0
+I (116079) AudioService: RESET-DECODER: dq=0 pq=0 pushed=59 dropped=0
+I (121129) CuckooCtrl: PlayOpus: buf=79919 samples dl=394KB rate=49.0KB/s
+I (125949) SystemInfo: free sram: 78427 minimal sram: 47443
+I (129329) CuckooCtrl: PlayOpus: buf=78831 samples dl=630KB rate=38.8KB/s
+I (130729) Application: SERVER-FIRST-MSG: type=stt delay=14677 ms
+I (130729) Application: >> ÊòØ„ÄÇ
+W (130729) Display: Role:user
+W (130729) Display:      ÊòØ„ÄÇ
+I (130729) StateMachine: State: listening -> speaking
+W (130739) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (130749) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (130829) CuckooCtrl: PlayOpus: AI speaking, music -> 50%
+W (131219) Display: SetEmotion: happy
+I (131579) Application: << ÂóØÂóØÔºåÂ•ΩÂ•ΩÂê¨ÔΩû
+W (131579) Display: Role:assistant
+W (131579) Display:      ÂóØÂóØÔºåÂ•ΩÂ•ΩÂê¨ÔΩû
+W (131989) EspUdp: UDP recv gap: 15951 ms
+I (131999) Application: SERVER-FIRST-AUDIO: delay=15943 ms
+I (133009) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (133249) Application: TTS-STOP received
+I (133249) Application: TTS-STOP scheduled, state=6
+I (133249) StateMachine: State: speaking -> listening
+W (133259) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+W (133259) Display: SetEmotion: neutral
+I (133259) Application: LISTENING-START: t=133099570 us
+I (133269) AudioService: WAIT-PLAYBACK: dq=0 pq=1 pushed=24 dropped=0
+I (133279) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (133279) AudioService: WAIT-DONE: dq=0 pq=0 pushed=24 dropped=0
+I (133289) AudioService: RESET-DECODER: dq=0 pq=0 pushed=24 dropped=0
+I (135629) CuckooCtrl: Heartbeat t=120s stack_hwm=6624 free_heap=4204688
+I (136909) Application: SERVER-FIRST-MSG: type=stt delay=3646 ms
+I (136909) Application: >> ‰Ω†ÂõûÂéªÂêß„ÄÇ
+W (136909) Display: Role:user
+W (136909) Display:      ‰Ω†ÂõûÂéªÂêß„ÄÇ
+I (136909) StateMachine: State: listening -> speaking
+W (136919) Display: SetStatus: ËØ¥ËØù‰∏≠...
+I (136929) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (137039) CuckooCtrl: PlayOpus: AI speaking, music -> 50%
+W (137429) Display: SetEmotion: happy
+I (137679) Application: << Â•ΩÂòûÔºåÊàëÂõûÂéª‰ºëÊÅØÂï¶ÔºåÊãúÊãúÔΩû
+W (137679) Display: Role:assistant
+W (137679) Display:      Â•ΩÂòûÔºåÊàëÂõûÂéª‰ºëÊÅØÂï¶ÔºåÊãúÊãúÔΩû
+I (137989) CuckooCtrl: PlayOpus: buf=65615 samples dl=871KB rate=35.0KB/s
+W (138009) EspUdp: UDP recv gap: 4753 ms
+I (138009) Application: SERVER-FIRST-AUDIO: delay=4744 ms
+I (139029) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (140229) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (140409) Application: TTS-STOP received
+I (140409) Application: TTS-STOP scheduled, state=6
+I (140409) StateMachine: State: speaking -> listening
+W (140409) Display: SetStatus: ËÅÜÂê¨‰∏≠...
+I (140409) MQTT: Received goodbye message, session_id: 8d1d688f
+W (140409) Display: SetEmotion: neutral
+I (140419) Application: LISTENING-START: t=140257615 us
+I (140429) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=42 dropped=0
+I (140429) AudioService: WAIT-DONE: dq=0 pq=0 pushed=42 dropped=0
+I (140439) CuckooCtrl: PlayOpus: AI quiet, music -> 100%
+I (140439) AudioService: RESET-DECODER: dq=0 pq=0 pushed=42 dropped=0
+I (140449) MQTT: Closing audio channel, send_goodbye: 0
+W (140449) Display: Role:system
+W (140459) Display:      
+I (140459) StateMachine: State: listening -> idle
+W (140459) Display: SetStatus: ÂæÖÂëΩ
+W (140469) Display: SetEmotion: neutral
+I (140479) MQTT: Received goodbye message, session_id: 8d1d688f
+I (140479) MQTT: Closing audio channel, send_goodbye: 0
+W (140479) Display: Role:system
+W (140479) Display:      
+I (140629) CuckooCtrl: Device sleeping ÔøΩÔøΩ closing bird door
+I (141229) AudioCodec: Set input gain to 37.5
+I (145999) CuckooCtrl: PlayOpus: buf=78927 samples dl=1152KB rate=35.0KB/s
+I (149949) SystemInfo: free sram: 56803 minimal sram: 47443
+I (153999) CuckooCtrl: PlayOpus: buf=79951 samples dl=1404KB rate=34.3KB/s
+I (159949) SystemInfo: free sram: 58151 minimal sram: 47443

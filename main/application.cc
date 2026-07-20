@@ -197,6 +197,20 @@ void Application::Run() {
         if (bits & MAIN_EVENT_ERROR) {
             SetDeviceState(kDeviceStateIdle);
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
+            // Play network error voice prompt if available
+            void* wav_ptr = nullptr;
+            size_t wav_size = 0;
+            if (Assets::GetInstance().GetAssetData("network_error.wav", wav_ptr, wav_size) && wav_size > 44) {
+                const uint8_t* wav_data = (const uint8_t*)wav_ptr;
+                uint16_t channels = wav_data[22] | (wav_data[23] << 8);
+                uint32_t sample_rate = wav_data[24] | (wav_data[25] << 8) | (wav_data[26] << 16) | (wav_data[27] << 24);
+                uint16_t bits = wav_data[34] | (wav_data[35] << 8);
+                if (bits == 16 && channels == 1 && sample_rate > 0) {
+                    const int16_t* pcm = (const int16_t*)(wav_data + 44);
+                    size_t num_samples = (wav_size - 44) / sizeof(int16_t);
+                    audio_service_.OutputRawPcm(pcm, num_samples, sample_rate);
+                }
+            }
         }
 
         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {
@@ -263,6 +277,15 @@ void Application::Run() {
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
+            }
+
+            // Listening timeout diagnostics: warn if no server response in 15s
+            if (GetDeviceState() == kDeviceStateListening && listening_start_us_ > 0 && first_server_msg_us_ == 0) {
+                int64_t elapsed_ms = (esp_timer_get_time() - listening_start_us_) / 1000;
+                if (elapsed_ms > 15000 && !listening_diag_logged_) {
+                    listening_diag_logged_ = true;
+                    ESP_LOGW(TAG, "LISTENING-TIMEOUT: no server response after %d ms, state=%d", (int)elapsed_ms, (int)GetDeviceState());
+                }
             }
         }
     }
@@ -506,6 +529,12 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+        // Diagnostics: log time to first audio packet after listening
+        if (first_audio_pkt_us_ == 0 && listening_start_us_ > 0) {
+            first_audio_pkt_us_ = esp_timer_get_time();
+            int64_t delay_ms = (first_audio_pkt_us_ - listening_start_us_) / 1000;
+            ESP_LOGI(TAG, "SERVER-FIRST-AUDIO: delay=%d ms", (int)delay_ms);
+        }
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         } else {
@@ -526,7 +555,13 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        // Keep PERFORMANCE mode if music is playing (background audio active),
+        // otherwise LOW_POWER would kill the music TCP connection.
+        if (!audio_service_.IsBgAudioActive()) {
+            board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        }
+        // Always transition to Idle â€?the Idle handler protects music
+        // (keeps VoiceProcessing on if IsBgAudioActive).
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -535,6 +570,14 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
+        // Diagnostics: log time to first server message after listening
+        if (first_server_msg_us_ == 0 && listening_start_us_ > 0) {
+            first_server_msg_us_ = esp_timer_get_time();
+            int64_t delay_ms = (first_server_msg_us_ - listening_start_us_) / 1000;
+            auto type_obj = cJSON_GetObjectItem(root, "type");
+            const char* type_str = (type_obj && cJSON_IsString(type_obj)) ? type_obj->valuestring : "?";
+            ESP_LOGI(TAG, "SERVER-FIRST-MSG: type=%s delay=%d ms", type_str, (int)delay_ms);
+        }
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (strcmp(type->valuestring, "tts") == 0) {
@@ -552,6 +595,7 @@ void Application::InitializeProtocol() {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
+                            tts_restart_listening_ = true;
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
@@ -736,6 +780,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }
@@ -819,22 +864,28 @@ void Application::HandleWakeWordDetectedEvent() {
         // Start encoding wake word data first so it runs in parallel with wake sound
         audio_service_.EncodeWakeWord();
 
+        bool music_playing = audio_service_.IsBgAudioActive();
 #ifdef CONFIG_BOARD_TYPE_CUCKOO_CLOCK
-        // Play cuckoo sound on wake
-        auto* codec = Board::GetInstance().GetAudioCodec();
-        if (codec) {
-            codec->EnableOutput(true);
-            audio_service_.RefreshOutputTimestamp();
-            for (int repeat = 0; repeat < 2; repeat++) {
-                std::vector<int16_t> audio_data(
-                    cuckoo_wake_sound,
-                    cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
-                );
-                codec->OutputData(audio_data);
-                if (repeat < 1) {
-                    vTaskDelay(pdMS_TO_TICKS(50));
+        // Skip cuckoo sound if music is playing â€?sound would overlap music
+        // and re-enabling output could reset the I2S channel mid-stream
+        if (!music_playing) {
+            auto* codec = Board::GetInstance().GetAudioCodec();
+            if (codec) {
+                codec->EnableOutput(true);
+                audio_service_.RefreshOutputTimestamp();
+                for (int repeat = 0; repeat < 2; repeat++) {
+                    std::vector<int16_t> audio_data(
+                        cuckoo_wake_sound,
+                        cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
+                    );
+                    codec->OutputData(audio_data);
+                    if (repeat < 1) {
+                        vTaskDelay(pdMS_TO_TICKS(50));
+                    }
                 }
             }
+        } else {
+            ESP_LOGI(TAG, "Wake word while music playing, skipping cuckoo sound");
         }
 #endif
         auto wake_word = std::string("xiao niao xiao niao");
@@ -882,6 +933,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
             audio_service_.EnableWakeWordDetection(true);
+            SetDeviceState(kDeviceStateIdle);
             return;
         }
     }
@@ -920,6 +972,9 @@ void Application::HandleStateChangedEvent() {
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+            // Clear listening diagnostics to prevent stale timeout on next listen
+            listening_start_us_ = 0;
+            listening_diag_logged_ = false;
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -930,8 +985,16 @@ void Application::HandleStateChangedEvent() {
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
+            // Record listening start time for server-response diagnostics
+            listening_start_us_ = esp_timer_get_time();
+            first_server_msg_us_ = 0;
+            first_audio_pkt_us_ = 0;
+            listening_diag_logged_ = false;
+            ESP_LOGI(TAG, "LISTENING-START: t=%d us", (int)listening_start_us_);
+
             // Make sure the audio processor is running
-            if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
+            if (tts_restart_listening_ || play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
+                tts_restart_listening_ = false;
                 // For auto mode, wait for playback queue to be empty before enabling voice processing
                 // This prevents audio truncation when STOP arrives late due to network jitter
                 if (listening_mode_ == kListeningModeAutoStop) {
@@ -999,7 +1062,7 @@ void Application::SetListeningMode(ListeningMode mode) {
 }
 
 ListeningMode Application::GetDefaultListeningMode() const {
-    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime;
+    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeAutoStop;  // Always AutoStop for cuckoo-clock
 }
 
 void Application::Reboot() {

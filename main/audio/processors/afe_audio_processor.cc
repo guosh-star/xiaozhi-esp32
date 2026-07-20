@@ -39,7 +39,9 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     char* vad_model_name = esp_srmodel_filter(models, ESP_VADN_PREFIX, NULL);
     
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_LOW_COST);
-    afe_config->aec_mode = AEC_MODE_VOIP_LOW_COST;
+    afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;  // FD+HIGH: 线性滤波+NLP残余压制
+    afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;  // 最强回声压制
+    afe_config->aec_filter_length = 4;  // 默认滤波长度（8太吃内存，退回4）
     afe_config->vad_mode = VAD_MODE_0;
     afe_config->vad_min_noise_ms = 100;
     if (vad_model_name != nullptr) {
@@ -54,7 +56,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
         afe_config->ns_init = false;
     }
 
-    afe_config->agc_init = false;
+    afe_config->agc_init = true;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
 #ifdef CONFIG_USE_DEVICE_AEC

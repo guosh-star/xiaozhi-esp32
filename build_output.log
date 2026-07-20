@@ -1,0 +1,25 @@
+Activating ESP-IDF 5.5
+Setting IDF_PATH to 'C:\Espressif\frameworks\esp-idf-v5.5.4'.
+* Checking python version ... 3.11.2
+* Checking python dependencies ... OK
+* Deactivating the current ESP-IDF environment (if any) ... OK
+* Establishing a new ESP-IDF environment ... OK
+* Identifying shell ... cmd.exe
+* Detecting outdated tools in system ... Found tools that are not used by active ESP-IDF version.
+For removing old versions of idf-driver, idf-python-wheels use command 'python.exe C:\Espressif\frameworks\esp-idf-v5.5.4\tools\idf_tools.py uninstall'
+To free up even more space, remove installation packages of those tools.
+Use option python.exe C:\Espressif\frameworks\esp-idf-v5.5.4\tools\idf_tools.py uninstall --remove-archives.
+
+Done! You can now compile ESP-IDF projects.
+Go to the project directory and run:
+
+  idf.py build
+
+Executing action: all (aliases: build)
+Running ninja in directory C:\Users\GUO-notebook\.openclaw\workspace\xiaozhi-esp32\build
+Executing "ninja all"...
+[1/9] Performing build step for 'bootloader'
+[1/1] cmd.exe /C "cd /D C:\Users\GUO-notebook\.openclaw\workspace\xiaozhi-esp32\build\bootloader\esp-idf\esptool_py && C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe C:/Espressif/frameworks/esp-idf-v5.5.4/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 C:/Users/GUO-notebook/.openclaw/workspace/xiaozhi-esp32/build/bootloader/bootloader.bin"
+Bootloader binary size 0x3f80 bytes. 0x4080 bytes (50%) free.
+[2/9] No install step for 'bootloader'
+[3/9] Completed 'bootloader'

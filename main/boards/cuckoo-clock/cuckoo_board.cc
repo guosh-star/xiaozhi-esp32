@@ -1,44 +1,38 @@
-#include "wifi_board.h"
+﻿#include "wifi_board.h"
 #include "../../audio/codecs/box_audio_codec.h"
-#include "../../display/oled_display.h"
 #include "../common/system_reset.h"
 #include "../../application.h"
 #include "../common/button.h"
 #include "config.h"
 #include "../../mcp_server.h"
-#include "../../led/single_led.h"
+#include "../../led/ws2812_led.h"
 #include "../../assets/lang_config.h"
 
 #include "cuckoo_controller.h"
 #include "assets.h"
+#include "display/display.h"
 
 #include <esp_log.h>
 #include <driver/gpio.h>
-#include <driver/uart.h>
 #include <driver/i2c_master.h>
-#include <esp_lcd_panel_ops.h>
-#include <esp_lcd_panel_vendor.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <esp_wifi.h>
 
 #define TAG "CuckooBoard"
 
 // ============================================
-// 布谷鸟钟板型 - 继承 WifiBoard
+// �������Ӱ��� - �̳� WifiBoard
 // ============================================
 class CuckooBoard : public WifiBoard {
 private:
-    i2c_master_bus_handle_t display_i2c_bus_;
-    esp_lcd_panel_io_handle_t panel_io_ = nullptr;
-    esp_lcd_panel_handle_t panel_ = nullptr;
+    i2c_master_bus_handle_t codec_i2c_bus_;
     Display* display_ = nullptr;
     Button boot_button_;
     Button touch_button_;
 
-    void InitializeDisplayI2c() {
+    void InitializeCodecI2c() {
         i2c_master_bus_config_t bus_config = {
-            .i2c_port = (i2c_port_t)0,
+            .i2c_port = I2C_NUM_0,
             .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
             .scl_io_num = AUDIO_CODEC_I2C_SCL_PIN,
             .clk_source = I2C_CLK_SRC_DEFAULT,
@@ -49,86 +43,74 @@ private:
                 .enable_internal_pullup = 1,
             },
         };
-        ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &display_i2c_bus_));
+        ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &codec_i2c_bus_));
     }
 
-    void InitializeDisplay() {
-        esp_lcd_panel_io_i2c_config_t io_config = {
-            .dev_addr = 0x3C,
-            .on_color_trans_done = nullptr,
-            .user_ctx = nullptr,
-            .control_phase_bytes = 1,
-            .dc_bit_offset = 6,
-            .lcd_cmd_bits = 8,
-            .lcd_param_bits = 8,
-            .flags = {
-                .dc_low_on_data = 0,
-                .disable_control_phase = 0,
-            },
-            .scl_speed_hz = 400 * 1000,
-        };
-        ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c_v2(display_i2c_bus_, &io_config, &panel_io_));
-        ESP_LOGI(TAG, "Install SSD1306 driver");
-        esp_lcd_panel_dev_config_t panel_config = {};
-        panel_config.reset_gpio_num = -1;
-        panel_config.bits_per_pixel = 1;
-        esp_lcd_panel_ssd1306_config_t ssd1306_config = {
-            .height = static_cast<uint8_t>(DISPLAY_HEIGHT),
-        };
-        panel_config.vendor_config = &ssd1306_config;
-        ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(panel_io_, &panel_config, &panel_));
-        ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_));
-        if (esp_lcd_panel_init(panel_) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to initialize display");
-            display_ = new NoDisplay();
-            return;
-        }
-        ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_, false));
-        ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_, true));
-        display_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
-    }
 
-    // 外设指针（未接线时为 nullptr，状态机会跳过）
-    Motor* m1_ = nullptr;              // 舞蹈电机
-    Motor* m2_ = nullptr;              // 小提琴电机
-    Motor* m3_ = nullptr;              // 水车电机
-    Motor* m4_ = nullptr;              // 大门电机
-    Motor* bird_door_motor_ = nullptr; // 鸟门电机
+
+    // ����ָ�루δ����ʱΪ nullptr��״̬����������
+    Motor* m1_ = nullptr;              // �赸��� (��A M1)
+    Motor* m2_ = nullptr;              // ���ŵ�� (��A M2)
+    Motor* m3_ = nullptr;              // С����� (��B M1)
+    Motor* m4_ = nullptr;              // 鸟门电机 (板C M1)
+    Motor* violin_motor_ = nullptr;    // 小提琴电机 (板B M2, GPIO18/45)
     Servo* violin_servo_ = nullptr;    // 小提琴手舵机
-    Servo* dog_servo_ = nullptr;       // 小狗摇头舵机
-    BirdJump* bird_jump_ = nullptr;    // 小鸟跳跃电磁铁
-    Mp3Player* mp3_ = nullptr;             // MP3软解播放器
-    BellSoundPlayer* bell_player_ = nullptr;  // 鸟叫播放器（复用AI音频）
-    RtcPcf8563* rtc_ = nullptr;        // RTC时钟
-    LdrSensor* ldr_ = nullptr;         // 光敏检测
+    Servo* dog_servo_ = nullptr;       // С��ҡͷ���
+    Motor* water_bird_ = nullptr;          // ��C M2: ˮ��(IN1/GPIO8) + ����(IN2/GPIO39)
+    Mp3Player* mp3_ = nullptr;             // MP3���ⲥ����
+    BellSoundPlayer* bell_player_ = nullptr;  // ��в�����������AI��Ƶ��
+    // RtcPcf8563* rtc_ = nullptr;  // 已废弃：改用NTP网络授时
+    LdrSensor* ldr_ = nullptr;         // �������
     CuckooStateMachine* state_machine_ = nullptr;
     CuckooTools* cuckoo_tools_ = nullptr;
 
     void InitializePeripherals() {
         ESP_LOGI(TAG, "Initializing cuckoo clock peripherals...");
 
-        // 舞蹈电机 M1 (DRV8833: IN1/IN2 → OUT1/OUT2)
-        m1_ = new Motor(DRV8833_M1_IN1, DRV8833_M1_IN2, LEDC_CH_M1_AIN1, LEDC_CH_M1_AIN2);
-        ESP_LOGI(TAG, "M1 dance motor ready (DRV8833 IN1/IN2: GPIO %d/%d, ch%d/%d)",
-                 DRV8833_M1_IN1, DRV8833_M1_IN2, LEDC_CH_M1_AIN1, LEDC_CH_M1_AIN2);
+        // 板A M1: 舞蹈电机 GPIO 直驱 (GPIO4/5)
+        m1_ = new Motor(MOTOR_DANCE_IN1, MOTOR_DANCE_IN2);
+        ESP_LOGI(TAG, "M1 dance ready (GPIO %d/%d, GPIO)", MOTOR_DANCE_IN1, MOTOR_DANCE_IN2);
 
-        // 小提琴电机 M2 (DRV8833 同一模块: IN3/IN4 → OUT3/OUT4)
-        m2_ = new Motor(DRV8833_M2_IN3, DRV8833_M2_IN4, LEDC_CH_M2_AIN1, LEDC_CH_M2_AIN2);
-        ESP_LOGI(TAG, "M2 violin motor ready (DRV8833 IN3/IN4: GPIO %d/%d, ch%d/%d)",
-                 DRV8833_M2_IN3, DRV8833_M2_IN4, LEDC_CH_M2_AIN1, LEDC_CH_M2_AIN2);
+        // 板A M2: 大门电机 GPIO 直驱 (GPIO6/7)
+        m2_ = new Motor(MOTOR_BIRD_IN1, MOTOR_BIRD_IN2);
+        ESP_LOGI(TAG, "M2 door ready (GPIO %d/%d, GPIO)", MOTOR_BIRD_IN1, MOTOR_BIRD_IN2);
 
-        // 鸟叫播放器（通过AI音频 I2S 系统播放，无需额外硬件）
+        // 板B M1: 小狗电机 PWM (GPIO10/11, LEDC timer0 ch4/5)
+        m3_ = new Motor(MOTOR_DOG_IN1, MOTOR_DOG_IN2, LEDC_CH_DOG_IN1, LEDC_CH_DOG_IN2);
+        ESP_LOGI(TAG, "M3 dog ready (GPIO %d/%d, ch%d/%d)",
+                 MOTOR_DOG_IN1, MOTOR_DOG_IN2, LEDC_CH_DOG_IN1, LEDC_CH_DOG_IN2);
+
+        // 板B M2: 小提琴电机 GPIO 直驱 (GPIO18/45)
+        violin_motor_ = new Motor(MOTOR_VIOLIN_IN1, MOTOR_VIOLIN_IN2);
+        ESP_LOGI(TAG, "M2 violin motor ready (GPIO %d/%d, GPIO)", MOTOR_VIOLIN_IN1, MOTOR_VIOLIN_IN2);
+
+        // 板C M1: 鸟门电机 PWM (GPIO9/46, LEDC timer2 ch2/3)
+        m4_ = new Motor(MOTOR_DOOR_IN1, MOTOR_DOOR_IN2, LEDC_CH_DOOR_IN1, LEDC_CH_DOOR_IN2, LEDC_TIMER_DOOR, LEDC_LOW_SPEED_MODE);
+        ESP_LOGI(TAG, "M5 bird door ready (GPIO %d/%d, timer2 ch%d/%d)",
+                 MOTOR_DOOR_IN1, MOTOR_DOOR_IN2, LEDC_CH_DOOR_IN1, LEDC_CH_DOOR_IN2);
+
+        // ��� �� HIGH_SPEED ����ͨ��
+        violin_servo_ = new Servo(SERVO_VIOLIN, LEDC_CH_SERVO_V, LEDC_LOW_SPEED_MODE);
+        ESP_LOGI(TAG, "Violin servo ready (GPIO %d, ch%d)", SERVO_VIOLIN, LEDC_CH_SERVO_V);
+        dog_servo_ = new Servo(SERVO_DOG, LEDC_CH_SERVO_D, LEDC_LOW_SPEED_MODE);
+        ESP_LOGI(TAG, "Dog servo ready (GPIO %d, ch%d)", SERVO_DOG, LEDC_CH_SERVO_D);
+
+        // ��в�����
         bell_player_ = new BellSoundPlayer();
         bell_player_->Init();
         ESP_LOGI(TAG, "Bell sound player ready");
 
-        // MP3 软解播放器（从 assets 分区读取并解码）
+        // MP3 ���ⲥ����
         mp3_ = new Mp3Player();
         mp3_->Init(&Assets::GetInstance());
         ESP_LOGI(TAG, "MP3 soft decoder ready");
 
-        // 光敏传感器 (未接线，暂不初始化)
-        // ldr_ = new LdrSensor(LDR_GPIO);
+                // ��C M2: ˮ�� + С����Ծ (DRV8833, �������, Timer2 HIGH_SPEED)
+        water_bird_ = new Motor(MOTOR_WATER_BIRD_IN1, MOTOR_WATER_BIRD_IN2);
+        ESP_LOGI(TAG, "Water+bird motor ready (GPIO %d/%d, GPIO)", MOTOR_WATER_BIRD_IN1, MOTOR_WATER_BIRD_IN2);
+
+        // ���������� (δ���ߣ��ݲ���ʼ��)
+        ldr_ = new LdrSensor(LDR_GPIO, LDR_ADC_UNIT, LDR_ADC_CHANNEL, LDR_DARK);
 
         ESP_LOGI(TAG, "Peripherals initialized");
     }
@@ -136,10 +118,10 @@ private:
     void InitializeStateMachine() {
         state_machine_ = new CuckooStateMachine(
             m1_, m2_, m3_, m4_,
-            bird_door_motor_, violin_servo_, dog_servo_,
-            bird_jump_, mp3_,
+            violin_motor_, violin_servo_, dog_servo_,
+            water_bird_, mp3_,
             bell_player_,
-            rtc_, ldr_
+            ldr_
         );
         ESP_LOGI(TAG, "State machine created");
     }
@@ -155,7 +137,7 @@ private:
         xTaskCreatePinnedToCore(
             cuckoo_clock_task,
             "cuckoo_clock",
-            4096,
+            8192,
             state_machine_,
             3,
             &task_handle,
@@ -171,10 +153,18 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
+            if (state_machine_) {
+                state_machine_->OpenBirdDoor();
+                state_machine_->BirdJumpPulse();
+                state_machine_->PlayCuckooSound();
+                state_machine_->BirdJumpPulse();
+                state_machine_->PlayCuckooSound();
+                // 鸟门保持打开，等AI对话结束后自行关闭
+            }
             app.ToggleChatState();
         });
 
-        // 长按 BOOT 键 1 秒 = 紧急停止（停止所有电机、音乐、AI输出）
+        // ���� BOOT �� 1 �� = ����ֹͣ��ֹͣ���е�������֡�AI�����
         boot_button_.OnLongPress([this]() {
             if (state_machine_) {
                 ESP_LOGI(TAG, "BOOT long press: emergency stop");
@@ -182,11 +172,8 @@ private:
             }
         });
 
-        touch_button_.OnPressDown([this]() {
-            Application::GetInstance().StartListening();
-        });
-        touch_button_.OnPressUp([this]() {
-            Application::GetInstance().StopListening();
+        touch_button_.OnClick([this]() {
+            if (state_machine_) state_machine_->StartShow();
         });
     }
 
@@ -197,8 +184,8 @@ public:
         
         ESP_LOGI(TAG, "=== Cuckoo Clock Board ===");
         
-        InitializeDisplayI2c();
-        InitializeDisplay();
+        InitializeCodecI2c();
+        display_ = new NoDisplay();
         InitializePeripherals();
         InitializeStateMachine();
         InitializeMCPTools();
@@ -209,13 +196,13 @@ public:
     }
 
     virtual Led* GetLed() override {
-        static SingleLed led(BUILTIN_LED_GPIO);
+        static Ws2812Led led(GPIO_NUM_48);
         return &led;
     }
 
     virtual AudioCodec* GetAudioCodec() override {
         static BoxAudioCodec audio_codec(
-            display_i2c_bus_,
+            codec_i2c_bus_,
             AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
             AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN,
@@ -239,6 +226,19 @@ public:
 
     virtual bool IsAlarmRinging() override {
         return state_machine_ ? state_machine_->IsAlarmRinging() : false;
+    }
+
+    // 覆写 SetPowerSaveLevel：音乐播放时拒绝 LOW_POWER，避免 TCP 下载卡顿
+    virtual void SetPowerSaveLevel(PowerSaveLevel level) override {
+        if (level == PowerSaveLevel::LOW_POWER) {
+            auto& audio = Application::GetInstance().GetAudioService();
+            if (audio.IsBgAudioActive()) {
+                // 音乐正在播放，保持 PERFORMANCE
+                WifiBoard::SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+                return;
+            }
+        }
+        WifiBoard::SetPowerSaveLevel(level);
     }
 };
 

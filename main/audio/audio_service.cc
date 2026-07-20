@@ -9,7 +9,7 @@
         .dest_rate       = (uint32_t)(_dest_rate),           \
         .channel         = (uint8_t)(_channel),              \
         .bits_per_sample = ESP_AUDIO_BIT16,                  \
-        .complexity      = 2,                                \
+        .complexity      = 3,                                \
         .perf_type       = ESP_AE_RATE_CVT_PERF_TYPE_SPEED,  \
     }
 
@@ -301,32 +301,49 @@ void AudioService::AudioInputTask() {
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+
+        // When background audio is active AND drain is enabled (e.g. online
+        // music with enough data buffered), poll with a short timeout so we
+        // can mix background audio into output even without AI TTS data.
+        if (bg_audio_active_ && bg_audio_drain_enabled_) {
+            // 10ms poll — shorter than 20ms silence frame so OutputData
+            // backpressure keeps I2S DMA fed without gaps (prevent stutter)
+            audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(10), [this]() {
+                return !audio_playback_queue_.empty() || service_stopped_;
+            });
+        } else {
+            audio_queue_cv_.wait(lock, [this]() {
+                return !audio_playback_queue_.empty() || service_stopped_ || bg_audio_drain_enabled_;
+            });
+        }
+
         if (service_stopped_) {
             break;
         }
 
-        auto task = std::move(audio_playback_queue_.front());
-        audio_playback_queue_.pop_front();
-        audio_queue_cv_.notify_all();
-        lock.unlock();
+        if (!audio_playback_queue_.empty()) {
+            // Normal path: AI TTS data available
+            auto task = std::move(audio_playback_queue_.front());
+            audio_playback_queue_.pop_front();
+            audio_queue_cv_.notify_all();
+            lock.unlock();
 
-        if (!codec_->output_enabled()) {
-            esp_timer_stop(audio_power_timer_);
-            esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
-            codec_->EnableOutput(true);
-        }
+            if (!codec_->output_enabled()) {
+                esp_timer_stop(audio_power_timer_);
+                esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+                codec_->EnableOutput(true);
+            }
 
-        if (output_muted_ && !task->bypass_mute) {
-            // 静音时丢弃 Opus 解码的音频数据，不让其写 I2S
-            continue;
-        }
-        MixBackgroundAudio(task->pcm);
-        codec_->OutputData(task->pcm);
+            if (output_muted_ && !task->bypass_mute) {
+                // 静音时丢弃 Opus 解码的音频数据，不让其写 I2S
+                continue;
+            }
+            MixBackgroundAudio(task->pcm);
+            codec_->OutputData(task->pcm);
 
-        /* Update the last output time */
-        last_output_time_ = std::chrono::steady_clock::now();
-        debug_statistics_.playback_count++;
+            /* Update the last output time */
+            last_output_time_ = std::chrono::steady_clock::now();
+            debug_statistics_.playback_count++;
 
         // DEBUG: count output samples
         i2s_out_samples_ += task->pcm.size();
@@ -336,12 +353,36 @@ void AudioService::AudioOutputTask() {
         }
 
 #if CONFIG_USE_SERVER_AEC
-        /* Record the timestamp for server AEC */
-        if (task->timestamp > 0) {
-            lock.lock();
-            timestamp_queue_.push_back(task->timestamp);
-        }
+            /* Record the timestamp for server AEC */
+            if (task->timestamp > 0) {
+                lock.lock();
+                timestamp_queue_.push_back(task->timestamp);
+            }
 #endif
+        } else {
+            // Background-only path: queue is empty but background audio
+            // ring buffer may have data. Generate a silent frame to host
+            // the background mix so it reaches the speaker.
+            lock.unlock();
+
+            if (!codec_->output_enabled()) {
+                esp_timer_stop(audio_power_timer_);
+                esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+                codec_->EnableOutput(true);
+            }
+
+            // 20 ms of silence at 16 kHz = host for MixBackgroundAudio
+            // Static allocation avoids heap churn every 20ms which can
+            // cause timing jitter and worsen audio stutter on underrun
+            static constexpr int kBgFrameSamples = 16000 * 20 / 1000;
+            static std::vector<int16_t> bg_silence(kBgFrameSamples);
+            std::fill(bg_silence.begin(), bg_silence.end(), 0);
+            MixBackgroundAudio(bg_silence);
+            codec_->OutputData(bg_silence);
+
+            /* Prevent power management from disabling output */
+            last_output_time_ = std::chrono::steady_clock::now();
+        }
     }
 
     ESP_LOGW(TAG, "Audio output task stopped");
@@ -370,7 +411,11 @@ void AudioService::OpusCodecTask() {
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
 
-            SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
+            int sample_rate = packet->sample_rate;
+            if (sample_rate > codec_->output_sample_rate()) {
+                sample_rate = codec_->output_sample_rate();
+            }
+            SetDecodeSampleRate(sample_rate, packet->frame_duration);
             if (opus_decoder_ != nullptr) {
                 task->pcm.resize(decoder_frame_size_);
                 esp_audio_dec_in_raw_t raw = {
@@ -886,19 +931,36 @@ void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int 
 }
 
 void AudioService::SetBackgroundAudioGain(float gain) {
-    bg_audio_gain_ = gain;
+    bool was_active = bg_audio_active_;
+    bg_audio_target_gain_ = gain;
     bg_audio_active_ = (gain > 0.0f);
     if (bg_audio_active_) {
-        // Reset ring buffer to avoid playing stale data
-        std::lock_guard<std::mutex> lock(bg_audio_mutex_);
-        bg_audio_read_pos_ = bg_audio_write_pos_;
+        RefreshOutputTimestamp();
+        if (!was_active) {
+            // Reset ring buffer only on inactive→active transition.
+            // Changing gain while already active (e.g. ducking 1.0→0.3
+            // or restoring 0.3→1.0) must NOT discard buffered data.
+            std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+            bg_audio_read_pos_ = bg_audio_write_pos_;
+            bg_audio_gain_ = gain;  // 同步初始增益，确保后续淡入生效
+        }
     }
 }
 
 void AudioService::ClearBackgroundAudio() {
     bg_audio_active_ = false;
+    bg_audio_drain_enabled_ = false;
     std::lock_guard<std::mutex> lock(bg_audio_mutex_);
     bg_audio_read_pos_ = bg_audio_write_pos_;
+}
+
+void AudioService::EnableBgAudioDrain(bool enable) {
+    bg_audio_drain_enabled_ = enable;
+    if (enable) {
+        // Wake the output task so it switches from blocking wait to
+        // poll mode immediately (no 20ms delay on first frame)
+        audio_queue_cv_.notify_all();
+    }
 }
 
 size_t AudioService::GetBgAudioFillLevel() {
@@ -910,7 +972,7 @@ size_t AudioService::GetBgAudioFillLevel() {
 }
 
 void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
-    if (!bg_audio_active_) return;
+    if (!bg_audio_active_ && bg_audio_gain_ <= 0.0f) return;
     std::lock_guard<std::mutex> lock(bg_audio_mutex_);
     
     size_t available;
@@ -920,15 +982,55 @@ void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
         available = BG_AUDIO_RING_SIZE - bg_audio_read_pos_ + bg_audio_write_pos_;
     }
     
-    if (available == 0) return;
+    if (available == 0) {
+        // Still ramp gain toward target even with no data
+        if (bg_audio_gain_ != bg_audio_target_gain_) {
+            constexpr float kFadeStep = 0.7f / 4800.0f;  // 300ms ramp at 16kHz
+            float step = kFadeStep * (float)pcm.size();
+            if (bg_audio_gain_ < bg_audio_target_gain_) {
+                bg_audio_gain_ += step;
+                if (bg_audio_gain_ > bg_audio_target_gain_) bg_audio_gain_ = bg_audio_target_gain_;
+            } else {
+                bg_audio_gain_ -= step;
+                if (bg_audio_gain_ < bg_audio_target_gain_) bg_audio_gain_ = bg_audio_target_gain_;
+            }
+        }
+        return;
+    }
     size_t mix_count = (pcm.size() < available) ? pcm.size() : available;
+    
+    // Per-sample gain ramping (fade over ~4800 samples = 300ms at 16kHz)
+    constexpr float kFadeStep = 0.7f / 4800.0f;
     float gain = bg_audio_gain_;
+    float target = bg_audio_target_gain_;
     
     for (size_t i = 0; i < mix_count; i++) {
+        if (gain < target) {
+            gain += kFadeStep;
+            if (gain > target) gain = target;
+        } else if (gain > target) {
+            gain -= kFadeStep;
+            if (gain < target) gain = target;
+        }
+        
         int32_t mixed = (int32_t)pcm[i] + (int32_t)(bg_audio_ring_[bg_audio_read_pos_] * gain);
         if (mixed > 32767) mixed = 32767;
         else if (mixed < -32768) mixed = -32768;
         pcm[i] = (int16_t)mixed;
         bg_audio_read_pos_ = (bg_audio_read_pos_ + 1) % BG_AUDIO_RING_SIZE;
     }
+    
+    // Underrun protection: if ring buffer ran dry mid-frame,
+    // crossfade the last mixed sample to zero instead of a hard cut
+    // (which would produce an audible click/pop)
+    if (mix_count < pcm.size() && mix_count > 0) {
+        int16_t last_val = pcm[mix_count - 1];
+        size_t remaining = pcm.size() - mix_count;
+        for (size_t i = 0; i < remaining; i++) {
+            float fade = 1.0f - (float)(i + 1) / (float)(remaining + 1);
+            pcm[mix_count + i] = (int16_t)((float)last_val * fade);
+        }
+    }
+    
+    bg_audio_gain_ = gain;
 }

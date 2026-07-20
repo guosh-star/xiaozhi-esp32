@@ -1,12 +1,36 @@
-﻿#include "cuckoo_controller.h"
+// ============================================
+// �������ӿ����� (Cuckoo Controller)
+//
+// ���ܸ�����
+// - ���������4·ֱ����� + 1·�񶯵�� + ˮ�������
+// - ������ƣ�С���ٶ����С��β�Ͷ����
+// - LED ��˸����· LED ����/������
+// - ��Ƶ���ţ����� MP3/Opus/PCM ���룬HTTP �����أ�Ducking ���ܻ�����
+// - ����/��㱨ʱ�����ſ��� + С����Ծ + ���Ƚ��� + ���֣�
+// - �ۺϱ��ݣ��赸��� + С���� + С�� + ˮ�� + ���� + LED��
+// - ��ɫ���� MCP ���ߣ�DogShow��С������LindaShow���մ��GardenShow��԰�ӣ�
+// - ���幦�ܣ�NVS �־û������5����֧��ÿ���ظ���
+// - ��������ҹ��ģʽ��22:00-6:00 ������
+// - �������ֲ��ţ�QQ���ִ�����Opus/PCM ��ʽ���أ�
+// - MCP ����ע�ᣨ21�����ߣ�ͨ�� MCP Э�鹩 AI ��ģ�͵��ã�
+//
+// ���мܹ���
+// - Core 0: �������������Ѵʡ�TTS��Opus����룩
+// - Core 1: �ӿ�����cuckoo_clock_task��250ms tick������ʱ��ͱ�ʱ��
+// - ����/��ʱ����ͨ�� xTaskCreatePinnedToCore �� Core 1 ִ��
+// ============================================
+
+#include "cuckoo_controller.h"
 #include "cuckoo_bell_sound.h"
 #include "../../mcp_server.h"
 #include "../../application.h"
 #include "../../boards/common/board.h"
 
 #include <esp_log.h>
-#include <esp_wifi.h>
+#include <esp_adc/adc_oneshot.h>
+#include <esp_system.h>
 #include <esp_http_client.h>
+#include <nvs_flash.h>
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
@@ -16,180 +40,159 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/select.h>
 #include <math.h>
 #include "esp_opus_dec.h"
+#include "ogg_demuxer.h"
 
+// RTC �������ڴ棺����/��λ����״̬���´ο����Զ���ʱ
+RTC_NOINIT_ATTR struct {
+    uint32_t magic;        // ħ�� 0xCAFEBABE ��ʾ������Ч
+    uint32_t tick_sec;     // ����ǰ����������
+    uint8_t  dev_state;    // �豸״̬
+    uint8_t  music_active; // �����Ƿ����ڲ���
+    uint32_t free_heap;    // ʣ����ڴ�
+} rtc_crash_log;
+
+
+// ������������������ /stream �� /opus ��ʽ��URLת��Ϊ /pcm ��ʽ����ESP32������Ƶʹ��
+static void ConvertToPcmUrl(char* url, size_t url_sz) {
+    // �����滻�������������ַ���
+    size_t url_len = strlen(url);
+    if (url_len >= url_sz) return;
+
+    // /stream?q=... -> /pcm?q=...
+    char* pos = strstr(url, "/stream?");
+    if (pos) {
+        // "/stream" = 7���ַ�, "/pcm" = 4���ַ�, ���� "?..." �� pos+7 ��
+        size_t tail = strlen(pos + 7) + 1;
+        if ((size_t)(pos + 4 + tail - url) > url_sz) return;
+        memmove(pos + 4, pos + 7, tail);
+        memcpy(pos, "/pcm", 4);
+        return;
+    }
+    // /opus?q=... -> /pcm?q=...
+    pos = strstr(url, "/opus?");
+    if (pos) {
+        // "/opus" = 6���ַ�, "/pcm" = 4���ַ�, ���� "?..." �� pos+5 ��
+        size_t tail = strlen(pos + 5) + 1;
+        if ((size_t)(pos + 4 + tail - url) > url_sz) return;
+        memmove(pos + 4, pos + 5, tail);
+        memcpy(pos, "/pcm", 4);
+        return;
+    }
+    // Ҳ��������ǰ��б�ܵ������AI��ʱ�� "stream?q= " �� "opus?q= "��
+    pos = strstr(url, "stream?");
+    if (pos && (pos == url || *(pos-1) != '/')) {
+        // "stream" = 6���ַ�, "pcm" = 3���ַ�, ���� "?..." �� pos+6 ��
+        size_t tail = strlen(pos + 6) + 1;
+        if ((size_t)(pos + 3 + tail - url) > url_sz) return;
+        memmove(pos + 3, pos + 6, tail);
+        memcpy(pos, "pcm", 3);
+        return;
+    }
+    pos = strstr(url, "opus?");
+    if (pos && (pos == url || *(pos-1) != '/')) {
+        // "opus" = 4���ַ�, "pcm" = 3���ַ�, ���� "?..." �� pos+4 ��
+        size_t tail = strlen(pos + 4) + 1;
+        if ((size_t)(pos + 3 + tail - url) > url_sz) return;
+        memmove(pos + 3, pos + 4, tail);
+        memcpy(pos, "pcm", 3);
+        return;
+    }
+}
 #define TAG "CuckooCtrl"
 
 // ============================================
-// LEDC PWM 通道分配
+// LEDC PWM ͨ������
 // ============================================
-// TB6612 需�?4 �?PWM 通道
-// 舵机需�?2 �?PWM 通道
-// 鸟门电机 1 �?PWM 通道
-// 总共 7 �?// TB6612 PWM 要求 ~10-100KHz
-// 舵机要求 50Hz
-// 鸟门电机 L9110S 要求 ~1-10KHz
+// TB6612 �������: 4· PWM ͨ�� (Ƶ�� ~10-100KHz)
+// ���: 2· PWM ͨ�� (Ƶ�� 50Hz)
+// ���ŵ�� L9110S: 1· PWM ͨ�� (Ƶ�� ~1-10KHz)
+// ��7·ͨ��
 
 // ============================================
-// Motor (TB6612 / DRV8833)
+// ������� (TB6612 / DRV8833)
 // ============================================
 
-// TB6612 构造: pwm_pin + 2x方向脚 + 1个LEDC通道
-Motor::Motor(gpio_num_t pwm_pin, gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t channel)
-    : pwm_pin_(pwm_pin), in1_pin_(in1_pin), in2_pin_(in2_pin), speed_(0), reverse_(false),
-      ledc_channel_(channel), ledc_channel2_(LEDC_CHANNEL_MAX), driver_type_(kTB6612) {
-
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << in1_pin_) | (1ULL << in2_pin_),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&io_conf);
-
-    // LEDC_TIMER_0 只配置一次
-    static bool motor_timer_inited = false;
-    if (!motor_timer_inited) {
-        ledc_timer_config_t timer_conf = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .duty_resolution = LEDC_TIMER_8_BIT,
-            .timer_num = LEDC_TIMER_0,
-            .freq_hz = 10000,
-            .clk_cfg = LEDC_AUTO_CLK,
-        };
-        ledc_timer_config(&timer_conf);
-        motor_timer_inited = true;
-    }
-
-    ledc_channel_config_t ch_conf = {
-        .gpio_num = pwm_pin_,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = ledc_channel_,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0,
-        .flags = { .output_invert = 0 },
-    };
-    ledc_channel_config(&ch_conf);
-
+// ���GPIO��ʼ����֧��GPIOֱ����PWM˫ģʽ
+static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
+    gpio_config_t c = { .pin_bit_mask = (1ULL<<in1)|(1ULL<<in2),
+        .mode = GPIO_MODE_OUTPUT, .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE };
+    gpio_config(&c);
+}
+// GPIOģʽ���캯����ֱ������PWM��
+Motor::Motor(gpio_num_t in1, gpio_num_t in2)
+    : in1_pin_(in1), in2_pin_(in2), use_pwm_(false), max_duty_(0) { motor_gpio_init(in1, in2); Stop(); }
+// PWMģʽ���캯����С����� (timer0, 1kHz/10-bit, ��dog-testһ��)
+Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_mode_t sm)
+    : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
+      ledc_timer_(LEDC_TIMER_MOTOR), speed_mode_(sm), max_duty_(1023) {
+    static bool t0_done = false;
+    if (!t0_done) { ledc_timer_config_t tc = { .speed_mode=sm, .duty_resolution=LEDC_TIMER_10_BIT,
+        .timer_num=LEDC_TIMER_MOTOR, .freq_hz=1000, .clk_cfg=LEDC_AUTO_CLK }; ledc_timer_config(&tc); t0_done=true; }
+    ledc_channel_config_t c1 = { .gpio_num=in1, .speed_mode=sm, .channel=ch1,
+        .intr_type=LEDC_INTR_DISABLE, .timer_sel=LEDC_TIMER_MOTOR, .duty=0 };
+    ledc_channel_config(&c1);
+    ledc_channel_config_t c2 = { .gpio_num=in2, .speed_mode=sm, .channel=ch2,
+        .intr_type=LEDC_INTR_DISABLE, .timer_sel=LEDC_TIMER_MOTOR, .duty=0 };
+    ledc_channel_config(&c2);
     Stop();
 }
-
-// DRV8833 构造: 2xPWM脚(in1/in2) + 2个LEDC通道
-Motor::Motor(gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t ch1, ledc_channel_t ch2)
-    : pwm_pin_(GPIO_NUM_NC), in1_pin_(in1_pin), in2_pin_(in2_pin), speed_(0), reverse_(false),
-      ledc_channel_(ch1), ledc_channel2_(ch2), driver_type_(kDRV8833) {
-
-    // LEDC_TIMER_0 只配置一次
-    static bool motor_timer_inited = false;
-    if (!motor_timer_inited) {
-        ledc_timer_config_t timer_conf = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .duty_resolution = LEDC_TIMER_8_BIT,
-            .timer_num = LEDC_TIMER_0,
-            .freq_hz = 10000,
-            .clk_cfg = LEDC_AUTO_CLK,
-        };
-        ledc_timer_config(&timer_conf);
-        motor_timer_inited = true;
-    }
-
-    // 两个 IN 脚都配置为 LEDC PWM 输出
-    ledc_channel_config_t ch1_conf = {
-        .gpio_num = in1_pin_,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = ledc_channel_,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0,
-        .flags = { .output_invert = 0 },
-    };
-    ledc_channel_config(&ch1_conf);
-
-    ledc_channel_config_t ch2_conf = {
-        .gpio_num = in2_pin_,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = ledc_channel2_,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0,
-        .flags = { .output_invert = 0 },
-    };
-    ledc_channel_config(&ch2_conf);
-
+// PWMģʽ���캯�����Զ��嶨ʱ�������ŵ����timer��ָ����
+Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_timer_t timer, ledc_mode_t sm)
+    : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
+      ledc_timer_(timer), speed_mode_(sm), max_duty_(255) {
+    static bool custom_done[4] = {false};
+    if (!custom_done[timer]) { ledc_timer_config_t tc = { .speed_mode=sm, .duty_resolution=LEDC_TIMER_8_BIT,
+        .timer_num=timer, .freq_hz=10000, .clk_cfg=LEDC_AUTO_CLK }; ledc_timer_config(&tc); custom_done[timer]=true; }
+    ledc_channel_config_t c1 = { .gpio_num=in1, .speed_mode=sm, .channel=ch1,
+        .intr_type=LEDC_INTR_DISABLE, .timer_sel=timer, .duty=0 };
+    ledc_channel_config(&c1);
+    ledc_channel_config_t c2 = { .gpio_num=in2, .speed_mode=sm, .channel=ch2,
+        .intr_type=LEDC_INTR_DISABLE, .timer_sel=timer, .duty=0 };
+    ledc_channel_config(&c2);
     Stop();
 }
-
 void Motor::SetSpeed(int speed) {
     if (speed == 0) { Stop(); return; }
-    bool rev = speed < 0;
-    int spd = abs(speed);
-    if (spd > 100) spd = 100;
-    uint32_t duty = (spd * 255) / 100;
-
-    if (driver_type_ == kDRV8833) {
-        // DRV8833: PWM 直接打在 IN 脚上
-        // AIN1=正转, AIN2=反转 (coast: both LOW; brake: both HIGH)
-        if (rev) {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, 0);
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel2_, duty);
-        } else {
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, duty);
-            ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel2_, 0);
-        }
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel2_);
+    int spd = abs(speed); if (spd > 100) spd = 100;
+    if (use_pwm_) {
+        uint32_t duty = (spd * max_duty_) / 100;
+        if (speed < 0) { ledc_set_duty(speed_mode_, ledc_channel_, 0); ledc_set_duty(speed_mode_, ledc_channel2_, duty); }
+        else { ledc_set_duty(speed_mode_, ledc_channel_, duty); ledc_set_duty(speed_mode_, ledc_channel2_, 0); }
+        ledc_update_duty(speed_mode_, ledc_channel_);
+        ledc_update_duty(speed_mode_, ledc_channel2_);
     } else {
-        // TB6612: PWMA 输出 PWM, IN1/IN2 控制方向
-        gpio_set_level(in1_pin_, rev ? 0 : 1);
-        gpio_set_level(in2_pin_, rev ? 1 : 0);
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, duty);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
+        if (speed > 0) { gpio_set_level(in1_pin_, 1); gpio_set_level(in2_pin_, 0); }
+        else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 1); }
     }
-    speed_ = spd;
-    reverse_ = rev;
 }
-
 void Motor::Stop() {
-    if (driver_type_ == kDRV8833) {
-        // DRV8833 coast stop (both LOW)
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, 0);
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel2_, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel2_);
-    } else {
-        gpio_set_level(in1_pin_, 0);
-        gpio_set_level(in2_pin_, 0);
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
-    }
-    speed_ = 0;
+    if (use_pwm_) { ledc_set_duty(speed_mode_, ledc_channel_, 0); ledc_set_duty(speed_mode_, ledc_channel2_, 0);
+        ledc_update_duty(speed_mode_, ledc_channel_); ledc_update_duty(speed_mode_, ledc_channel2_); }
+    else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 0); }
 }
-
-void Motor::Forward(int speed) { SetSpeed(speed); }
-void Motor::Reverse(int speed) { SetSpeed(-speed); }
+void Motor::Forward(int speed) { SetSpeed(speed > 0 ? speed : 100); }
+void Motor::Reverse(int speed) { SetSpeed(speed > 0 ? -speed : -100); }
 
 // ============================================
-// Servo (SG90)
+// ��� (SG90)
 // ============================================
-Servo::Servo(gpio_num_t pin, ledc_channel_t channel)
-    : pin_(pin), angle_(90), ledc_channel_(channel) {
+Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
+    : pin_(pin), angle_(90), ledc_channel_(channel), speed_mode_(speed_mode) {
 
-    // LEDC_TIMER_1 只配置一次，避免重复初始化
+    // �����ʱ��ȫ��ֻ��ʼ��һ�Σ�50Hz, 14-bit�ֱ��ʣ�
     static bool servo_timer_inited = false;
     if (!servo_timer_inited) {
         ledc_timer_config_t timer_conf = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .speed_mode = speed_mode_,
             .duty_resolution = LEDC_TIMER_14_BIT,
-            .timer_num = LEDC_TIMER_1,
+            .timer_num = LEDC_TIMER_SERVO,
             .freq_hz = 50,
             .clk_cfg = LEDC_AUTO_CLK,
         };
@@ -199,10 +202,10 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel)
 
     ledc_channel_config_t ch_conf = {
         .gpio_num = pin_,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .speed_mode = speed_mode_,
         .channel = ledc_channel_,
         .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_1,
+        .timer_sel = LEDC_TIMER_SERVO,
         .duty = 0,
         .hpoint = 0,
         .flags = { .output_invert = 0 },
@@ -212,15 +215,26 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel)
     SetAngle(90);
 }
 
+/**
+ * @brief ���ö���Ƕ� (0~180��)
+ * @param angle Ŀ��Ƕȣ��Զ�ǯλ�� [0, 180]
+ * ���Ƕ�ת��Ϊ50Hz PWMռ�ձ� (409~2048��Ӧ 0~180��)
+ */
 void Servo::SetAngle(int angle) {
     if (angle < 0) angle = 0;
     if (angle > 180) angle = 180;
     angle_ = angle;
     uint32_t duty = (uint32_t)(409 + (float)(angle) / 180.0f * (2048 - 409));
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, ledc_channel_, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, ledc_channel_);
+    ledc_set_duty(speed_mode_, ledc_channel_, duty);
+    ledc_update_duty(speed_mode_, ledc_channel_);
 }
 
+/**
+ * @brief ���ƽ��ɨ�裺����ʼ�Ƕȵ�Ŀ��Ƕȣ���ָ��ʱ�������
+ * @param from ��ʼ�Ƕ�
+ * @param to Ŀ��Ƕ�  
+ * @param duration_ms ����ʱ�䣨���룩��ÿ20msһ��
+ */
 void Servo::Sweep(int from, int to, int duration_ms) {
     if (from == to) { SetAngle(to); return; }
     int steps = duration_ms / 20;
@@ -232,48 +246,34 @@ void Servo::Sweep(int from, int to, int duration_ms) {
     }
 }
 
-// ============================================
-// BirdJump (电磁�?
-// ============================================
-BirdJump::BirdJump(gpio_num_t gpio) : gpio_(gpio), active_(false) {
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << gpio_),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&io_conf);
-    gpio_set_level(gpio_, 0);
-}
-
-void BirdJump::Jump(int duration_ms) {
-    Set(true);
-    if (duration_ms > 0) {
-        vTaskDelay(pdMS_TO_TICKS(duration_ms));
-        Set(false);
-    }
-}
-
-void BirdJump::Set(bool on) {
-    gpio_set_level(gpio_, on ? 1 : 0);
-    active_ = on;
-}
+// С���� + �������ˮ����� (DRV8833 ������� IN1/IN2)
+// config.h ����: MOTOR_WATER_BIRD_IN1/IN2 + LEDC_CH_WATER/JUMP
+// ˮ����ת: water_bird_->SetSpeed(WATER_WHEEL_SPEED) �� IN1����
+// ˮ����ת: water_bird_->SetSpeed(-100) �� IN2����
 
 // ============================================
-// MP3 Player (YX5200/YX5300 UART)
+// MP3������ (���������첽�����)
 // ============================================
-// ============================================
-// Mp3Player - 软件解码播放器（异步任务版）
+// Mp3Player - �������벥�������첽����棩
+// ֧��: DecodeSingleFile(����MP3) / PlayUrl(HTTP��MP3) / PlayPcm(ԭʼPCM) / PlayOpus(OGG/Opus)
+// Ducking: AI˵��ʱ�Զ�������������100%����20%��Ϊ������˵����𽥻ָ���100%
+// ���л���: LoadDogBark������PCM���ص��������������ڽ���ѭ���е���
 // ============================================
 
+/**
+ * @brief ��������������ֹͣ���ȴ����������˳���5������ڣ�������������
+ */
 Mp3Player::~Mp3Player() {
     stop_requested_ = true;
-    is_playing_ = false;
+    // ����������5��������˳������recv�������ر�socket��
+    for (int i = 0; i < 100 && is_playing_; i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
+    }
     if (play_task_) {
         vTaskDelete(play_task_);
         play_task_ = nullptr;
     }
+    is_playing_ = false;
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -285,7 +285,66 @@ void Mp3Player::Init(Assets* assets) {
     ESP_LOGI(TAG, "Mp3Player initialized (async task-based software decode)");
 }
 
-// 在播放任务中运行，解码单个 MP3 文件
+// �������ܣ�Ducking������ �� ������Ƶ����·������
+
+// �������ܣ�Ducking������ �� ������Ƶ����·������
+void Mp3Player::UpdateDuckingState() {
+    auto& app = Application::GetInstance();
+    auto dev_state = app.GetDeviceState();
+    if (dev_state == kDeviceStateSpeaking && ducking_gain_ >= 1.0f) {
+        ducking_gain_ = 1.0f;
+        ducking_start_us_ = esp_timer_get_time();
+        ESP_LOGI(TAG, "Ducking: AI speaking, fading out");
+    }
+    if (ducking_gain_ < 1.0f) {
+        if (dev_state != kDeviceStateSpeaking) {
+            ducking_gain_ = 1.0f; ducking_start_us_ = 0;
+        } else {
+            int64_t elapsed = esp_timer_get_time() - ducking_start_us_;
+            ducking_gain_ = 1.0f - 0.8f * (float)elapsed / 400000.0f;  // 400ms fade to 20%
+            if (ducking_gain_ < 0.2f) {
+                ducking_gain_ = 0.2f;
+                ESP_LOGI(TAG, "Ducking: fade complete at 20%%");
+            }
+        }
+    }
+}
+
+/**
+ * @brief ���ع���PCM������������
+ * ����DecodeSingleFile/PlayUrl�����ѭ�����bark_active_��
+ * ������PCM���ӵ���������ϣ�ʵ�ֹ��к�����ͬʱ����
+ */
+void Mp3Player::LoadDogBark(const int16_t* pcm, size_t num_samples) {
+    while (bark_active_) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    bark_pcm_ = std::vector<int16_t>(pcm, pcm + num_samples);
+    bark_total_ = num_samples;
+    bark_offset_ = 0;
+    bark_active_ = true;
+    ESP_LOGI(TAG, "DogBark: loaded %u samples, mixing into music output", (unsigned)num_samples);
+}
+
+void Mp3Player::ApplyDuckingGain(int16_t* pcm, size_t num_samples) {
+    float g = ducking_gain_;
+    if (g >= 1.0f) return;
+    for (size_t i = 0; i < num_samples; i++) {
+        int32_t s = (int32_t)(pcm[i] * g);
+        if (s > 30000) s = 30000;
+        if (s < -30000) s = -30000;
+        pcm[i] = (int16_t)s;
+    }
+}
+
+/**
+ * @brief ���벢���ŵ�������MP3�ļ�
+ * @param index MP3�ļ���� (��Ӧ 0001~0012.mp3����0013������0015�մ0016԰��)
+ * @return 0=�����ֹͣ, 1=��������
+ * - ����ID3v2��ǩ���������룬OutputRawPcm���
+ * - ���л��������bark_active_�Զ����ӹ�����
+ * - Ducking��AI˵��ʱ����20%����
+ */
 int Mp3Player::DecodeSingleFile(int index) {
     if (!assets_) {
         ESP_LOGE(TAG, "Assets not initialized");
@@ -295,7 +354,7 @@ int Mp3Player::DecodeSingleFile(int index) {
     char filename[16];
     snprintf(filename, sizeof(filename), "%04d.mp3", index);
 
-    // 从 assets 获取 MP3 文件数据
+    // �� assets ��ȡ MP3 �ļ�����
     void* mp3_data = nullptr;
     size_t mp3_size = 0;
     if (!assets_->GetAssetData(filename, mp3_data, mp3_size)) {
@@ -310,7 +369,21 @@ int Mp3Player::DecodeSingleFile(int index) {
 
     ESP_LOGI(TAG, "Playing %s (%lu bytes)", filename, (unsigned long)mp3_size);
 
-    // 打开 MP3 解码器
+    // ���� ID3v2 ��ǩ��MP3 �ļ��� "ID3" ��ͷʱ��ǰ10�ֽں�� sync-safe int �Ǳ�ǩ���ȣ�
+    uint8_t* mp3_start = (uint8_t*)mp3_data;
+    size_t mp3_data_size = mp3_size;
+    if (mp3_size > 10 && memcmp(mp3_start, "ID3", 3) == 0) {
+        uint32_t id3_size = ((mp3_start[6] & 0x7F) << 21) | ((mp3_start[7] & 0x7F) << 14)
+                          | ((mp3_start[8] & 0x7F) << 7)  |  (mp3_start[9] & 0x7F);
+        size_t skip = 10 + id3_size;
+        if (skip < mp3_size - 1024) {  // ȷ�����������㹻����
+            mp3_start += skip;
+            mp3_data_size -= skip;
+            ESP_LOGI(TAG, "Skipped ID3v2 tag: %lu bytes", (unsigned long)skip);
+        }
+    }
+
+    // �رս�����
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -322,20 +395,20 @@ int Mp3Player::DecodeSingleFile(int index) {
         return 0;
     }
 
-    // 解码信息
+        // ������Ϣ
     esp_audio_dec_info_t dec_info = {};
     bool info_ready = false;
     int sample_rate = 22050;
     int channels = 1;
 
-    // 解码前静音 AI 的 Opus 输出，防止 AI 声音打断音乐
-    // SetOutputMuted(true) 仅静音 Opus 解码后的音频，不影响 OutputRawPcm
-        // 解码循环
-    uint8_t* input_ptr = (uint8_t*)mp3_data;
-    size_t remaining = mp3_size;
+        // ����ѭ��
+    uint8_t* input_ptr = mp3_start;
+    size_t remaining = mp3_data_size;
+    int consecutive_errors = 0;
+    const int MAX_CONSECUTIVE_ERRORS = 50;
 
     while (remaining > 0 && !stop_requested_) {
-        // 准备输入帧
+        // ׼������֡
         size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
         memcpy(input_buf_, input_ptr, in_len);
 
@@ -345,66 +418,85 @@ int Mp3Player::DecodeSingleFile(int index) {
         raw.consumed = 0;
         raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
 
-        // 准备输出帧
+        // ׼�����֡
         esp_audio_dec_out_frame_t frame;
         frame.buffer = output_buf_;
         frame.len = kOutputBufSize;
         frame.needed_size = 0;
         frame.decoded_size = 0;
 
-        // 解码
+        // ����
         ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
 
         if (ret == ESP_AUDIO_ERR_OK) {
-            // 首次获取解码信息
-            if (!info_ready) {
-                esp_audio_err_t info_ret = esp_audio_dec_get_info(mp3_dec_handle_, &dec_info);
-                if (info_ret == ESP_AUDIO_ERR_OK) {
-                    sample_rate = dec_info.sample_rate;
-                    channels = dec_info.channel;
-                    ESP_LOGI(TAG, "MP3 info: %d Hz, %d ch, %.1f kbps",
-                             sample_rate, channels, dec_info.bitrate / 1000.0f);
-                }
+            // �״λ�ȡ������Ϣ �� esp_mp3_dec_decode ��ͨ�� dec_info �������
+            if (!info_ready && frame.decoded_size > 0) {
+                sample_rate = dec_info.sample_rate ? dec_info.sample_rate : 22050;
+                channels = dec_info.channel ? dec_info.channel : 1;
+                ESP_LOGI(TAG, "MP3 info: %d Hz, %d ch, %.1f kbps",
+                         sample_rate, channels, dec_info.bitrate / 1000.0f);
                 info_ready = true;
             }
 
-            // 有解码出的 PCM 数据，推给扬声器
+            // �н������ PCM ���ݣ��Ƹ�����ͨ��
             if (frame.decoded_size > 0 && !stop_requested_) {
                 int16_t* pcm_data = (int16_t*)frame.buffer;
                 size_t num_samples = frame.decoded_size / sizeof(int16_t);
 
-                // 计算这段 PCM 的播放时长
-                int play_ms = (int)(num_samples * 1000 / sample_rate / (channels > 0 ? channels : 1));
-                if (play_ms < 10) play_ms = 10;  // 最小延时
-
                 auto& app = Application::GetInstance();
 
-                // ---- Smooth ducking: fade music out when AI starts speaking ----
-                if (app.GetDeviceState() == kDeviceStateSpeaking) {
+ // ---- Smooth ducking: fade music out when AI starts speaking ----
+                // Use a state machine: 0=idle, 1=fading, 2=ducked, 3=restoring
+                static int duck_state = 0;  // 0=idle, 1=fading, 2=ducked, 3=restoring
+                static int64_t duck_transition_us = 0;
+                bool ai_speaking = (app.GetDeviceState() == kDeviceStateSpeaking);
+
+                if (disable_ducking_) {
+                    // ����ģʽ�����ܣ�����ȫ����
+                    ducking_gain_ = 1.0f;
+                } else if (ai_speaking && duck_state == 0) {
+                    // ��ʼ����
+                    duck_state = 1;
+                    duck_transition_us = esp_timer_get_time();
+                    ESP_LOGI(TAG, "DecodeSingleFile: AI speaking, fading out");
+                }
+
+                if (duck_state == 1) {
+                    // 400ms������20%
+                    int64_t elapsed = esp_timer_get_time() - duck_transition_us;
+                    ducking_gain_ = 1.0f - 0.8f * (float)elapsed / 400000.0f;
+                    if (ducking_gain_ <= 0.2f) {
+                        ducking_gain_ = 0.2f;
+                        duck_state = 2;
+                    }
+                    if (!ai_speaking) {
+                     // AI�ڽ����ڼ�ֹͣ�� �� �ָ�
+                        duck_state = 3;
+                        duck_transition_us = esp_timer_get_time();
+                    }
+                } else if (duck_state == 2) {
+                    ducking_gain_ = 0.2f;
+                    if (!ai_speaking) {
+                        duck_state = 3;
+                        duck_transition_us = esp_timer_get_time();
+                    }
+                } else if (duck_state == 3) {
+                    // 400ms�ָ���100%
+                    int64_t elapsed = esp_timer_get_time() - duck_transition_us;
+                    ducking_gain_ = 0.2f + 0.8f * (float)elapsed / 400000.0f;
                     if (ducking_gain_ >= 1.0f) {
                         ducking_gain_ = 1.0f;
-                        ducking_start_us_ = esp_timer_get_time();
-                        ESP_LOGI(TAG, "DecodeSingleFile: AI speaking, fading out");
-                    }
-                }
-
-                if (ducking_gain_ < 1.0f) {
-                    // AI was speaking but stopped (false trigger) → restore
-                    if (app.GetDeviceState() != kDeviceStateSpeaking) {
-                        ducking_gain_ = 1.0f;
-                        ducking_start_us_ = 0;
+                        duck_state = 0;
                         ESP_LOGI(TAG, "DecodeSingleFile: false trigger, restored");
-                    } else {
-                        // Calculate fade progress
-                        int64_t elapsed = esp_timer_get_time() - ducking_start_us_;
-                        ducking_gain_ = 1.0f - 0.8f * (float)elapsed / 400000.0f;  // 400ms fade to 20%
-                        if (ducking_gain_ < 0.2f) {
-                            ducking_gain_ = 0.2f;  // Hold at 20% as background
-                        }
+                    }
+                    if (ai_speaking) {
+                     // AI�ڻָ��ڼ��ֿ�ʼ˵�� �� ���½���
+                        duck_state = 1;
+                        duck_transition_us = esp_timer_get_time();
                     }
                 }
 
-                // Apply gain + clip
+ // Apply gain + clip
                 float gain = ducking_gain_;
                 for (size_t i = 0; i < num_samples; i++) {
                     int32_t s = (int32_t)(pcm_data[i] * gain);
@@ -413,18 +505,40 @@ int Mp3Player::DecodeSingleFile(int index) {
                     pcm_data[i] = (int16_t)s;
                 }
 
+                // ��������������й������ݴ�����������ȥ
+                if (bark_active_) {
+                    size_t to_mix = num_samples;
+                    if (bark_offset_ + to_mix > bark_total_) {
+                        to_mix = bark_total_ - bark_offset_;
+                    }
+                    for (size_t i = 0; i < to_mix; i++) {
+                        int32_t mixed = (int32_t)pcm_data[i] + (int32_t)bark_pcm_[bark_offset_ + i];
+                        if (mixed > 32767) mixed = 32767;
+                        else if (mixed < -32768) mixed = -32768;
+                        pcm_data[i] = (int16_t)mixed;
+                    }
+                    bark_offset_ += to_mix;
+                    if (bark_offset_ >= bark_total_) {
+                        bark_active_ = false;
+                        ESP_LOGI(TAG, "DogBark: mix done (%u samples)", (unsigned)bark_total_);
+                    }
+                }
+
                 app.GetAudioService().OutputRawPcm(pcm_data, num_samples, sample_rate);
 
-                // 等待播放完成（OutputRawPcm 非阻塞）
+            // �ȴ�������ɣ�OutputRawPcm ��������
+                int play_ms = (int)(num_samples * 1000 / sample_rate / (channels > 0 ? channels : 1));
+                if (play_ms < 10) play_ms = 10;
                 vTaskDelay(pdMS_TO_TICKS(play_ms));
             }
 
-            // 移动输入指针
+            // �ƶ�����ָ��
             size_t consumed = raw.consumed;
             if (consumed == 0) {
                 consumed = 1;  //  Tiny files advance byte-by-byte
                 if (consumed > remaining) consumed = remaining;
             }
+        consecutive_errors = 0;  // ����ɹ������ô������
             input_ptr += consumed;
             remaining -= consumed;
 
@@ -435,7 +549,12 @@ int Mp3Player::DecodeSingleFile(int index) {
             ESP_LOGE(TAG, "Unsupported MP3 format (stopping)");
             break;
         } else {
-            // 解码错误：跳过当前帧
+        // �������������ǰ֡
+            consecutive_errors++;
+            if (consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
+                ESP_LOGE(TAG, "Too many consecutive decode errors (%d), aborting", consecutive_errors);
+                break;
+            }
             ESP_LOGW(TAG, "Decode error %d, skipping frame", ret);
             size_t skip = raw.consumed ? raw.consumed : 1;
             if (skip > remaining) skip = remaining;
@@ -444,36 +563,33 @@ int Mp3Player::DecodeSingleFile(int index) {
         }
     }
 
-    // 关闭解码器
+    // �رս�����
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
     }
 
-    // 恢复小智的 Opus 解码输出（无论正常结束还是被打断都必须恢复）
+    // �ָ�С�ǵ� Opus ������������������������Ǳ���϶�����ָ���
     auto& app = Application::GetInstance();
     if (stop_requested_) {
-        app.GetAudioService().FlushOutputDma();  // clear stale I2S data before AI speaks
+        app.GetAudioService().FlushOutputDma();
     }
     app.GetAudioService().SetOutputMuted(false);
 
-    ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, (int)stop_requested_);
+    ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, stop_requested_.load() ? 1 : 0);
     return !stop_requested_;
 }
 
 // ============================================
-// PlayUrl - HTTP下载音频并播放
-// 支持:
-//   1. 直接 MP3 URL (Content-Type: audio/*)
-//   2. 代理服务 /stream 端点 (直接返回音频)
-//   3. 代理服务 JSON 响应 (提取 url 字段后重试)
+    //   3. �������� JSON ��Ӧ (��ȡ url �ֶκ�����)
+
 // ============================================
 int Mp3Player::PlayUrl(const char* url) {
     if (!url || url[0] == '\0') return -1;
 
     ESP_LOGI(TAG, "PlayUrl: launching background task for %s", url);
 
-    // 后台任务上下文
+    // ��̨����������
     struct PlayUrlCtx { Mp3Player* self; char url[512]; };
     auto* ctx = new PlayUrlCtx();
     ctx->self = this;
@@ -481,10 +597,17 @@ int Mp3Player::PlayUrl(const char* url) {
     ctx->url[sizeof(ctx->url) - 1] = '\0';
 
     xTaskCreate(PlayUrlTask, "mp3_url", 8192, ctx, 5, NULL);
-    return 0;  // 非阻塞，立即返回
+        return 0;  // ������������
 }
 
-// 严格 MPEG 帧头校验：不仅检查 FF Ex，还校验 bitrate/samplerate/layer
+/**
+ * @brief ͨ��HTTP������MP3�����ţ���̨�첽����
+ * @param url HTTP URL
+ * - �����أ����4MB�����ϸ�MPEG֡ͷУ�飬������������������+�ز�����24000Hz
+ * - Ducking��AI˵��ʱ�Զ����͵�20%
+ * - ��ʽ���룺����һ������һ����ѭ��ֱ������򱻴��
+ */
+    // �ϸ� MPEG ֡ͷУ�鲻����� FF Ex ��У�� bitrate/samplerate/layer
 static bool IsValidMpegHeader(const uint8_t* p) {
     if (p[0] != 0xFF || (p[1] & 0xE0) != 0xE0) return false;
     int layer = (p[1] >> 1) & 0x03;
@@ -509,7 +632,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
 
     auto& app = Application::GetInstance();
 
-    // HTTP 客户端
+    // HTTP �ͻ�������
     esp_http_client_config_t config = {};
     config.url = url;
     config.method = HTTP_METHOD_GET;
@@ -534,7 +657,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
         vTaskDelete(NULL); return;
     }
 
-    // 解码器
+        // ������
     void* dec_handle = nullptr;
     esp_audio_err_t dec_ret = esp_mp3_dec_open(nullptr, 0, &dec_handle);
     if (dec_ret != ESP_AUDIO_ERR_OK) {
@@ -546,26 +669,22 @@ void Mp3Player::PlayUrlTask(void* arg) {
     self->is_playing_ = true;
     app.GetAudioService().SetOutputMuted(true);
 
-    // 批量缓冲：如果Content-Length已知，用少量大批次（降低帧边界错位机会）
+    // �������壺���Content-Length��֪�������������Σ�����֡�߽��λ���ᣩ
     size_t batch_size = 256 * 1024;
     if (content_length > 0 && content_length < 8 * 1024 * 1024) {
-        batch_size = content_length; // 全量下载
-        if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // 单批上限4MB
+        batch_size = content_length; // ȫ��һ������
+        if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // ����4MB
         ESP_LOGI(TAG, "PlayUrl: batch=%dKB (content=%dKB)", (int)(batch_size/1024), content_length/1024);
     }
     uint8_t* buf = (uint8_t*)heap_caps_malloc(batch_size, MALLOC_CAP_SPIRAM);
     if (!buf) {
-        // PSRAM分配失败→回退到256KB再试
+        // PSRAM����ʧ�ܡ����˵�256KB����
         batch_size = 256 * 1024;
         buf = (uint8_t*)heap_caps_malloc(batch_size, MALLOC_CAP_SPIRAM);
     }
     if (!buf) {
         batch_size = 64 * 1024;
-        buf = (uint8_t*)malloc(batch_size);
-    }
-    if (!buf) {
-        batch_size = 64 * 1024;
-        buf = (uint8_t*)malloc(batch_size);
+        buf = (uint8_t*)malloc(batch_size);  // last resort fallback
     }
     if (!buf) {
         ESP_LOGE(TAG, "PlayUrl: alloc failed");
@@ -574,12 +693,16 @@ void Mp3Player::PlayUrlTask(void* arg) {
         vTaskDelete(NULL); return;
     }
 
-    // 重采样缓冲区（立体声→单声道 + 采样率转换用）
+    // �ز������������������������� + ������ת���ã�
     const int kOutRate = 24000;
-    int16_t* resample_buf1 = (int16_t*)heap_caps_malloc(1152 * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    int16_t* resample_buf2 = (int16_t*)heap_caps_malloc(1152 * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    if (!resample_buf1) resample_buf1 = (int16_t*)malloc(1152 * 2 * sizeof(int16_t));
-    if (!resample_buf2) resample_buf2 = (int16_t*)malloc(1152 * 2 * sizeof(int16_t));
+                // Buffer for worst-case MP3 frame (1152 stereo) upsampled from 8000->24000Hz
+ // ������������=1152, ����ز�����=24000/8000=3.0, ����������=3456
+ // ��4096��ȫ�������������ϲ���
+    const int kResampBufSamples = 4096;
+    int16_t* resample_buf1 = (int16_t*)heap_caps_malloc(kResampBufSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    int16_t* resample_buf2 = (int16_t*)heap_caps_malloc(kResampBufSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!resample_buf1) resample_buf1 = (int16_t*)malloc(kResampBufSamples * sizeof(int16_t));
+    if (!resample_buf2) resample_buf2 = (int16_t*)malloc(kResampBufSamples * sizeof(int16_t));
     ESP_LOGI(TAG, "PlayUrl: resamp bufs %s", (resample_buf1 && resample_buf2) ? "ok" : "WARN");
 
     esp_audio_dec_info_t dec_info = {};
@@ -589,7 +712,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
     uint8_t* ptr = nullptr;
 
     // ============================================
-    // 第一批：下载 + 预处理（跳过ID3标签 + 解析采样率）
+    // ��һ������ + Ԥ��������ID3��ǩ + ����������
     // ============================================
     size_t batch_len = 0;
     int err_cnt = 0;
@@ -603,22 +726,22 @@ void Mp3Player::PlayUrlTask(void* arg) {
     if (batch_len == 0) goto cleanup;
     ESP_LOGI(TAG, "PlayUrl: batch#1 dl=%dKB", (int)(batch_len/1024));
 
-    // ---- 跳过 ID3v2 标签 ----
+    // ---- ���� ID3v2 ��ǩ ----
     mp3_start = 0;
     if (batch_len > 10 && memcmp(buf, "ID3", 3) == 0) {
         uint32_t id3_size = ((buf[6] & 0x7F) << 21) | ((buf[7] & 0x7F) << 14)
                           | ((buf[8] & 0x7F) << 7)  |  (buf[9] & 0x7F);
         mp3_start = 10 + id3_size;
-        if (mp3_start > batch_len - 1024) mp3_start = 0; // 标签太大/跨批，不做跳过
+        if (mp3_start > batch_len - 1024) mp3_start = 0; // ��ǩ̫��/���ݲ��㣬��ͷ��ʼ
         ESP_LOGI(TAG, "PlayUrl: ID3v2 %luB, MP3 @ %u", id3_size, (unsigned)mp3_start);
     }
 
-    // ---- 从原始数据扫描 MPEG 帧头获取采样率 ----
+    // ---- ��ԭʼ����ɨ�� MPEG ֡ͷ��ȡ������ ----
     for (size_t k = mp3_start; k + 3 < batch_len; k++) {
         if (buf[k] == 0xFF && (buf[k+1] & 0xE0) == 0xE0) {
             int ver = (buf[k+1] >> 3) & 0x03;
             int lay = (buf[k+1] >> 1) & 0x03;
-            if (lay != 1) continue; // 只要 Layer 3
+            if (lay != 1) continue; // ֻҪ Layer 3
             int sri = (buf[k+2] >> 2) & 0x03;
             if      (ver == 3) { static const int r[]={44100,48000,32000,0}; sample_rate = r[sri]; }
             else if (ver == 2) { static const int r[]={22050,24000,16000,0}; sample_rate = r[sri]; }
@@ -628,13 +751,12 @@ void Mp3Player::PlayUrlTask(void* arg) {
     }
     if (sample_rate == 0) { sample_rate = 44100; ESP_LOGW(TAG, "PlayUrl: no sync header, default %dHz", sample_rate); }
 
-    // ---- 解码循环（批量流式）----
+    // ---- ����ѭ����������ʽ��----
     ptr = buf + mp3_start;
     rem = batch_len - mp3_start;
     batch_seq = 1;
 
     while (1) {
-        printf("DL r%u\n", (unsigned)rem);
         while (rem > 0 && !self->stop_requested_) {
             size_t feed = (rem < self->kInputBufSize) ? rem : self->kInputBufSize;
             memcpy(self->input_buf_, ptr, feed);
@@ -652,7 +774,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
 
             if (dec_ret == ESP_AUDIO_ERR_OK) {
                 if (frame.decoded_size > 0 && !self->stop_requested_) {
-                    // ---- Smooth ducking: fade when AI starts speaking ----
+ // ---- Smooth ducking: fade when AI starts speaking ----
                     auto dev_state = app.GetDeviceState();
                     if (dev_state == kDeviceStateSpeaking && self->ducking_gain_ >= 1.0f) {
                         self->ducking_gain_ = 1.0f;
@@ -675,15 +797,15 @@ void Mp3Player::PlayUrlTask(void* arg) {
                     size_t ns = frame.decoded_size / sizeof(int16_t);  // stereo sample count
                     size_t mono_ns = ns / 2;
 
-                    // Mix stereo→mono + resample to 24000Hz if needed
-                    // OutputRawPcm's internal resampler treats stereo as mono (cross-channel garbling)
+ // ������������������ + �ز�����24000Hz
+ // OutputRawPcm�ڲ��ز����������������������������ᵼ���������ң�
                     if (sample_rate != kOutRate && mono_ns > 0) {
-                        // Step 1: stereo→mono (average L/R)
+                    // Step 1: stereo -> mono (average L/R)
                         for (size_t i = 0; i < mono_ns; i++) {
                             int32_t sum = (int32_t)pcm[2*i] + (int32_t)pcm[2*i+1];
                             resample_buf1[i] = (int16_t)(sum / 2);
                         }
-                        // Step 2: linear resample→kOutRate
+ // ��2�������Բ�ֵ�ز�����kOutRate
                         float ratio = (float)kOutRate / (float)sample_rate;
                         size_t out_ns = (size_t)(mono_ns * ratio);
                         for (size_t i = 0; i < out_ns; i++) {
@@ -695,7 +817,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                             else
                                 resample_buf2[i] = resample_buf1[idx];
                         }
-                        // Apply ducking gain to output buffer
+ // �����������Ӧ��Ducking����
                         float g = self->ducking_gain_;
                         for (size_t i = 0; i < out_ns; i++) {
                             int32_t s = (int32_t)(resample_buf2[i] * g);
@@ -709,7 +831,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                             int32_t sum = (int32_t)pcm[2*i] + (int32_t)pcm[2*i+1];
                             resample_buf1[i] = (int16_t)(sum / 2);
                         }
-                        // Apply ducking gain
+ // �Ի�����Ӧ��Ducking����
                         float g = self->ducking_gain_;
                         for (size_t i = 0; i < mono_ns; i++) {
                             int32_t s = (int32_t)(resample_buf1[i] * g);
@@ -721,19 +843,19 @@ void Mp3Player::PlayUrlTask(void* arg) {
                     }
                     play_ms += (int)(ns * 1000 / sample_rate);
                 }
-                // 用解码器返回的 frame_size 代替 raw.consumed 确保帧边界精确
+        // �ý��������ص� frame_size ���� raw.consumed ȷ��֡�߽羫ȷ
                 size_t c = dec_info.frame_size;
-                if (c == 0) c = raw.consumed;  // 回退
+                if (c == 0) c = raw.consumed;  // �˻����
                 if (c == 0) c = 1;
                 if (c >= rem) { rem = 0; } else { ptr += c; rem -= c; }
             } else if (dec_ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
                 if (raw.consumed > 0 && raw.consumed < rem) { ptr += raw.consumed; rem -= raw.consumed; }
                 else if (raw.consumed == 0) {
-                    // 数据起始不在帧头，跳过至下一个 MPEG 同步帧（防止死循环）
+                    // ������ʼ����֡ͷ����������һ�� MPEG ͬ��֡����ֹ��ѭ����
                     size_t scan = 1;
                     while (scan + 3 < rem && !IsValidMpegHeader(ptr + scan)) scan++;
                     if (scan + 3 < rem) { ptr += scan; rem -= scan; }
-                    else { rem = 0; break; }  // 未找到同步帧，放弃并 carry 到下一批
+                    else { rem = 0; break; }  // δ�ҵ�ͬ��֡ͷ������carryʣ��
                 }
                 if (rem < 1024) break;
             } else {
@@ -741,7 +863,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                     if (raw.consumed >= rem) { rem = 0; }
                     else { ptr += raw.consumed; rem -= raw.consumed; }
                 } else {
-                    // 解码失败且未消费→严格跳至下一个 MPEG 帧头
+                    // ����ʧ����δ���ѡ��ϸ�������һ�� MPEG ֡ͷ
                     size_t scan = 1;
                     while (scan + 3 < rem && !IsValidMpegHeader(ptr + scan)) scan++;
                     if (scan + 3 >= rem) { rem = 0; break; }
@@ -749,10 +871,10 @@ void Mp3Player::PlayUrlTask(void* arg) {
                 }
             }
         }
-        printf("DD b%d r%u s%d\n", batch_seq, (unsigned)rem, self->stop_requested_ ? 1 : 0);
+        ESP_LOGD(TAG, "PlayUrl: batch#%d rem=%u stop=%d", batch_seq, (unsigned)rem, self->stop_requested_.load() ? 1 : 0);
         if (self->stop_requested_) { printf("DD stop_break\n"); break; }
 
-        // ----- 保留上批末尾未消费字节，拼接到下批头部 -----
+        // ----- ��������ĩβδ�����ֽڣ�ƴ�ӵ�����ͷ�� -----
         size_t carry = rem;
         if (carry > 0 && carry < batch_size) {
             memmove(buf, ptr, carry);
@@ -760,7 +882,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
             carry = 0;
         }
 
-        // ----- 下载下一批 -----
+        // ----- ������һ�� -----
         batch_len = 0; err_cnt = 0; batch_seq++;
         while (batch_len + carry < batch_size && !self->stop_requested_) {
             int r = esp_http_client_read(client, (char*)(buf + carry + batch_len), batch_size - carry - batch_len);
@@ -770,24 +892,24 @@ void Mp3Player::PlayUrlTask(void* arg) {
         }
         total_dl += batch_len;
         if (batch_len == 0) { ESP_LOGI(TAG, "PlayUrl: batch_len=0 break after %dKB", (int)(total_dl/1024)); break; }
-        ESP_LOGI(TAG, "PlayUrl: batch#%d dl=%dKB+%uB carry", batch_seq, (int)(batch_len/1024), (unsigned)carry);
+        ESP_LOGD(TAG, "PlayUrl: batch#%d dl=%dKB+%uB carry", batch_seq, (int)(batch_len/1024), (unsigned)carry);
         ptr = buf;
         rem = carry + batch_len;
-        // carry=0且非帧头→扫描跳过metadata/非帧数据到下一个严格帧头
+        // carry=0�ҷ�֡ͷ��ɨ������metadata/��֡���ݵ���һ���ϸ�֡ͷ
         if (carry == 0 && rem > 3 && !IsValidMpegHeader(ptr)) {
             size_t s = 1;
             while (s + 3 < rem && !IsValidMpegHeader(ptr + s)) s++;
             if (s + 3 < rem) {
-                printf("SK%d ", (int)s);
+                ESP_LOGD(TAG, "PlayUrl: skip %d bytes to next frame", (int)s);
                 ptr += s; rem -= s;
             } else {
-                rem = 0; // 整批无有效帧头，放弃
+                rem = 0; // ��Ч֡ͷ������
             }
         }
-        printf("BA b%d r%u %02X%02X%02X%02X...\n", batch_seq, (unsigned)rem,
+        ESP_LOGD(TAG, "PlayUrl: batch#%d ready rem=%u %02X%02X%02X%02X...", batch_seq, (unsigned)rem,
                rem>0?ptr[0]:0, rem>1?ptr[1]:0, rem>2?ptr[2]:0, rem>3?ptr[3]:0);
     }
-    printf("DD OUT rem=%u stop=%d\n", (unsigned)rem, self->stop_requested_ ? 1 : 0);
+    ESP_LOGD(TAG, "PlayUrl: decode loop done rem=%u stop=%d", (unsigned)rem, self->stop_requested_.load() ? 1 : 0);
 
 cleanup:
 
@@ -804,7 +926,14 @@ cleanup:
     vTaskDelete(NULL);
 }
 
-// ── PlayPcm: HTTP下载raw PCM → PushRawPcmToPlayback（走原生播放管线，无帧对齐问题）──
+// PlayPcm: HTTP����ԭʼPCM �� PushRawPcmToPlayback����ԭ�����Ź��ߣ���֡�������⣩
+/**
+ * @brief ͨ��HTTP����ԭʼs16le PCM�����͵����Ŷ���
+ * @param url PCM��ƵURL
+ * @return 0=�����ɹ�
+ * - �ֿ����أ�4KB����PushRawPcmToPlayback���벥�Ŷ���
+ * - Ducking��AI˵��ʱ�Զ�����������20%
+ */
 int Mp3Player::PlayPcm(const char* url) {
     if (is_playing_) {
         Stop();
@@ -869,19 +998,20 @@ void Mp3Player::PlayPcmTask(void* arg) {
         return;
     }
 
-    // Download PCM in chunks, push to playback queue
-    const size_t CHUNK = 48 * 1024;  // 24K samples = 1 second of audio
+ // �ֿ�����PCM�����벥�Ŷ���
+    const size_t CHUNK = sizeof(self->output_buf_);  // ��������������С
     const int SAMPLE_RATE = 24000;
     int64_t t0 = esp_timer_get_time();
+    int bytes_yielded = 0;
 
     while (self->is_playing_ && !self->stop_requested_) {
         int read = esp_http_client_read(client, (char*)self->output_buf_, CHUNK);
         if (read <= 0) break;
 
-        size_t samples = read / 2;  // 16-bit mono
+        size_t samples = read / 2;  // 16λ������
         int16_t* pcm = (int16_t*)self->output_buf_;
 
-        // ---- Smooth ducking: fade when AI starts speaking ----
+ // ---- Smooth ducking: fade when AI starts speaking ----
         auto dev_state = app.GetDeviceState();
         if (dev_state == kDeviceStateSpeaking && self->ducking_gain_ >= 1.0f) {
             self->ducking_gain_ = 1.0f;
@@ -893,18 +1023,14 @@ void Mp3Player::PlayPcmTask(void* arg) {
                 self->ducking_gain_ = 1.0f; self->ducking_start_us_ = 0;
             } else {
                 int64_t elapsed = esp_timer_get_time() - self->ducking_start_us_;
-                self->ducking_gain_ = 1.0f - (float)elapsed / 400000.0f;
-                if (self->ducking_gain_ <= 0.0f) {
-                    self->ducking_gain_ = 0.0f;
-                    self->stop_requested_ = true;
-                    self->is_playing_ = false;
-                    app.GetAudioService().FlushOutputDma();
-                    ESP_LOGI(TAG, "PlayPcm: fade complete, stopping");
-                    break;
+                self->ducking_gain_ = 1.0f - 0.8f * (float)elapsed / 400000.0f;  // 400ms fade to 20%
+                if (self->ducking_gain_ < 0.2f) {
+                    self->ducking_gain_ = 0.2f;  // hold at 20% as background
+                    ESP_LOGI(TAG, "PlayPcm: fade complete, holding at 20%%");
                 }
             }
         }
-        // Apply ducking gain
+ // �Ի�����Ӧ��Ducking����
         float g = self->ducking_gain_;
         for (size_t i = 0; i < samples; i++) {
             int32_t s = (int32_t)(pcm[i] * g);
@@ -915,8 +1041,7 @@ void Mp3Player::PlayPcmTask(void* arg) {
 
         app.GetAudioService().PushRawPcmToPlayback(pcm, samples, SAMPLE_RATE);
 
-        // Throttle: yield CPU every ~4s of audio to avoid starving WiFi
-        static int bytes_yielded = 0;
+ // ������ÿԼ4����Ƶ�����ó�CPU��ֹWiFi����
         bytes_yielded += read;
         if (bytes_yielded >= 192 * 1024) {  // ~4 seconds
             bytes_yielded = 0;
@@ -934,32 +1059,38 @@ void Mp3Player::PlayPcmTask(void* arg) {
     vTaskDelete(NULL);
 }
 
-// 播放闹钟铃声（PCM 合成，模拟电子闹钟滴滴声，2秒）
-// volume: 0.0~1.0，控制音量（渐强用）
-// HTTP stream OGG/Opus, feed to OggDemuxer -> PushPacketToDecodeQueue (native pipeline)
+/**
+ * @brief ͨ��ԭʼBSD Socket����OGG/Opus��Ƶ�����͸�����������
+ * @param url Opus��ƵURL
+ * @return 0=�����ɹ�
+ * - ʹ��BSD socketֱ�����ƹ�lwip esp_http_client
+ * - Opus·����OGG���װ �� PushPacketToDecodeQueue(��ԭ��Opus�������)
+ * - PCM·����legacy����PushBackgroundAudio(�߱�����Ƶring buffer)
+ * - Ducking��AI˵��ʱ��ͣ�������ݣ��������������ݣ���˵��ָ�
+ * - �Զ��������͵�65%������AEC�زɸ��ţ�
+ * - ���粻ͨʱ���˵�����ת��ģʽ
+ */
 int Mp3Player::PlayOpus(const char* url) {
     if (is_playing_) {
-        Stop();
-        // Wait for old task to fully exit (queues are now cleared, so much faster)
-        for (int i = 0; i < 300 && is_playing_; i++) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        if (is_playing_) {
-            ESP_LOGW(TAG, "PlayOpus: old task still running, forcing stop");
-        }
+        ESP_LOGW(TAG, "PlayOpus: music already playing, refusing (call stop_music first)");
+        return -1;
     }
     ESP_LOGI(TAG, "PlayOpus: launching for %s", url);
     is_playing_ = true;
-    stop_requested_ = false;  // 清除上次 Stop() 残留的标记
+    stop_requested_ = false;  // ��� Stop() ���õı�־
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
+    if (strlen(url) >= 512) {
+        ESP_LOGE(TAG, "PlayOpus: URL too long (%u bytes)", (unsigned)strlen(url));
+        return -1;
+    }
     struct OpusCtx { Mp3Player* self; char url[512]; };
     auto* ctx = new OpusCtx();
     ctx->self = this;
     strncpy(ctx->url, url, 511);
     ctx->url[511] = '\0';
 
-    xTaskCreatePinnedToCore(PlayOpusTask, "opus_http", 1024 * 24, ctx, 3, NULL, 1);
+    xTaskCreatePinnedToCore(PlayOpusTask, "opus_http", 1024 * 24, ctx, 3, NULL, 1);  // 24KB stack for OGG/Opus decode
     return 0;
 }
 
@@ -976,9 +1107,9 @@ void Mp3Player::PlayOpusTask(void* arg) {
 
     auto& app = Application::GetInstance();
 
-    // Music uses background audio layer — let ducking handle AI interaction.
+ // ����ʹ�ñ�����Ƶ�㣬��Ducking����AI����
 
-    // Parse URL
+    // ����URL
     char host[128] = {};
     char path[384] = {};
     int port = 80;
@@ -1006,7 +1137,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     
-    // Raw BSD socket
+    // ԭʼBSD socket
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0) {
         ESP_LOGE(TAG, "PlayOpus: socket() failed errno=%d", errno);
@@ -1022,41 +1153,58 @@ void Mp3Player::PlayOpusTask(void* arg) {
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    inet_aton(host, &addr.sin_addr);
-    
-    ESP_LOGI(TAG, "PlayOpus: connecting to %s:%d...", host, port);
-    
-    // Non-blocking connect with 5s timeout (SO_SNDTIMEO doesn't work on lwip connect)
-    int sock_flags = fcntl(sock, F_GETFL, 0);
-    fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
-    int cret = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
-    if (cret < 0 && errno == EINPROGRESS) {
-        fd_set wfds;
-        FD_ZERO(&wfds);
-        FD_SET(sock, &wfds);
-        struct timeval ct = { .tv_sec = 5, .tv_usec = 0 };
-        cret = select(sock + 1, NULL, &wfds, NULL, &ct);
-        if (cret <= 0) {
-            ESP_LOGE(TAG, "PlayOpus: connect timeout, falling back to serial...");
+ // �ȳ��Ե��ʮ����IP���ٳ���DNS����
+    if (!inet_aton(host, &addr.sin_addr)) {
+        struct addrinfo hints = {}, *res = nullptr;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        int ga_ret = getaddrinfo(host, nullptr, &hints, &res);
+        if (ga_ret == 0 && res) {
+            memcpy(&addr.sin_addr, &((struct sockaddr_in*)res->ai_addr)->sin_addr, 4);
+            freeaddrinfo(res);
+        } else {
+            ESP_LOGE(TAG, "PlayOpus: DNS lookup failed for %s", host);
             close(sock);
             goto serial_fallback;
         }
-    } else if (cret < 0) {
-        ESP_LOGE(TAG, "PlayOpus: connect() failed errno=%d, falling back to serial...", errno);
-        close(sock);
-        goto serial_fallback;
     }
-    fcntl(sock, F_SETFL, sock_flags);  // restore blocking mode
+    
+    ESP_LOGI(TAG, "PlayOpus: connecting to %s:%d...", host, port);
+    
+ // ������connect+5�볬ʱ��SO_SNDTIMEO��lwip�ϲ���Ч��
+ // ����������������ֹgoto serial_fallback����������ʼ��
+    {
+        int sock_flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
+        int cret = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
+        if (cret < 0 && errno == EINPROGRESS) {
+            fd_set wfds;
+            FD_ZERO(&wfds);
+            FD_SET(sock, &wfds);
+            struct timeval ct = { .tv_sec = 5, .tv_usec = 0 };
+            cret = select(sock + 1, NULL, &wfds, NULL, &ct);
+            if (cret <= 0) {
+                ESP_LOGE(TAG, "PlayOpus: connect timeout, falling back to serial...");
+                close(sock);
+                goto serial_fallback;
+            }
+        } else if (cret < 0) {
+            ESP_LOGE(TAG, "PlayOpus: connect() failed errno=%d, falling back to serial...", errno);
+            close(sock);
+            goto serial_fallback;
+        }
+        fcntl(sock, F_SETFL, sock_flags);  // restore blocking mode
+    }
     
     if (false) {  // gate for serial fallback
 serial_fallback:
-        // fallback path reached via goto, sock already closed
+ // ���ڻ���·����ͨ��goto���sock�ѹرգ�
         
-        // === Serial fallback ===
+ // === Serial fallback ===
         printf("\x01MUSIC_REQ\x02%s\x03\n", url);
         fflush(stdout);
         
-        // Clear stop flag (set by Stop() in PlayOpus) so fread loop runs
+ // ���ֹͣ��־����PlayOpus�е�Stop()���ã�����freadѭ������
         self->stop_requested_ = false;
         self->ducking_gain_ = 1.0f; self->ducking_start_us_ = 0;
         
@@ -1071,7 +1219,7 @@ serial_fallback:
             app.GetAudioService().PushPacketToDecodeQueue(std::move(packet), true);
         });
         
-                // Read Opus data from UART0 RX with initial delay for relay to fetch
+ // ��UART0 RX��ȡOpus���ݣ���ʼ�ӳ��ô���ת������ȡ����
         vTaskDelay(pdMS_TO_TICKS(3000));  // Wait 3s for serial_relay to fetch data
         
         uint8_t serial_buf[4096];
@@ -1090,10 +1238,12 @@ serial_fallback:
                 last_data_ms = esp_timer_get_time() / 1000;
                 total_dl += n;
                 demuxer->Process(serial_buf, n);
-                // Prevent AFE power management from disabling MIC
+ // ��ֹAFE��Դ�����ر���˷�
                 uint64_t now_ms = esp_timer_get_time() / 1000;
                 if (now_ms - last_refresh_ms > 8000) {  // every 8s
-                    app.GetAudioService().RefreshInputTimestamp();
+ // HACK: Prevent audio watchdog timeout during long downloads
+                app.GetAudioService().RefreshInputTimestamp();
+
                     last_refresh_ms = now_ms;
                 }
             } else {
@@ -1104,8 +1254,8 @@ serial_fallback:
             if (stream_started && (now - last_data_ms > 5000)) break;  // 5s idle
             if (!stream_started && (now - serial_start > 15000)) break;  // 15s startup
             if (now - serial_start > 120000) break;  // 2min total
-            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // wake word → stop
-            // Double-trigger with ≥500ms gap to avoid false stop from music false-wake
+            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // ���Ѵʴ��� stop
+ // 500ms���˫�ؼ�⣬��ֹ�������ѵ��¼�ֹͣ
             auto serial_state = app.GetDeviceState();
             if (serial_state == kDeviceStateSpeaking) {
                 if (!ducked_serial) {
@@ -1133,14 +1283,14 @@ serial_fallback:
     }
     ESP_LOGI(TAG, "PlayOpus: connected to %s:%d", host, port);
     
-    // Send HTTP GET
+    // ����HTTP GET����
     char req[1024];
     snprintf(req, sizeof(req),
         "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
         path, host, port);
     send(sock, req, strlen(req), 0);
     
-    // Read response headers
+    // ��ȡHTTP��Ӧͷ
     char header_buf[1024] = {};
     int hdr_pos = 0;
     while (hdr_pos < 1023) {
@@ -1163,116 +1313,208 @@ serial_fallback:
         return;
     }
 
-    // === Local Opus decoder: decodes music independently of AudioService ===
-    // This completely isolates music volume control from AI TTS audio.
-    // Music at 24000Hz → decode → resample to 16000Hz → ducking gain → OutputRawPcm
+ // === Detect format: /opus uses OGG demuxer + main audio pipeline ===
+ // === /pcm uses raw bytes pushed to background ring buffer ===
+    bool use_opus = (strstr(path, "/opus") != nullptr);
     
-    const int MUSIC_IN_RATE = 24000;   // Opus input sample rate (from proxy)
-    const int CODEC_OUT_RATE = 16000;  // I2S output rate
-    const float RESAMPLE_RATIO = (float)MUSIC_IN_RATE / (float)CODEC_OUT_RATE;  // 1.5
-    
-    // Configure and open local Opus decoder (separate from AudioService's decoder)
-    void* local_opus_dec = nullptr;
-    esp_opus_dec_cfg_t dec_cfg = {};
-    dec_cfg.sample_rate = 24000;
-    dec_cfg.channel = 1;  // mono
-    dec_cfg.frame_duration = ESP_OPUS_DEC_FRAME_DURATION_60_MS;
-    dec_cfg.self_delimited = false;
-    if (esp_opus_dec_open(&dec_cfg, sizeof(dec_cfg), &local_opus_dec) != ESP_AUDIO_ERR_OK || !local_opus_dec) {
-        ESP_LOGE(TAG, "PlayOpus: failed to create local Opus decoder");
+    if (use_opus) {
+        // ============ Opus path: OGG demux + PushPacketToDecodeQueue ============
+ // ��AI����Opus����������ͬһ�����Ŷ��й���
+        ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
+        
+        auto* demuxer = new OggDemuxer();
+        demuxer->OnDemuxerFinished([&app, self](const uint8_t* data, int sample_rate, size_t len) {
+            auto packet = std::make_unique<AudioStreamPacket>();
+            packet->sample_rate = sample_rate;
+            packet->frame_duration = 60;
+            packet->timestamp = 0;
+            packet->payload.assign(data, data + len);
+            app.GetAudioService().PushPacketToDecodeQueue(std::move(packet), true);
+        });
+        
+        const size_t CHUNK = 4096;
+        uint8_t buf[CHUNK];
+        int64_t t0 = esp_timer_get_time(), last_refresh = t0;
+        size_t total_dl = 0;
+        
+ // ���ֲ���ʱ����������65%������AEC�زɸ���
+        auto* codec = Board::GetInstance().GetAudioCodec();
+        int old_vol = codec ? codec->output_volume() : 90;
+        int music_vol = old_vol * 65 / 100;
+        if (music_vol < 10) music_vol = 10;
+        if (codec) codec->SetOutputVolume(music_vol);
+        ESP_LOGI(TAG, "PlayOpus: volume %d -> %d for AEC", old_vol, music_vol);
+        
+        bool is_ducking = false;  // true = AI speaking, don't push music
+        
+        while (self->is_playing_ && !self->stop_requested_) {
+            int read = recv(sock, buf, CHUNK, 0);
+            if (read <= 0) {
+                ESP_LOGW(TAG, "PlayOpus: recv returned %d errno=%d", read, (read < 0) ? errno : 0);
+                break;
+            }
+            total_dl += read;
+
+ // Ducking: AI˵��ʱ�����������ݵ����Ƹ�������
+ // ����speaking״̬ʱResetDecoder������˽������
+ // �����������ݻ�ʹ������ǰ����һС�Σ�5-15���AI�ظ��м�������������
+ // ��һ��3-5���ӵĸ���5-15���AI�ظ��м�������������
+            auto dev_state = app.GetDeviceState();
+            if (dev_state == kDeviceStateConnecting) {
+                ESP_LOGI(TAG, "PlayOpus: auto-stop (wake word)");
+                break;
+            }
+            if (dev_state == kDeviceStateSpeaking) {
+                if (!is_ducking) {
+                    is_ducking = true;
+                    ESP_LOGI(TAG, "PlayOpus: ducking for AI speech...");
+                }
+                demuxer->Process(buf, read);  // keep decoder state, skip output
+                continue;
+            }
+            if (is_ducking) {
+                ESP_LOGI(TAG, "PlayOpus: resuming music");
+                is_ducking = false;
+            }
+
+            demuxer->Process(buf, read);
+
+            int64_t now = esp_timer_get_time();
+            if (now - last_refresh > 8000000) {
+                app.GetAudioService().RefreshInputTimestamp();
+                last_refresh = now;
+            }
+        }
+        
+        // �ָ�����
+        if (codec) codec->SetOutputVolume(old_vol);
+        ESP_LOGI(TAG, "PlayOpus: volume restored to %d", old_vol);
+        
+ // �ȴ���������ſ�
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        app.GetAudioService().WaitForPlaybackQueueEmpty();
+        
+        delete demuxer;
         close(sock);
         self->is_playing_ = false;
+        int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
+        ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB (Opus)", (int)total_ms, (int)(total_dl / 1024));
         vTaskDelete(NULL);
         return;
     }
     
-    int decoder_frame_size = MUSIC_IN_RATE * 60 / 1000;  // 1440 samples at 24kHz for 60ms
-    
-    // Demuxer callback: decode Opus → resample → duck → OutputRawPcm
-    auto* demuxer = new OggDemuxer();
-    demuxer->OnDemuxerFinished([&app, self, local_opus_dec, decoder_frame_size, CODEC_OUT_RATE, RESAMPLE_RATIO]
-                               (const uint8_t* data, int sample_rate, size_t len) {
-        // Decode Opus packet → PCM
-        std::vector<int16_t> pcm(decoder_frame_size);
-        esp_audio_dec_in_raw_t raw = {
-            .buffer = (uint8_t*)data,
-            .len = (uint32_t)len,
-            .consumed = 0,
-        };
-        esp_audio_dec_out_frame_t out_frame = {
-            .buffer = (uint8_t*)pcm.data(),
-            .len = (uint32_t)(decoder_frame_size * sizeof(int16_t)),
-            .decoded_size = 0,
-        };
-        esp_audio_dec_info_t dec_info = {};
-        auto ret = esp_opus_dec_decode(local_opus_dec, &raw, &out_frame, &dec_info);
-        if (ret != ESP_AUDIO_ERR_OK) return;
-        
-        size_t in_samples = out_frame.decoded_size / sizeof(int16_t);
-        if (in_samples == 0) return;
-        
-        // Resample 24000→16000 (ratio 3:2): output[i] = input[round(i*3/2)]
-        size_t out_samples = (size_t)(in_samples / RESAMPLE_RATIO);
-        static int16_t resampled[2048];
-        const int16_t* output = pcm.data();
-        
-        if (out_samples <= 2048) {
-            for (size_t i = 0; i < out_samples; i++) {
-                size_t src_idx = (size_t)(i * RESAMPLE_RATIO);
-                if (src_idx >= in_samples) src_idx = in_samples - 1;
-                resampled[i] = pcm[src_idx];
-            }
-            output = resampled;
-            in_samples = out_samples;
-        }
-        
-        // Always push to ring buffer — AudioService::AudioOutputTask handles mixing + volume
-        app.GetAudioService().PushBackgroundAudio(output, in_samples, CODEC_OUT_RATE);
-    });
-
-    const size_t CHUNK = 4 * 1024;
+ // ============ PCM path (legacy): raw s16le PushBackgroundAudio ============
+    const size_t CHUNK = 4096;
     uint8_t buf[CHUNK];
     int64_t t0 = esp_timer_get_time(), last_refresh = t0;
     size_t total_dl = 0;
     bool ai_speaking = false;
 
-    // Activate background audio ring buffer at full volume
-    app.GetAudioService().SetBackgroundAudioGain(1.0f);
-    ESP_LOGI(TAG, "PlayOpus: background audio active, starting download...");
+    app.GetAudioService().SetBackgroundAudioGain(0.001f);  // near-silent but keeps bg_audio_active_=true
+    ESP_LOGI(TAG, "PlayOpus: downloading raw PCM...");
 
+ // === Pre-buffer phase: fill ring buffer before enabling drain ===
+    int64_t prebuf_start = esp_timer_get_time();
+    while (self->is_playing_ && !self->stop_requested_) {
+        int read = recv(sock, buf, CHUNK, 0);
+        if (read <= 0) break;
+        total_dl += read;
+        // ԭʼs16le PCM: ÿ2�ֽ�=1������
+        app.GetAudioService().PushBackgroundAudio(
+            reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
+
+        size_t fill = app.GetAudioService().GetBgAudioFillLevel();
+        if (fill >= 64000) {
+ // Set gain based on current AI state before enabling drain
+ // (prevents full-volume music + TTS overlap noise)
+            auto state = app.GetDeviceState();
+            // Duck only while AI actually talks; listening keeps full volume (user request 2026-07-19)
+            bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
+            ai_speaking = ai_now;
+            app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
+            app.GetAudioService().EnableBgAudioDrain(true);
+            ESP_LOGI(TAG, "PlayOpus: drain enabled (buffered %d samples in %d ms)",
+                     (int)fill, (int)((esp_timer_get_time() - prebuf_start) / 1000));
+            break;
+        }
+        if (esp_timer_get_time() - prebuf_start > 10000000) {
+ // Set gain even on timeout otherwise stays at 0.001f
+            auto state = app.GetDeviceState();
+            bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
+            ai_speaking = ai_now;
+            app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
+            app.GetAudioService().EnableBgAudioDrain(true);
+            ESP_LOGW(TAG, "PlayOpus: pre-buffer timeout after 10s (%d samples buffered)",
+                     (int)fill);
+            break;
+        }
+    }
+
+ // === Main download push loop ===
+    int recv_errors = 0;
     while (self->is_playing_ && !self->stop_requested_) {
         auto state = app.GetDeviceState();
-        
-        // Ducking: lower music to 30% when AI speaks, restore to 100% when idle
+        // Listening keeps music at 100%; duck to 50% only while AI speaks/connects
         bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
         if (ai_now != ai_speaking) {
             ai_speaking = ai_now;
-            float gain = ai_now ? 0.3f : 1.0f;
-            app.GetAudioService().SetBackgroundAudioGain(gain);
-            ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%", 
-                     ai_now ? "speaking" : "idle", (int)(gain * 100));
+            app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
+            ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%",
+                     ai_now ? "speaking" : "quiet", ai_now ? 50 : 100);
+        }
+
+ // When AI is speaking, pause TCP download to free WiFi airtime for
+ // UDP audio packets (prevents WiFi buffer starvation TTS stutter).
+ // Only pause if buffer sufficient to ride through typical AI reply.
+        if (ai_speaking && app.GetAudioService().GetBgAudioFillLevel() > 64000) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
         }
 
         int read = recv(sock, buf, CHUNK, 0);
         if (read > 0) {
             total_dl += read;
-            demuxer->Process(buf, read);
-        } else break;  // 0 or error → done downloading
+            recv_errors = 0;
+            app.GetAudioService().PushBackgroundAudio(
+                reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
+        } else if (read == 0) {
+ // Server closed connection gracefully
+            ESP_LOGI(TAG, "PlayOpus: server closed connection");
+            break;
+        } else {
+ // read < 0: timeout or transient error
+            recv_errors++;
+            if (recv_errors > 5) {
+                ESP_LOGE(TAG, "PlayOpus: recv failed %d times, giving up (errno=%d)", recv_errors, errno);
+                break;
+            }
+ // Wait 1s before retry WiFi may be reconnecting after AI conversation
+            ESP_LOGW(TAG, "PlayOpus: recv error %d/%d (errno=%d), retrying...", recv_errors, 5, errno);
+            for (int w = 0; w < 10 && self->is_playing_ && !self->stop_requested_; w++) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+ // Refresh power save in case it was changed by channel close
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+            continue;
+        }
 
-        // Throttle download to prevent ring buffer overflow (96000 samples ≈ 6s)
-        while (app.GetAudioService().GetBgAudioFillLevel() > 64000 && !self->stop_requested_) {
+        while (app.GetAudioService().GetBgAudioFillLevel() > 80000 && !self->stop_requested_) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
 
-        // Prevent AFE power management from disabling MIC
         int64_t now = esp_timer_get_time();
         if (now - last_refresh > 8000000) {
+ // Diagnostic: log buffer fill + download rate every 8s
+            size_t fill = app.GetAudioService().GetBgAudioFillLevel();
+            int64_t elapsed = now - t0;
+            float dl_rate = elapsed > 0 ? (float)total_dl * 1000000.0f / (float)elapsed : 0;
+            ESP_LOGI(TAG, "PlayOpus: buf=%d samples dl=%dKB rate=%.1fKB/s",
+                     (int)fill, (int)(total_dl / 1024), dl_rate / 1024.0f);
             app.GetAudioService().RefreshInputTimestamp();
             last_refresh = now;
         }
     }
 
-    // Drain remaining ring buffer at full volume before cleanup
     if (total_dl > 0) {
         app.GetAudioService().SetBackgroundAudioGain(1.0f);
         while (app.GetAudioService().GetBgAudioFillLevel() > 0 && !self->stop_requested_) {
@@ -1280,64 +1522,90 @@ serial_fallback:
         }
     }
 
-    // Deactivate background audio to stop AudioOutputTask idle polling
     app.GetAudioService().ClearBackgroundAudio();
-
     close(sock);
-    esp_opus_dec_close(local_opus_dec);
-    delete demuxer;
     self->is_playing_ = false;
     int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
     ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB", (int)total_ms, (int)(total_dl / 1024));
+
+    // �豸����ʱ�������Ѵʼ�⣬ȷ����˷�����ͨ�����
+    // ��ʱ�䱳����Ƶ���ź���Ƶ����·��������ֹͣ
+    // ��esp_codec_dev_read���ع���/�����ݵ���������������
+    // ���Ѵʼ����������"������"��ʵ������
+    if (app.GetDeviceState() == kDeviceStateIdle) {
+        ESP_LOGI(TAG, "PlayOpus: restarting wake word detection after music");
+        app.GetAudioService().EnableWakeWordDetection(false);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        app.GetAudioService().EnableWakeWordDetection(true);
+        // Fix(2026-07-19): idle transition during music skips threshold restore
+        // (IsBgAudioActive guard), leaving 0.30 stuck. Restore sensitive 0.02 here.
+        app.GetAudioService().SetWakeWordThreshold(0.02f);
+    }
+
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief ��������ringtone
+ * @param volume ����ϵ�� 0.0~1.0�����忪ͷ��15%��ǿ��100%
+ * ����A5(880Hz)/C#6(1100Hz)�����PCM��������ÿ��2��
+ */
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
     const int sample_rate = 16000;
+    const int chunk_ms = 100;  // 100ms chunks for responsive stop
     const int total_ms = 2000;
-    const int total_samples = sample_rate * total_ms / 1000;
+    const int chunk_samples = sample_rate * chunk_ms / 1000;
+    const int total_chunks = total_ms / chunk_ms;
 
-    // 分配 PCM 缓冲区
-    size_t buf_bytes = total_samples * sizeof(int16_t);
+    const int freq_a = 880;   // A5
+    const int freq_b = 1100;  // C#6
+    const int base_amplitude = 8000;
+    const int beep_on_ms = 80;
+    const int beep_off_ms = 80;
+    const int cycle_ms = beep_on_ms + beep_off_ms;
+
+ // ���ɲ���100ms�鲥�ţ�ÿ��֮����stop_requested_
+    size_t buf_bytes = chunk_samples * sizeof(int16_t);
     int16_t* pcm = (int16_t*)malloc(buf_bytes);
     if (!pcm) {
         ESP_LOGE(TAG, "Alarm: failed to allocate PCM buffer");
         return;
     }
 
-    // 生成闹钟蜂鸣：双音交替（880Hz/1100Hz 正弦波），80ms on / 80ms off，重复 ~2秒
-    const int beep_on_ms = 80;
-    const int beep_off_ms = 80;
-    const int cycle_ms = beep_on_ms + beep_off_ms;
-    const int freq_a = 880;   // A5
-    const int freq_b = 1100;  // C#6
-    const int base_amplitude = 8000;
+    ESP_LOGI(TAG, "Playing alarm ring: PCM beep %d/%dHz, %dms in %dms chunks",
+             freq_a, freq_b, total_ms, chunk_ms);
 
-    for (int i = 0; i < total_samples; i++) {
-        int ms = i * 1000 / sample_rate;
-        int cycle = ms / cycle_ms;
-        int phase = ms % cycle_ms;
-        if (phase < beep_on_ms && !stop_requested_) {
-            int freq = (cycle % 2 == 0) ? freq_a : freq_b;
-            double t = (double)i / sample_rate;
-            int16_t val = (int16_t)(sin(2.0 * M_PI * freq * t) * base_amplitude * volume);
-            pcm[i] = val;
-        } else {
-            pcm[i] = 0;
+    for (int chunk = 0; chunk < total_chunks && !stop_requested_; chunk++) {
+        int sample_offset = chunk * chunk_samples;
+        for (int i = 0; i < chunk_samples; i++) {
+            int global_i = sample_offset + i;
+            int ms = global_i * 1000 / sample_rate;
+            int cycle = ms / cycle_ms;
+            int phase = ms % cycle_ms;
+            if (phase < beep_on_ms) {
+                int freq = (cycle % 2 == 0) ? freq_a : freq_b;
+                double t = (double)global_i / sample_rate;
+                int16_t val = (int16_t)(sin(2.0 * M_PI * freq * t) * base_amplitude * volume);
+                pcm[i] = val;
+            } else {
+                pcm[i] = 0;
+            }
         }
+        app.GetAudioService().OutputRawPcm(pcm, chunk_samples, sample_rate);
+        vTaskDelay(pdMS_TO_TICKS(chunk_ms));
     }
 
-    ESP_LOGI(TAG, "Playing alarm ring: PCM beep %d/%dHz, %dms", freq_a, freq_b, total_ms);
-
-    app.GetAudioService().OutputRawPcm(pcm, total_samples, sample_rate);
-    vTaskDelay(pdMS_TO_TICKS(total_ms));
-
     free(pcm);
-    ESP_LOGI(TAG, "Alarm ring finished (stopped=%d)", (int)stop_requested_);
+    ESP_LOGI(TAG, "Alarm ring finished (stopped=%d)", stop_requested_.load() ? 1 : 0);
 }
 
-// 播放任务入口
+/**
+ * @brief ����������ѭ��
+ * ��FreeRTOS��������ѯ pending_track_ / pending_bell_hour_��
+ * ������ʱ����AI��������Ŷ�Ӧ��Ƶ�������ָ�AI���
+ */
+    // �����������
 void Mp3Player::PlayTaskEntry(void* arg) {
     Mp3Player* self = (Mp3Player*)arg;
     while (1) {
@@ -1351,18 +1619,22 @@ void Mp3Player::PlayTaskEntry(void* arg) {
         }
 
         if (self->pending_track_ > 0) {
-            // play single track - manage mute here
+ // play single track - manage mute here
             self->is_playing_ = true;
             int track = self->pending_track_;
             self->pending_track_ = 0;
-            Application::GetInstance().GetAudioService().SetOutputMuted(true);
+            if (!self->disable_ducking_) {
+                Application::GetInstance().GetAudioService().SetOutputMuted(true);
+            }
             self->DecodeSingleFile(track);
             self->is_playing_ = false;
-            Application::GetInstance().GetAudioService().SetOutputMuted(false);
+            if (!self->disable_ducking_) {
+                Application::GetInstance().GetAudioService().SetOutputMuted(false);
+            }
         }
 
         if (self->pending_bell_hour_ > 0) {
-            // play bell chime using short PCM bell sound (~0.5s each)
+ // play bell chime using short PCM bell sound (~0.5s each)
             self->is_playing_ = true;
             int hour = self->pending_bell_hour_;
             self->pending_bell_hour_ = 0;
@@ -1370,7 +1642,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
             for (int i = 0; i < hour; i++) {
                 if (self->stop_requested_) break;
                 self->bell_player_.PlayBellSoundSync();
-                // pause ~1s between strikes for natural clock sound
+ // pause ~1s between strikes for natural clock sound
                 if (i < hour - 1 && !self->stop_requested_) {
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 }
@@ -1383,10 +1655,10 @@ void Mp3Player::PlayTaskEntry(void* arg) {
 
 void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
     if (folder == 1) {
-        // 钟声
+        // ����
         PlayBell(track);
     } else if (folder == 2) {
-        // 音乐
+        // ����
         if (track < 1) track = 1;
         if (track > 12) track = 12;
         PlayIndex(track);
@@ -1395,22 +1667,21 @@ void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
 
 void Mp3Player::PlayIndex(uint16_t index) {
     if (index < 1) index = 1;
-    if (index > 12) index = 12;
 
     if (!assets_) {
         ESP_LOGE(TAG, "Mp3Player not initialized (call Init first)");
         return;
     }
 
-    // 停止当前播放
+    // ֹͣ��ǰ����
     Stop();
 
-    // 清空 stop_requested_ 并设置新曲目
+    // ��� stop_requested_ ����������Ŀ
     stop_requested_ = false;
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
     pending_track_ = index;
 
-    // 确保任务已创建
+    // ȷ�������Ѵ���
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -1429,8 +1700,8 @@ void Mp3Player::PlayIndex(uint16_t index) {
 
 void Mp3Player::Stop() {
     stop_requested_ = true;
-    // Don't set is_playing_=false here - let PlayOpusTask cleanup do it
-    // so PlayOpus() can reliably wait for the old task to exit
+ // ��Ҫ�ڴ�����is_playing_=false �� ��PlayOpusTask�����Լ���
+ // ����PlayOpus()���Կɿ��صȴ��������˳�
     pending_track_ = 0;
     pending_bell_hour_ = 0;
 
@@ -1438,7 +1709,7 @@ void Mp3Player::Stop() {
         esp_mp3_dec_reset(mp3_dec_handle_);
     }
     
-    // Clear audio queues so WaitForPlaybackQueueEmpty() in old task returns fast
+ // ������Ƶ���У��þ������WaitForPlaybackQueueEmpty()���ٷ���
     Application::GetInstance().GetAudioService().ResetDecoder();
 }
 
@@ -1474,13 +1745,13 @@ void Mp3Player::PlayBell(int hour) {
 
     if (!assets_) return;
 
-    // 停止当前播放
+    // ֹͣ��ǰ����
     Stop();
 
-    // 设置钟声重复次数
+    // 设置����重复次数
     pending_bell_hour_ = hour;
 
-    // 确保任务已创建
+    // ȷ�������Ѵ���
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -1499,7 +1770,6 @@ void Mp3Player::PlayBell(int hour) {
 
 void Mp3Player::PlayBgMusic(int index) {
     if (index < 1) index = 1;
-    if (index > 12) index = 12;
     PlayIndex(index);
 }
 
@@ -1521,16 +1791,17 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
-    // Overallocate: MP3 worst-case PCM ratio ~2.75x, 4x is very safe
+ // ������䣺MP3����PCM����Լ2.75����4���ǳ���ȫ
     size_t max_samples = mp3_size * 4;
     if (max_samples < 8192) max_samples = 8192;
+    if (max_samples > 2 * 1024 * 1024) max_samples = 2 * 1024 * 1024;  // cap at 2M samples (4MB)
     int16_t* buf = (int16_t*)heap_caps_malloc(max_samples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (!buf) {
         ESP_LOGE(TAG, "Failed to allocate %lu samples in PSRAM", (unsigned long)max_samples);
         return -1;
     }
 
-    // Open decoder
+    // �򿪽�����
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -1542,13 +1813,26 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
+    // ���� ID3v2 ��ǩ
+    uint8_t* mp3_start = (uint8_t*)mp3_data;
+    size_t mp3_data_size = mp3_size;
+    if (mp3_size > 10 && memcmp(mp3_start, "ID3", 3) == 0) {
+        uint32_t id3_size = ((mp3_start[6] & 0x7F) << 21) | ((mp3_start[7] & 0x7F) << 14)
+                          | ((mp3_start[8] & 0x7F) << 7)  |  (mp3_start[9] & 0x7F);
+        size_t skip = 10 + id3_size;
+        if (skip < mp3_size - 1024) {
+            mp3_start += skip;
+            mp3_data_size -= skip;
+        }
+    }
+
     esp_audio_dec_info_t dec_info = {};
     int sample_rate = 22050;
-    uint8_t* input_ptr = (uint8_t*)mp3_data;
-    size_t remaining = mp3_size;
+    uint8_t* input_ptr = mp3_start;
+    size_t remaining = mp3_data_size;
     size_t written = 0;
 
-    // Single-pass decode
+ // ���ν���ɨ��
     while (remaining > 0 && written < max_samples) {
         size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
         memcpy(input_buf_, input_ptr, in_len);
@@ -1580,7 +1864,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
             }
             size_t consumed = raw.consumed;
             if (consumed == 0) {
-                // Decoder buffered all input; no progress possible, stop
+ // Decoder buffered all input; no progress possible, stop
                 break;
             }
             if (consumed > remaining) consumed = remaining;
@@ -1600,7 +1884,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         }
     }
 
-    // Close decoder
+    // �رս�����
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -1615,31 +1899,62 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
     *out_buf = buf;
     *out_samples = written;
     *out_samplerate = sample_rate;
-    ESP_LOGI(TAG, "Decoded %s to PCM: %zu samples, %d Hz", filename, written, sample_rate);
+    ESP_LOGI(TAG, "Decoded %s to PCM: %u samples, %d Hz", filename, (unsigned)written, sample_rate);
     return 0;
 }
 
 // ============================================
-// LDR 光敏传感器
+// LDR �������贫���� (ADC oneshotģʽ)
 // ============================================
-LdrSensor::LdrSensor(gpio_num_t adc_pin, int threshold)
-    : adc_pin_(adc_pin), threshold_(threshold) {
-    ESP_LOGI(TAG, "LDR sensor on GPIO %d, threshold %d", adc_pin_, threshold_);
+LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold)
+    : adc_pin_(adc_pin), adc_handle_(nullptr), adc_chan_(chan), threshold_(threshold) {
+
+ // ---- ADC oneshot init ----
+    adc_oneshot_unit_init_cfg_t unit_cfg = {
+        .unit_id = unit,
+        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_cfg, &adc_handle_));
+
+    adc_oneshot_chan_cfg_t chan_cfg = {
+        .atten = LDR_ADC_ATTEN,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle_, adc_chan_, &chan_cfg));
+
+    ESP_LOGI(TAG, "LDR sensor on GPIO %d (ADC%d_CH%d), threshold %d",
+             adc_pin_, (int)unit, (int)chan, threshold_);
+}
+
+LdrSensor::~LdrSensor() {
+    if (adc_handle_) {
+        adc_oneshot_del_unit(adc_handle_);
+        adc_handle_ = nullptr;
+    }
 }
 
 int LdrSensor::ReadRaw() {
-    int level = gpio_get_level(adc_pin_);
-    return level == 1 ? 4095 : 0;
+    int raw = 0;
+    if (adc_handle_) {
+        adc_oneshot_read(adc_handle_, adc_chan_, &raw);
+    }
+    return raw;  // 0-4095 (12-bit), ��=��ֵ, ��=��ֵ
 }
 
-bool LdrSensor::IsDark() { return ReadRaw() > threshold_; }
+/**
+ * @brief �жϵ�ǰ�Ƿ�Ϊ�ڰ������������������������ֵ��
+ * @return true=�ڰ�, false=����
+ */
+bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
 void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
 
+
 // ============================================
-// BellSoundPlayer - 通过 AI 音频系统播放布谷鸟叫�?// ============================================
+// BellSoundPlayer - �����������������ͨ��AI��Ƶϵͳ�����
+// ============================================
 void BellSoundPlayer::PlayCuckooSoundSync() {
-    // 直接写 I2S（阻塞直到播完），使用 data_if_mutex_ 与 AudioOutputTask 互斥
-    // 不需要 SetOutputMuted，也不需要 vTaskDelay
+    // ����Ҫ SetOutputMuted��Ҳ����Ҫ vTaskDelay
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_wake_sound,
@@ -1649,7 +1964,7 @@ void BellSoundPlayer::PlayCuckooSoundSync() {
 }
 
 void BellSoundPlayer::PlayBellSoundSync() {
-    // 直接写 I2S（阻塞直到播完），使用 data_if_mutex_ 与 AudioOutputTask 互斥
+    // ֱ��д I2S ����ֱ�����꣬ʹ�� data_if_mutex_ �� AudioOutputTask ����
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_bell_sound,
@@ -1658,17 +1973,26 @@ void BellSoundPlayer::PlayBellSoundSync() {
     );
 }
 
+void BellSoundPlayer::PlayCuckooSoundAsync() {
+    xTaskCreate([](void* arg) {
+        auto* self = static_cast<BellSoundPlayer*>(arg);
+        self->PlayCuckooSoundSync();
+        vTaskDelete(NULL);
+    }, "cuckoo_async", 2048, this, 5, NULL);
+}
+
 // ============================================
-// CuckooStateMachine
+// CuckooStateMachine - ��������״̬��
 // ============================================
 CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
-                                        Motor* bird_door, Servo* violin, Servo* dog,
-                                        BirdJump* bird_jump, Mp3Player* mp3,
+                                        Motor* violin_motor, Servo* violin, Servo* dog,
+                                        Motor* water_bird, Mp3Player* mp3,
                                         BellSoundPlayer* bell_player,
-                                        RtcPcf8563* rtc, LdrSensor* ldr)
+                                        LdrSensor* ldr)
     : m1_(m1), m2_(m2), m3_(m3), m4_(m4),
-      bird_door_(bird_door), violin_servo_(violin), dog_servo_(dog),
-      bird_jump_(bird_jump), mp3_(mp3), bell_player_(bell_player), rtc_(rtc), ldr_(ldr),
+      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // С���ٵ�� (��B M2, GPIO18/45)
+      water_bird_(water_bird),
+      mp3_(mp3), bell_player_(bell_player), ldr_(ldr),
       motor_power_pin_(GPIO_NUM_NC),
       current_performance_(kPerformanceNone), current_phase_(kPhaseIdle),
       call_count_(0), total_calls_(0), is_running_(false),
@@ -1677,7 +2001,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
       is_dark_(false) {
     last_idle_exit_us_ = 0;
     prev_device_state_ = -1;
-    // 电机电源P-MOSFET控制 (GPIO LOW=ON, HIGH=OFF)
+    // �����Դ P-MOSFET ���� (GPIO LOW=ON, HIGH=OFF)
     motor_power_pin_ = (gpio_num_t)POWER_MOTOR_GPIO;
     gpio_config_t motor_pwr_cfg = {
         .pin_bit_mask = (1ULL << motor_power_pin_),
@@ -1686,7 +2010,17 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&motor_pwr_cfg);
-    MotorPowerOff();  // 默认断电, 100K上拉到5V
+ // LED (GPIO1KS8050 B, C, 5V)
+    gpio_config_t led_cfg = {
+        .pin_bit_mask = (1ULL << LED_A_GPIO) | (1ULL << LED_B_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    };
+    gpio_config(&led_cfg);
+    gpio_set_level(LED_A_GPIO, 0);
+    gpio_set_level(LED_B_GPIO, 0);
+    MotorPowerOff();  // Ĭ�϶ϵ磬100K �������� 5V
   }
 
 CuckooStateMachine::~CuckooStateMachine() {
@@ -1694,6 +2028,9 @@ CuckooStateMachine::~CuckooStateMachine() {
     MotorPowerOff();
 }
 
+/**
+ * @brief �򿪵����Դ��P-MOSFET���͡�5V��ͨ��
+ */
 void CuckooStateMachine::MotorPowerOn() {
     gpio_set_level(motor_power_pin_, 0);
 }
@@ -1702,31 +2039,354 @@ void CuckooStateMachine::MotorPowerOff() {
     gpio_set_level(motor_power_pin_, 1);
 }
 
+// ============================================
+// �����赸���У����㱨ʱ PerformanceTask + �ۺϱ��� ShowTask ���ã�
+// ============================================
+
+// �����赸���У����㱨ʱ PerformanceTask + �ۺϱ��� ShowTask ���ã�
+struct DoorOpenCtx {
+    CuckooStateMachine* sm;
+};
+
+void CuckooStateMachine::DoorOpenTask(void* arg) {
+    auto* ctx = static_cast<DoorOpenCtx*>(arg);
+    auto* sm = ctx->sm;
+    delete ctx;
+
+    sm->MotorPowerOn();
+    if (sm->m2_) {
+        sm->m2_->Forward(MAIN_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        sm->m2_->Stop();
+    }
+    ESP_LOGI(TAG, "Door open done (async)");
+    vTaskDelete(NULL);
+}
+
+void CuckooStateMachine::PlayDogBark() {
+    // �� assets ��ȡ dog_bark.wav (16kHz mono s16)
+    const char* filename = "dog_bark.wav";
+    void* wav_ptr = nullptr;
+    size_t wav_size = 0;
+    if (!Assets::GetInstance().GetAssetData(filename, wav_ptr, wav_size)) {
+        ESP_LOGW(TAG, "PlayDogBark: %s not found", filename);
+        return;
+    }
+    if (wav_size < 44) {
+        ESP_LOGW(TAG, "PlayDogBark: file too small (%u bytes)", (unsigned)wav_size);
+        return;
+    }
+
+    const uint8_t* wav_data = (const uint8_t*)wav_ptr;
+    uint16_t channels = wav_data[22] | (wav_data[23] << 8);
+    uint32_t sample_rate = wav_data[24] | (wav_data[25] << 8) | (wav_data[26] << 16) | (wav_data[27] << 24);
+    uint16_t bits = wav_data[34] | (wav_data[35] << 8);
+    ESP_LOGI(TAG, "DogBark: %u bytes, %d Hz, %d ch, %d-bit", (unsigned)wav_size, sample_rate, channels, bits);
+
+    if (bits != 16 || channels != 1) {
+        ESP_LOGW(TAG, "PlayDogBark: need mono s16, got %dch %d-bit", channels, bits);
+        return;
+    }
+
+    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����
+    const int16_t* pcm = (const int16_t*)(wav_data + 44);
+    size_t pcm_bytes = wav_size - 44;
+    size_t num_samples = pcm_bytes / sizeof(int16_t);
+
+    if (mp3_) {
+        mp3_->LoadDogBark(pcm, num_samples);
+    }
+}
+
+void CuckooStateMachine::RunDanceIntro() {
+    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����
+    MotorPowerOn();
+    auto* ctx = new DoorOpenCtx{this};
+    xTaskCreatePinnedToCore(DoorOpenTask, "door_open", 2048, ctx, 5, nullptr, 1);
+
+    // �첽���ţ������������赸/���ֲ��У�
+    if (dog_servo_) {
+        dog_servo_->Sweep(180, 20, (180 - 20) * 15);
+    }
+    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
+    if (m3_) {
+        m3_->Forward(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(920));
+        m3_->Stop();
+    }
+    PlayDogBark();
+    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
+    if (dog_servo_) {
+        dog_servo_->Sweep(20, 0, 20 * 15);
+    }
+}
+
+void CuckooStateMachine::RunDanceLoop() {
+    unsigned long m1_timer = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    int m1_stage = 0;
+    int m1_rand_time = 1000 + (esp_random() % 2001);
+    int led_toggle = 0;
+    int led_state = 0;
+    int64_t next_frame_us = esp_timer_get_time();
+    m1_fwd_time_ = 0;
+    m1_rev_time_ = 0;
+    m1_stage_start_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+    // Bg music may still be fading in while AI speaks: wait up to 5s for it
+    // to become active, otherwise the dance loop below exits instantly.
+    for (int w = 0; w < 100 && is_running_
+        && !Application::GetInstance().GetAudioService().IsBgAudioActive()
+        && (!mp3_ || !mp3_->IsPlaying()); w++) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    unsigned long dance_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+    while (is_running_ && (Application::GetInstance().GetAudioService().IsBgAudioActive()
+           || (mp3_ && mp3_->IsPlaying()))  // also covers old PlayBgMusic path
+           && (xTaskGetTickCount() * portTICK_PERIOD_MS - dance_start_ms) < 120000UL) {  // 120s safety timeout
+        if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
+        unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+        // M1 �赸���: ��ת/��ת���棨�����1~3�룬���>3�������������
+        switch (m1_stage) {
+            case 0:
+                if (m1_) m1_->Forward(DANCE_SPEED_PERCENT);
+                if (now - m1_timer > m1_rand_time) {
+                    m1_fwd_time_ += (now - m1_stage_start_);
+                    m1_stage_start_ = now;
+                    m1_timer = now; m1_stage = 1;
+                }
+                break;
+            case 1:
+                if (m1_) m1_->Stop();
+                if (now - m1_timer > 20) {
+                    m1_timer = now; m1_stage = 2;
+                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+                }
+                break;
+            case 2:
+                if (m1_) m1_->Reverse(DANCE_SPEED_PERCENT);
+                if (now - m1_timer > m1_rand_time) {
+                    m1_rev_time_ += (now - m1_stage_start_);
+                    m1_stage_start_ = now;
+                    m1_timer = now; m1_stage = 3;
+                }
+                break;
+            case 3:
+                if (m1_) m1_->Stop();
+                if (now - m1_timer > 20) {
+                    m1_timer = now; m1_stage = 0;
+                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+                }
+                break;
+        }
+
+        // С����ѭ��������ÿ֡ 9�� ƽ���ڶ�
+        violin_state_.timer += 50;
+        switch (violin_state_.stage) {
+            case 0: if (violin_state_.angle < 90) violin_state_.angle+=9; else if (violin_state_.angle > 90) violin_state_.angle-=9; break;
+            case 1: if (violin_state_.angle > 0) violin_state_.angle-=9; break;
+            case 2: if (violin_state_.angle < 180) violin_state_.angle+=9; break;
+            case 3: if (violin_motor_) violin_motor_->Forward(VIOLIN_SPEED_PERCENT); break;
+            case 4: if (violin_state_.angle > 90) violin_state_.angle-=9; else if (violin_state_.angle < 90) violin_state_.angle+=9; break;
+            case 5: if (violin_state_.angle < 180) violin_state_.angle+=9; break;
+            case 6: if (violin_state_.angle > 0) violin_state_.angle-=9; break;
+            case 7: if (violin_motor_) violin_motor_->Reverse(VIOLIN_SPEED_PERCENT); break;
+            case 8: if (violin_state_.angle < 130) violin_state_.angle+=9; else if (violin_state_.angle > 130) violin_state_.angle-=9; break;
+            case 9: if (violin_state_.angle > 90) violin_state_.angle-=9; else if (violin_state_.angle < 90) violin_state_.angle+=9; break;
+        }
+        if (violin_state_.angle < 0) violin_state_.angle = 0;
+        if (violin_state_.angle > 180) violin_state_.angle = 180;
+        if (violin_servo_) violin_servo_->SetAngle(violin_state_.angle);
+        int st_dur[] = {500,800,1000,1000,600,1000,1200,1000,1500,300};
+        if (violin_state_.timer >= st_dur[violin_state_.stage]) {
+            if (violin_state_.stage == 3) { violin_motor_->Stop(); violin_state_.fwd_count++; }
+            else if (violin_state_.stage == 7) { violin_motor_->Stop(); violin_state_.rev_count++; }
+            violin_state_.stage++;
+            if (violin_state_.stage >= 10) { violin_state_.stage = 0; violin_state_.loop_count++; if (violin_state_.loop_count >= 3) violin_state_.loop_count = 0; }
+            violin_state_.timer = 0;
+        }
+
+        // С��ҡβ��
+        if (dog_servo_) {
+            if (dog_state_.pause > 0) {
+                dog_state_.pause--;
+            } else {
+                dog_state_.angle += dog_state_.dir;
+                if (dog_state_.angle >= dog_state_.target) {
+                    dog_state_.dir = -1;
+                    dog_state_.pause = 20 + (esp_random() % 40);
+                }
+                if (dog_state_.angle <= 0) {
+                    dog_state_.dir = 1;
+                    dog_state_.target = 40 + (esp_random() % 21);
+                    dog_state_.pause = 0;
+                }
+                dog_servo_->SetAngle(dog_state_.angle);
+            }
+        }
+
+        // LED ��˸��ÿ6֡ ~300ms��
+        led_toggle++;
+        if (led_toggle >= 6) {
+            led_toggle = 0;
+            led_state = !led_state;
+            gpio_set_level(LED_A_GPIO, led_state ? 1 : 0);
+            gpio_set_level(LED_B_GPIO, led_state ? 0 : 1);
+        }
+
+        // 50ms ֡�ʿ���
+        next_frame_us += 50000;
+        int64_t wait_us = next_frame_us - esp_timer_get_time();
+        if (wait_us > 0) {
+            vTaskDelay(pdMS_TO_TICKS((wait_us + 500) / 1000));
+        }
+    }
+}
+
+void CuckooStateMachine::RunDanceFinale() {
+    // ���ֽ�������������һ������ֱ�����Źرպ��� ShowTask ĩβϨ��
+    gpio_set_level(LED_A_GPIO, 1);
+    gpio_set_level(LED_B_GPIO, 1);
+
+    // ���ڽǶȲ�����279��/s��40s��31Ȧʵ�⣩��ֻ��360�����ڵĲ��
+    if (m1_fwd_time_ > 0 || m1_rev_time_ > 0) {
+        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // ��ת�ǣ�+��ת,-��ת��
+        int rem = (int)(net % 360); if (rem < 0) rem = -rem;  // �������
+        int ms; bool go_fwd;
+        if (rem <= 180) {
+            ms = rem * 1000 / 279;
+            go_fwd = (net < 0);  // netΪ��=��ת����������
+        } else {
+            ms = (360 - rem) * 1000 / 279;
+            go_fwd = (net >= 0);  // netΪ��=��ת��������������һȦ
+        }
+        if (ms > 0) {
+            ESP_LOGI(TAG, "Dance: final: net=%lddeg rem=%ddeg, %s %dms", net, rem, go_fwd ? "fwd" : "rev", ms);
+            if (go_fwd) m1_->Forward(100); else m1_->Reverse(100);
+            vTaskDelay(pdMS_TO_TICKS(ms));
+            m1_->Stop();
+        }
+    }
+
+    // ƽ��С��������ת����
+    if (violin_state_.rev_count < violin_state_.fwd_count && violin_motor_) {
+        ESP_LOGI(TAG, "Violin: fwd=%d rev=%d, adding reverse", violin_state_.fwd_count, violin_state_.rev_count);
+        violin_motor_->Reverse(VIOLIN_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(VIOLIN_BALANCE_TIME_MS));
+    } else if (violin_state_.fwd_count < violin_state_.rev_count && violin_motor_) {
+        ESP_LOGI(TAG, "Violin: fwd=%d rev=%d, adding forward", violin_state_.fwd_count, violin_state_.rev_count);
+        violin_motor_->Forward(VIOLIN_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(VIOLIN_BALANCE_TIME_MS));
+    }
+    if (violin_motor_) violin_motor_->Stop();
+    if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
+
+    // С���˻�
+    if (m3_) {
+        m3_->Reverse(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(920));
+        m3_->Stop();
+    }
+    // С������ӵ�ǰ�Ƕȹ�λ��180�㣨�������䣩
+    if (dog_servo_) {
+        int dog_cur = dog_state_.angle;
+        dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * 15);
+    }
+    // ����
+    MotorPowerOn();
+    if (m2_) {
+        m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
+    }
+}
+
+// ============================================
+// NVS ���ӳ־û�
+// ============================================
+
+static const char* kAlarmNvsNamespace = "cuckoo_alarm";
+static const char* kAlarmNvsKey = "alarms";
+
+void CuckooStateMachine::SaveAlarmsToNvs() {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(kAlarmNvsNamespace, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SaveAlarms: nvs_open failed %d", err);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
+    err = nvs_set_blob(handle, kAlarmNvsKey, alarms_, sizeof(alarms_));
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SaveAlarms: nvs_set/commit failed %d", err);
+    } else {
+        ESP_LOGI(TAG, "Alarms saved to NVS (%d slots)", kMaxAlarms);
+    }
+}
+
+void CuckooStateMachine::LoadAlarmsFromNvs() {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(kAlarmNvsNamespace, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "LoadAlarms: no saved alarms (nvs_open %d)", err);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
+    size_t required_size = sizeof(alarms_);
+    err = nvs_get_blob(handle, kAlarmNvsKey, alarms_, &required_size);
+    nvs_close(handle);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "LoadAlarms: nvs_get_blob failed %d", err);
+        return;
+    }
+    // ͳ����Ч��ʱ��
+    int count = 0;
+    for (int i = 0; i < kMaxAlarms; i++) {
+        if (alarms_[i].enabled) count++;
+    }
+    alarm_count_ = count;
+    ESP_LOGI(TAG, "Alarms loaded from NVS (%d active)", count);
+}
+
+
+/**
+ * @brief ������ʱ���ݣ�����/���/�ֶ���
+ * @param type �������ͣ�kPerformanceHour(����)/kPerformanceHalf(���)/kPerformanceManual(�ֶ�)
+ * @param hour Сʱ�������㱨ʱ�ã�
+ * - ��AI�󴥷�������5���ں��Ե���
+ * - �ȴ��AI�Ի���AbortSpeaking������ֹ���������ͻ��Ѵʼ��
+ * - ��Core 1����PerformanceTaskִ��
+ */
 void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
     if (is_running_) { ESP_LOGW(TAG, "Already performing"); return; }
 
     MotorPowerOn();
 
-    // 防AI误触发：设备刚从idle唤醒5秒内，跳过 performance（AI可能在唤醒时自动调cuckoo.performance）
+    // ��AI�󴥷��豸�մ�idle����5�������� performanceAI�����ڻ���ʱ�Զ���cuckoo.performance
     if (last_idle_exit_us_ > 0) {
         uint64_t now_us = esp_timer_get_time();
-        if ((now_us - last_idle_exit_us_) < 5000000) {  // 5秒窗口
+        if ((now_us - last_idle_exit_us_) < 5000000) {  // 5�봰��
             ESP_LOGW(TAG, "StartPerformance blocked: within 5s of wake-up (likely AI auto-trigger)");
             return;
         }
     }
 
-    // 如果 AI 正在说话/监听，先打断它
+    // ��� AI ����˵��/�����ȴ����
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
     if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         ESP_LOGI(TAG, "Aborting AI speaking before performance (state=%d)", (int)state);
         app.AbortSpeaking(kAbortReasonNone);
-        vTaskDelay(pdMS_TO_TICKS(200));  // 等状态机切换到 idle
+        vTaskDelay(pdMS_TO_TICKS(200));  // ��״̬�ص� idle
     }
-    // 表演期间禁掉语音处理，防止钟声被误认为唤醒词唤醒 AI
+    // �����ڼ��������������ֹ����������Ϊ���Ѵʻ��� AI
     app.GetAudioService().EnableVoiceProcessing(false);
-    // 显式禁掉唤醒词检测（旧版本 EnableVoiceProcessing 可能不处理此逻辑）
+    // ��ʽ�������Ѵʼ�⣨�ɰ汾 EnableVoiceProcessing ���ܲ��������߼���
     app.GetAudioService().EnableWakeWordDetection(false);
 
     is_running_ = true;
@@ -1735,63 +2395,77 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
         case kPerformanceHour:
             if (hour > 12) hour -= 12;
             if (hour <= 0) hour = 12;
-            total_calls_ = hour;       // 记录是几点（敲钟用）
-            call_count_ = 3;           // 固定叫三声
+            total_calls_ = hour;       // ��¼�ܱ�ʱ��������㣩
+            call_count_ = 3;           // ���㱨ʱ��3�ν���
             break;
         case kPerformanceHalf:
             total_calls_ = 0;
-            call_count_ = 3;           // 半点也固定叫三声
+            call_count_ = 3;           // ��㱨ʱ��3�ν���
             break;
         case kPerformanceManual:
             total_calls_ = call_count_ = 3;
             break;
         default: is_running_ = false; return;
     }
-    // 启动独立任务执行表演（线性执行，无竞态）
-    xTaskCreate(
+ // ��Core 1����PerformanceTask
+    xTaskCreatePinnedToCore(
         PerformanceTask,
         "cuckoo_perf",
         4096,
         this,
-        3,
-        nullptr
+        5,
+        nullptr,
+        1
     );
 }
 
 
+/**
+ * @brief ��ʱ�����������š�С����+�С����Źء���������+�赸������
+ * - ���㣺���N��+0013.mp3ѭ��N��+�赸��LED+ˮ��+�赸���+С����+С����
+ * - ��㣺���3�Σ������ֺ��赸
+ * - ������ָ����Ѵʺ���������
+ */
 void CuckooStateMachine::PerformanceTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
+    sm->violin_state_.Reset();
+    sm->dog_state_.Reset();
     ESP_LOGI(TAG, "Performance task started");
 
-    // 静音 AI 输出，清空播放队列，防止钟声和 Opus 混叠
+    // ���� AI �����ղ��Ŷ��з�ֹ������ Opus ����
     auto& app = Application::GetInstance();
     app.GetAudioService().SetOutputMuted(true);
 
-    // ====== 整点报时简化版（电机无安装，只走音频流程） ======
+    // ====== ���㱨ʱ�򻯰棨����ް�װ��ֻ����Ƶ���̣�======
     if (sm->current_performance_ == kPerformanceHour) {
-        // Phase 1: 布谷鸟叫声 x3 (cuckoo.mp3 或 BellSoundPlayer)
+        // Phase 1: ���Ŵ� �� С������+�� �� ���Źر�
+        sm->OpenBirdDoor();  // ���� (m4_)
         for (int i = 0; i < sm->call_count_; i++) {
-            if (sm->bird_jump_) sm->bird_jump_->Jump(150);
+            // �첽�ƽ���+��������������������Ͷ�������ͬ��
             if (sm->bell_player_) {
-                sm->bell_player_->PlayCuckooSoundSync();
+                sm->bell_player_->PlayCuckooSoundAsync();
             }
+            vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
+            sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���
             if (i < sm->call_count_ - 1) {
-                vTaskDelay(pdMS_TO_TICKS(300));
+                vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
             }
         }
+        // �����һ�������ٹ���
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        sm->CloseBirdDoor();  // ���Źر�
 
-        // Phase 2: bell chime - 解码0013.mp3到PCM缓冲区，循环播避免MP3解码器抖动
-        // 一次性解码到PSRAM，用OutputRawPcm重复播放，跳过MP3解码器反复打开的抖动
+        // һ���Խ��뵽PSRAM����OutputRawPcm�ظ����ţ�����MP3�����������򿪵Ķ���
         if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
             int16_t* bell_pcm = nullptr;
             size_t bell_samples = 0;
             int bell_sr = 0;
             int dec_ret = sm->mp3_->DecodeToBuffer(13, &bell_pcm, &bell_samples, &bell_sr);
             if (dec_ret == 0 && bell_pcm && bell_samples > 0) {
-                ESP_LOGI(TAG, "Bell PCM loaded: %zu samples @ %d Hz", bell_samples, bell_sr);
+                ESP_LOGI(TAG, "Bell PCM loaded: %u samples @ %d Hz", (unsigned)bell_samples, bell_sr);
                 for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
                     app.GetAudioService().OutputRawPcm(bell_pcm, bell_samples, bell_sr);
-                    // OutputRawPcm 是阻塞的，播完才返回
+                    // OutputRawPcm �������ģ�����ŷ���
                     if (!sm->is_running_) break;
                     if (i < sm->total_calls_ - 1) {
                         vTaskDelay(pdMS_TO_TICKS(50));
@@ -1799,7 +2473,7 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
                 }
                 heap_caps_free(bell_pcm);
             } else {
-                // 回退：用 PlayIndex
+    // ������ PlayIndex
                 ESP_LOGW(TAG, "DecodeToBuffer failed, falling back to PlayIndex");
                 for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
                     sm->mp3_->PlayIndex(13);
@@ -1822,51 +2496,68 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
         }
 
 
-        // Phase 3: 播放对应整点的音乐，最长 5 分钟
-        // 背景音乐音量略低于当前音量（保持区分，不依赖默认值）
-        auto* codec = Board::GetInstance().GetAudioCodec();
-        int old_volume = codec ? codec->output_volume() : 70;
-        int music_vol = old_volume - 5;
-        if (music_vol < 10) music_vol = 10;
-        if (codec) codec->SetOutputVolume(music_vol);
-        
-        // 先恢复 AI 输出，支持音乐用 Mp3Player（不走 AudioService I2S）
-        app.GetAudioService().SetOutputMuted(false);
+ // Phase 3: �ָ�AI��Ƶ���
+        app.GetAudioService().SetOutputMuted(false);  // �ָ�AI��Ƶ
+        gpio_set_level(LED_A_GPIO, 1);
+        gpio_set_level(LED_B_GPIO, 1);
+        if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
+
+    // Phase 2: bell chime - ����0013.mp3��PCM������ѭ�����ű���MP3�����������򿪵Ķ���
         if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
             sm->mp3_->PlayBgMusic(sm->total_calls_);
-            // 等音乐开始
+            // �����ֿ�ʼ���ţ�����3�룩
             int wait_start = 0;
             while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
                 vTaskDelay(pdMS_TO_TICKS(500));
                 wait_start++;
             }
-            // 等音乐自然播完（IsPlaying 播完自动变 false），加兜底超时防止异常
-            int max_wait_sec = 3 * 60;  // 最长等 3 分钟（兜底）
-            int elapsed = 0;
-            while (sm->is_running_ && sm->mp3_->IsPlaying() && elapsed < max_wait_sec) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-                elapsed++;
-            }
-            if (elapsed >= max_wait_sec) {
-                ESP_LOGW(TAG, "Hourly chime music timed out (3 min), stopping");
-                sm->mp3_->Stop();
-            }
-        }
-        // 恢复音量
-        if (codec) codec->SetOutputVolume(old_volume);
 
-    // ====== 半点报时：布谷鸟叫声 x3，无音乐无敲钟 ======
-    } else if (sm->current_performance_ == kPerformanceHalf) {
-        for (int i = 0; i < sm->call_count_; i++) {
-            if (sm->bird_jump_) sm->bird_jump_->Jump(150);
-            if (sm->bell_player_) {
-                sm->bell_player_->PlayCuckooSoundSync();
+            sm->violin_state_.fwd_count = 0;
+            sm->violin_state_.rev_count = 0;
+
+            // �첽��������+С���������������赸ѭ������ ShowTask һ�£�
+            unsigned long intro_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            xTaskCreatePinnedToCore([](void* arg) {
+                auto* s = static_cast<CuckooStateMachine*>(arg);
+                s->RunDanceIntro();
+                vTaskDelete(nullptr);
+            }, "dance_intro", 2048, sm, 5, nullptr, 1);
+
+            // �赸+С�������̿�ʼ���Ϳ���/С���������У�
+            sm->RunDanceLoop();
+
+            // Intro (door+dog, async, ~5s) must finish before the finale
+            // retracts the dog / closes the door, or the sequences overlap.
+            {
+                unsigned long since_intro = xTaskGetTickCount() * portTICK_PERIOD_MS - intro_start_ms;
+                if (since_intro < 6000) vTaskDelay(pdMS_TO_TICKS(6000 - since_intro));
             }
+            sm->RunDanceFinale();
+        }
+
+    // Stop water wheel + LEDs off
+        if (sm->water_bird_) sm->water_bird_->Stop();
+        gpio_set_level(LED_A_GPIO, 0);
+        gpio_set_level(LED_B_GPIO, 0);
+
+    // ====== ��㱨ʱ������+С������+��һ�� ======
+    } else if (sm->current_performance_ == kPerformanceHalf) {
+        sm->OpenBirdDoor();  // ���Ŵ�
+        for (int i = 0; i < sm->call_count_; i++) {
+            // �첽�ƽ���+��������������������Ͷ�������ͬ��
+            if (sm->bell_player_) {
+                sm->bell_player_->PlayCuckooSoundAsync();
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
+            sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���
             if (i < sm->call_count_ - 1) {
-                vTaskDelay(pdMS_TO_TICKS(300));
+                vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
             }
         }
-        // 半点结束后恢复 AI
+        // �����һ�������ٹ���
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        sm->CloseBirdDoor();  // ���Źر�
+    // �����ָ� AI
         app.GetAudioService().SetOutputMuted(false);
     }
 
@@ -1876,40 +2567,78 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
     sm->current_performance_ = kPerformanceNone;
     sm->current_phase_ = kPhaseIdle;
     sm->MotorPowerOff();
-    // 恢复唤醒词检测（idle 状态只需要唤醒词，VoiceProcessing 由会话流程自动启动）
-    app.GetAudioService().EnableWakeWordDetection(true);
+    // �ָ����Ѵʼ�⣨���� EnableVoiceProcessing �� ���� ResetDecoder ���� TTS��
+    // ֻ�� idle ״̬�Żָ��������� listening ״̬�󴥷����Ѵ�
+    if (app.GetDeviceState() == kDeviceStateIdle) {
+        app.GetAudioService().EnableWakeWordDetection(true);
+    }
     ESP_LOGI(TAG, "Performance complete");
 
     vTaskDelete(NULL);
 }
+/**
+ * @brief ��鲢��������/��㱨ʱ
+ * - ҹ��(22:00-6:00)����ʱ
+ * - AIæʱ�򱳾���Ƶ�����в���ʱ
+ * - ���� (min==0): ���� StartPerformance(kPerformanceHour)
+ * - ��� (min==30): ���� StartPerformance(kPerformanceHalf)
+ */
 void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     is_dark_ = dark;
-    if (is_running_) return;
+    if (is_running_) {
+        ESP_LOGI(TAG, "Skipping chime: performance already running");
+        return;
+    }
 
-    // AI 忙时不报时（说话/监听/连接中等）
+    // AI æʱ�򱳾���Ƶ�����в���ʱ
     auto state = Application::GetInstance().GetDeviceState();
-    if (state != kDeviceStateIdle) {
-        ESP_LOGI(TAG, "Skipping chime: device busy (state=%d)", state);
+    if (state != kDeviceStateIdle || Application::GetInstance().GetAudioService().IsBgAudioActive()) {
+        ESP_LOGI(TAG, "Skipping chime: device busy (state=%d, bg_audio=%d)", state,
+                 (int)Application::GetInstance().GetAudioService().IsBgAudioActive());
         return;
     }
 
-    // 夜间模式（20:00-7:00）不报时
-    if ((is_dark_ && hour >= 20) || hour < 7) {
-        return;
+    // ����ģʽ�ж�
+    int mode = quiet_mode_.load();
+    if (mode == 0) {
+        ESP_LOGI(TAG, "Skipping chime: quiet_mode=0 (always silent)");
+        return;  // ȫ�쾲��
     }
+    if (mode == 2 && is_dark_) {
+        int ldr_raw = ldr_ ? ldr_->ReadRaw() : -1;
+        ESP_LOGI(TAG, "Skipping chime: quiet_mode=2 (dark-silent) LDR=%d threshold=%d", ldr_raw, LDR_DARK);
+        return;  // ��ھ���
+    }
+    if (mode == 3) {
+        int start = quiet_start_.load();
+        int end = quiet_end_.load();
+        if (start < end) {
+            if (hour >= start && hour < end) {
+                ESP_LOGI(TAG, "Skipping chime: quiet_mode=3 window %d-%d", start, end);
+                return;
+            }
+        } else {
+            if (hour >= start || hour < end) {
+                ESP_LOGI(TAG, "Skipping chime: quiet_mode=3 overnight window %d-%d", start, end);
+                return;  // ��ҹ: 22~6
+            }
+        }
+    }
+    // mode==1 ȫ�챨ʱ����return
 
-    // 由调用方决定是整点报时还是半点报时
-    // 使用 last_hour_ 和 last_half_hour_ 防重复（由 cuckoo_clock_task 管理）
+    // ���㱨ʱ
 
-    // 整点报时（分钟 == 0）
+    // ���㱨ʱ
     if (min == 0) {
         ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
-        StartPerformance(kPerformanceHour, hour);
+        if (hourly_perf_.load()) { StartPerformance(kPerformanceHour, hour); } else { ESP_LOGI(TAG, "Hourly chime: performance disabled"); }
+        MarkHourlyChime(hour);  // dedup after successful trigger
     }
-    // 半点报时（分钟 == 30）
+    // ��㱨ʱ
     else if (min == 30) {
         ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
         StartPerformance(kPerformanceHalf, hour);
+        MarkHalfHourlyChime(hour);  // dedup after successful trigger
     }
 }
 
@@ -1918,7 +2647,7 @@ void CuckooStateMachine::SetTime(int hour, int min, int sec) {
     current_min_ = min % 60;
     current_sec_ = sec % 60;
     time_set_ = true;
-    ESP_LOGI(TAG, "Time set to %02d:%02d:%02d", current_hour_, current_min_, current_sec_);
+    ESP_LOGI(TAG, "Time set to %02d:%02d:%02d", current_hour_.load(), current_min_.load(), current_sec_.load());
 }
 
 void CuckooStateMachine::GetTime(int &hour, int &min) {
@@ -1927,19 +2656,53 @@ void CuckooStateMachine::GetTime(int &hour, int &min) {
 }
 
 // ============================================
-// 闹钟功能
+// ����ģʽ NVS �洢
 // ============================================
+void CuckooStateMachine::SaveQuietMode() {
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_i8(nvs, "qmode", (int8_t)quiet_mode_.load());
+        nvs_set_i8(nvs, "qstart", (int8_t)quiet_start_.load());
+        nvs_set_i8(nvs, "qend", (int8_t)quiet_end_.load());
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
+void CuckooStateMachine::LoadQuietMode() {
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READONLY, &nvs) == ESP_OK) {
+        int8_t val;
+        if (nvs_get_i8(nvs, "qmode", &val) == ESP_OK) quiet_mode_ = (int)val;
+        if (nvs_get_i8(nvs, "qstart", &val) == ESP_OK) quiet_start_ = (int)val;
+        if (nvs_get_i8(nvs, "qend", &val) == ESP_OK) quiet_end_ = (int)val;
+        nvs_close(nvs);
+    }
+}
+
+// ============================================
+// ���幦�� �� ֧�����5�����ӣ�NVS�־û�
+// ============================================
+/**
+ * @brief ��������
+ * @param hour Сʱ (0-23)
+ * @param minute ���� (0-59)
+ * @param repeat_daily true=ÿ���ظ�, false=һ����
+ * �Զ�ȥ�أ�ͬʱ������ӻ����repeat_daily
+ */
 void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     if (alarm_count_ >= kMaxAlarms) {
         ESP_LOGW(TAG, "Alarm list full (max %d)", kMaxAlarms);
         return;
     }
-    // Check for duplicate - update existing
+ // Check for duplicate - update existing
     for (int i = 0; i < alarm_count_; i++) {
         if (alarms_[i].hour == hour && alarms_[i].minute == minute) {
             alarms_[i].enabled = true;
             alarms_[i].repeat_daily = repeat_daily;
             ESP_LOGI(TAG, "Alarm updated: %02d:%02d (repeat=%d)", hour, minute, repeat_daily);
+            SaveAlarmsToNvs();
             return;
         }
     }
@@ -1949,10 +2712,16 @@ void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
     alarms_[alarm_count_].repeat_daily = repeat_daily;
     alarm_count_++;
     ESP_LOGI(TAG, "Alarm set: %02d:%02d (repeat=%d, total=%d)",
-             hour, minute, repeat_daily, alarm_count_);
+             hour, minute, repeat_daily, alarm_count_.load());
+    SaveAlarmsToNvs();
 }
 
+/**
+ * @brief ��ȡ�����б�JSON
+ * @return JSON�����ַ�����[{"index":1,"hour":8,"minute":0,"enabled":true,"repeat_daily":true},...]
+ */
 std::string CuckooStateMachine::GetAlarmsJson() {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     std::string json = "[";
     for (int i = 0; i < alarm_count_; i++) {
         if (i > 0) json += ", ";
@@ -1969,60 +2738,82 @@ std::string CuckooStateMachine::GetAlarmsJson() {
 }
 
 bool CuckooStateMachine::DeleteAlarm(int index) {
+    std::lock_guard<std::mutex> lock(alarm_mutex_);
     if (index < 1 || index > alarm_count_) {
-        ESP_LOGW(TAG, "Invalid alarm index: %d (have %d alarms)", index, alarm_count_);
+        ESP_LOGW(TAG, "Invalid alarm index: %d (have %d alarms)", index, alarm_count_.load());
         return false;
     }
-    // Shift remaining alarms down
+ // Shift remaining alarms down
     for (int i = index - 1; i < alarm_count_ - 1; i++) {
         alarms_[i] = alarms_[i + 1];
     }
     alarm_count_--;
-    ESP_LOGI(TAG, "Alarm %d deleted (remaining: %d)", index, alarm_count_);
+    ESP_LOGI(TAG, "Alarm %d deleted (remaining: %d)", index, alarm_count_.load());
+    SaveAlarmsToNvs();
     return true;
 }
 
+/**
+ * @brief ֹͣ�������������
+ * һ��������ֹͣ���Զ����ã��ظ����ӱ�������
+ */
 void CuckooStateMachine::StopAlarm() {
     alarm_stopped_ = true;
     alarm_ringing_ = false;
-    // For one-shot alarms, disable after user stops it
-    for (int i = 0; i < alarm_count_; i++) {
-        if (alarms_[i].enabled && !alarms_[i].repeat_daily
-            && alarms_[i].hour == current_hour_
-            && alarms_[i].minute == current_min_) {
-            alarms_[i].enabled = false;
-            ESP_LOGI(TAG, "One-shot alarm %02d:%02d disabled after stop",
-                     alarms_[i].hour, alarms_[i].minute);
+ // For one-shot alarms, disable after user stops it
+    {
+        std::lock_guard<std::mutex> lock(alarm_mutex_);
+        for (int i = 0; i < alarm_count_; i++) {
+            if (alarms_[i].enabled && !alarms_[i].repeat_daily
+                && alarms_[i].hour == current_hour_
+                && alarms_[i].minute == current_min_) {
+                alarms_[i].enabled = false;
+                ESP_LOGI(TAG, "One-shot alarm %02d:%02d disabled after stop",
+                         alarms_[i].hour, alarms_[i].minute);
+            }
         }
     }
-    // Stop any playing audio
+ // Stop any playing audio
     if (mp3_) mp3_->Stop();
     ESP_LOGI(TAG, "Alarm stopped by user");
 }
 
+/**
+ * @brief ÿ�������Ӵ���
+ * - ʱ��ƥ������==0ʱ����
+ * - ����AlarmTask�ں�̨��������
+ * - �����в����ظ�����
+ */
 void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
     if (alarm_ringing_) return;  // already ringing
     if (!time_set_) return;      // clock not set yet
 
-    for (int i = 0; i < alarm_count_; i++) {
-        if (!alarms_[i].enabled) continue;
-        if (alarms_[i].hour == hour && alarms_[i].minute == minute && sec == 0) {
-            ESP_LOGI(TAG, "Alarm triggered! %02d:%02d", hour, minute);
-            alarm_ringing_ = true;
-            alarm_stopped_ = false;
-            xTaskCreate(
-                AlarmTask,
-                "cuckoo_alarm",
-                4096,
-                this,
-                3,
-                nullptr
-            );
-            break;  // only trigger one alarm at a time
+    {
+        std::lock_guard<std::mutex> lock(alarm_mutex_);
+        for (int i = 0; i < alarm_count_; i++) {
+            if (!alarms_[i].enabled) continue;
+            if (alarms_[i].hour == hour && alarms_[i].minute == minute && sec == 0) {
+                ESP_LOGI(TAG, "Alarm triggered! %02d:%02d", hour, minute);
+                alarm_ringing_ = true;
+                alarm_stopped_ = false;
+                xTaskCreate(
+                    AlarmTask,
+                    "cuckoo_alarm",
+                    4096,
+                    this,
+                    3,
+                    nullptr
+                );
+                break;  // only trigger one alarm at a time
+            }
         }
     }
 }
 
+/**
+ * @brief ���岥�����񣺷���50�֣�100�룩��������15%��ǿ��100%��ÿ��֮����ͣ2����
+ * �ڼ���alarm_stopped_��־�����û�ֹͣ�������˳�
+ */
 void CuckooStateMachine::AlarmTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
     ESP_LOGI(TAG, "Alarm task started");
@@ -2031,14 +2822,14 @@ void CuckooStateMachine::AlarmTask(void* arg) {
     app.GetAudioService().SetOutputMuted(true);
 
     while (sm->alarm_ringing_ && !sm->alarm_stopped_) {
-        // Play alarm ringtone x50 (2s each = 100s total ringing)
-        // First round: ramp volume 15%→100% over first 10 calls (20s)
+ // Play alarm ringtone x50 (2s each = 100s total ringing)
+ // First round: ramp volume 15%100% over first 10 calls (20s)
         for (int i = 0; i < 50; i++) {
             if (sm->alarm_stopped_ || !sm->alarm_ringing_) break;
             if (sm->mp3_) {
                 float volume;
                 if (i < 10) {
-                    volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% → 100% over first 10
+                    volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% ��ǿ�� 100% (ǰ10��)
                 } else {
                     volume = 1.0f;
                 }
@@ -2048,7 +2839,7 @@ void CuckooStateMachine::AlarmTask(void* arg) {
 
         if (sm->alarm_stopped_ || !sm->alarm_ringing_) break;
 
-        // Snooze: wait 2 minutes, checking stopped_ every second
+ // Snooze: wait 2 minutes, checking stopped_ every second
         ESP_LOGI(TAG, "Alarm snoozing for 2 minutes...");
         for (int s = 0; s < 120; s++) {
             if (sm->alarm_stopped_ || !sm->alarm_ringing_) break;
@@ -2064,6 +2855,560 @@ void CuckooStateMachine::AlarmTask(void* arg) {
     vTaskDelete(NULL);
 }
 
+// ============================================
+// ��ɫ���ݣ����� MCP ���ߵ�ʵ�֣�
+// - DogShow: С���������ݣ����š��ܳ����С�ҡͷ���˻ء����ţ�
+// - LindaShow: �մ��赸���ݣ�����0015 + �赸��� + LED��˸��
+// - GardenShow: ԰��Linda�������ݣ�����0016 + С���ٶ�� + LED��˸��
+// ============================================
+
+// DogShow() �� MCP ������ڣ��������ز�������
+// ʵ�ʱ����� DogShowTask() ��ִ�У����� Core 1 ��̨�����
+/**
+ * @brief С���������ݣ�MCP��ڣ���������
+ * ��Core 1����dog_show����ʵ����DogShowTask()ִ��
+ */
+void CuckooStateMachine::DogShow() {
+    if (is_running_) return;  // ���б��������У��ܾ��ظ�����
+    // ������̨����ִ�б��ݣ��̶��� Core 1���ӿغ��ģ�
+    xTaskCreatePinnedToCore([](void* arg) {
+        auto* sm = static_cast<CuckooStateMachine*>(arg);
+        sm->DogShowTask();
+        vTaskDelete(nullptr);  // ������ɺ���ɾ������
+    }, "dog_show", 4096, this, 5, nullptr, 1);
+}
+
+/**
+ * @brief С����������ʵ��
+ * ���̣���AI˵��������������������š�С�����ɨ����С��ǰ�����С�ҡͷ10����С��˻ء����š��ָ�
+ */
+void CuckooStateMachine::DogShowTask() {
+    auto& app = Application::GetInstance();
+
+    // === ����� AI ˵�������ݺ�����ͬʱ���� ===
+    // === ����ͬʱ����� AI����ֵ���ӿ�������Ȼ���� ===
+
+    // === ��3������ʼ���� ===
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    ESP_LOGI(TAG, "DogShow: start");
+
+    MotorPowerOn();  // �򿪵����Դ��P-MOSFET ���� = ͨ�磩
+
+    // ˮ��ת��
+    if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
+
+    // ����
+    if (m2_) {
+        m2_->Forward(MAIN_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
+    }
+
+    // С�������������180��ɨ��20�㣨��λ�Ƕ�180�㣬��StartShowͳһ��
+    if (dog_servo_) {
+        dog_servo_->Sweep(180, 20, (180 - 20) * DOG_TAIL_STEP_MS);
+        dog_state_.angle = 20;
+    }
+    // С�����ǰ�� 920ms
+    if (m3_) {
+        m3_->Forward(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
+        m3_->Stop();
+    }
+
+    // ������һ��
+    PlayDogBarkDirect();
+
+    // ҡͷ���� 10 �루�����0~60��֮�����ذڶ���ͬ������ dog_state_.angle��
+    unsigned long start = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    unsigned long end_time = start + 10000;  // ����10��
+    int sweep_dir = 0;  // 0: 0->60��, 1: 60->0��
+    while (is_running_ && (xTaskGetTickCount() * portTICK_PERIOD_MS) < end_time) {
+        if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ����ˮ��ת��
+        if (dog_servo_) {
+            if (sweep_dir == 0) {
+                dog_servo_->Sweep(0, 60, 60 * DOG_TAIL_STEP_MS);  // 0->60��
+                dog_state_.angle = 60;
+                vTaskDelay(pdMS_TO_TICKS(500));
+                sweep_dir = 1;
+            } else {
+                dog_servo_->Sweep(60, 0, 60 * DOG_TAIL_STEP_MS);  // 60->0��
+                dog_state_.angle = 0;
+                vTaskDelay(pdMS_TO_TICKS(500));
+                sweep_dir = 0;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    // ��������һ��
+    PlayDogBarkDirect();
+
+    // С���˻أ������ת920ms��
+    if (m3_) {
+        m3_->Reverse(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
+        m3_->Stop();
+    }
+    // ����ӵ�ǰ�Ƕȹ�λ��180�㣨��StartShowͳһ���� dog_state_.angle �������䣩
+    if (dog_servo_) {
+        int dog_cur = dog_state_.angle;
+        dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * DOG_TAIL_STEP_MS);
+    }
+
+    // С���˻غ��ͣˮ��
+    if (water_bird_) water_bird_->Stop();
+
+    // ���ţ����ŵ����ת��
+    if (m2_) {
+        m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
+    }
+
+    // === ��4���������ͻָ� ===
+    MotorPowerOff();  // �رյ����Դ
+    is_running_ = false;
+    current_performance_ = kPerformanceNone;
+
+    // �ָ�����
+    if (app.GetDeviceState() != kDeviceStateIdle) {
+        app.AbortSpeaking(kAbortReasonNone);
+        for (int i = 0; i < 10 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    // �����ǰ��idle����ʽ�ָ�������ֵ���ӿ����񲻼��ͬ״̬��
+    if (app.GetDeviceState() == kDeviceStateIdle)
+        app.GetAudioService().SetWakeWordThreshold(0.02f);
+    ESP_LOGI(TAG, "DogShow: done");
+}
+
+/**
+ * @brief ͨ��WAV�ļ�������
+ * @param filename WAV�ļ������� dog_bark.wav, 2001.wav~2005.wav��
+ * ����WAVͷ��ȡ�����ʺ����ݿ飬ͨ��OutputRawPcmֱ�Ӳ���
+ * �ǹ����ļ�������Ŵ���������ƫС���⣩
+ */
+void CuckooStateMachine::PlayWavAsset(const char* filename) {
+    void* wav_ptr = nullptr;
+    size_t wav_size = 0;
+    if (!Assets::GetInstance().GetAssetData(filename, wav_ptr, wav_size)) {
+        ESP_LOGW(TAG, "PlayWavAsset: %s not found", filename);
+        return;
+    }
+    if (wav_size < 44) return;
+
+    const uint8_t* wav_data = (const uint8_t*)wav_ptr;
+    uint16_t channels = wav_data[22] | (wav_data[23] << 8);
+    uint32_t sample_rate = wav_data[24] | (wav_data[25] << 8) | (wav_data[26] << 16) | (wav_data[27] << 24);
+    uint16_t bits = wav_data[34] | (wav_data[35] << 8);
+    if (bits != 16 || channels != 1) {
+        ESP_LOGW(TAG, "PlayWavAsset: %s need mono s16", filename);
+        return;
+    }
+
+    // Find data chunk (may have fmt, LIST etc before it)
+    const int16_t* pcm = nullptr;
+    size_t num_samples = 0;
+    for (size_t i = 12; i + 8 < wav_size; ) {
+        char tag[5] = {0};
+        memcpy(tag, wav_data + i, 4);
+        uint32_t chunk_size = wav_data[i+4] | (wav_data[i+5] << 8) | (wav_data[i+6] << 16) | (wav_data[i+7] << 24);
+        if (strcmp(tag, "data") == 0) {
+            pcm = (const int16_t*)(wav_data + i + 8);
+            num_samples = chunk_size / sizeof(int16_t);
+            break;
+        }
+        i += 8 + chunk_size;
+        if (chunk_size % 2) i++;
+    }
+    if (pcm == nullptr || num_samples == 0) {
+        ESP_LOGW(TAG, "PlayWavAsset: %s no data chunk", filename);
+        return;
+    }
+
+    ESP_LOGI(TAG, "PlayWavAsset: %s %u samples, %d Hz", filename, (unsigned)num_samples, sample_rate);
+    auto& app = Application::GetInstance();
+    // ���б����������󣬲���Ҫ���棻���� WAV����л�����ȣ���Ҫ����
+    bool is_bark = (strcmp(filename, "dog_bark.wav") == 0);
+    if (is_bark) {
+        app.GetAudioService().OutputRawPcm(pcm, num_samples, sample_rate);
+    } else {
+        // 4�����棨Լ+12dB������ֹ OutputRawPcm �������������Ƶ�������̫С
+        std::vector<int16_t> amplified(num_samples);
+        const int gain = 1;
+        for (size_t i = 0; i < num_samples; i++) {
+            int32_t v = (int32_t)pcm[i] * gain;
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            amplified[i] = (int16_t)v;
+        }
+        app.GetAudioService().OutputRawPcm(amplified.data(), num_samples, sample_rate);
+    }
+    int play_ms = (int)(num_samples * 1000 / sample_rate);
+    vTaskDelay(pdMS_TO_TICKS(play_ms + 100));
+}
+
+// ֱ�Ӳ��Ź��У���������������� PlayWavAsset
+void CuckooStateMachine::PlayDogBarkDirect() {
+    PlayWavAsset("dog_bark.wav");
+}
+
+bool CuckooStateMachine::PlayShowMusicBg(int index) {
+    if (!mp3_) return false;
+
+    // ���� MP3 �� PSRAM
+    int16_t* pcm = nullptr;
+    size_t total_samples = 0;
+    int src_sr = 0;
+    if (mp3_->DecodeToBuffer(index, &pcm, &total_samples, &src_sr) < 0) {
+        ESP_LOGE(TAG, "PlayShowMusicBg: decode failed for %04d.mp3", index);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 %u samples %dHz", index, (unsigned)total_samples, src_sr);
+
+    auto& audio = Application::GetInstance().GetAudioService();
+    audio.SetBackgroundAudioGain(1.0f);
+
+    const int DST_SR = 16000;
+    const size_t CHUNK_SRC = 2048;  // push in small chunks
+    size_t offset = 0;
+
+    while (offset < total_samples && is_running_) {
+        size_t chunk = (total_samples - offset > CHUNK_SRC) ? CHUNK_SRC : (total_samples - offset);
+
+        // �������ز��� 22050��16000
+        if (src_sr != DST_SR) {
+            float ratio = (float)src_sr / DST_SR;
+            std::vector<int16_t> dst(chunk * 2 / 3 + 2);  // ~30% smaller after resample
+            size_t d = 0;
+            float pos = 0;
+            while (pos < (float)chunk - 1.0f && d < dst.size() - 1) {
+                size_t idx = (size_t)pos;
+                float frac = pos - idx;
+                dst[d++] = (int16_t)((float)pcm[offset + idx] * (1.0f - frac) + (float)pcm[offset + idx + 1] * frac);
+                pos += ratio;
+            }
+            audio.PushBackgroundAudio(dst.data(), d, DST_SR);
+        } else {
+            audio.PushBackgroundAudio(pcm + offset, chunk, DST_SR);
+        }
+
+        audio.EnableBgAudioDrain(true);
+        offset += chunk;
+
+        // �� drain �������ݣ���ֹ ring buffer ���
+        while (audio.GetBgAudioFillLevel() > 64000 && is_running_)
+            vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    free(pcm);
+    // Push done: wait for ring buffer to drain, then clear bg audio flags
+    // so show loops watching IsBgAudioActive() exit when music really ends.
+    {
+        int drain_wait = 0;
+        while (is_running_ && audio.GetBgAudioFillLevel() > 0 && drain_wait < 200) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            drain_wait++;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+        audio.ClearBackgroundAudio();
+        ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 finished, bg audio cleared", index);
+    }
+    return true;
+}
+
+/**
+ * @brief �մ�������ݣ�MCP��ڣ���������
+ */
+void CuckooStateMachine::StartLindaShow() {
+    // MCP ������ڣ��������ء�ʵ�ʱ����ں�̨����ִ�С�
+    if (is_running_) return;  // ���б��������У��ܾ�
+    xTaskCreatePinnedToCore([](void* arg) {
+        auto* sm = static_cast<CuckooStateMachine*>(arg);
+        sm->LindaShow();
+        vTaskDelete(nullptr);
+    }, "linda_show", 4096, this, 5, nullptr, 1);
+}
+
+/**
+ * @brief ԰�ӳ������ݣ�MCP��ڣ���������
+ */
+void CuckooStateMachine::StartGardenShow() {
+    // MCP ������ڣ��������ء�ʵ�ʱ����ں�̨����ִ�С�
+    if (is_running_) return;  // ���б��������У��ܾ�
+    xTaskCreatePinnedToCore([](void* arg) {
+        auto* sm = static_cast<CuckooStateMachine*>(arg);
+        sm->GardenShow();
+        vTaskDelete(nullptr);
+    }, "garden_show", 4096, this, 5, nullptr, 1);
+}
+
+/**
+ * @brief �մ����ʵ��
+ * ���̣�LED����0015.mp3���š��赸�����������+LED������˸��ǰ24�룩��LEDȫ�������ֽ�������л������LED����ָ�
+ */
+void CuckooStateMachine::LindaShow() {
+    if (is_running_) { ESP_LOGW(TAG, "LindaShow: already running, skip"); return; }
+
+    auto& app = Application::GetInstance();
+
+    // ����� AI ˵�������ݺ�����ͬʱ���У���ֵ���ӿ��������
+
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    MotorPowerOn();
+    ESP_LOGI(TAG, "LindaShow: start, playing 0015.mp3");
+
+    // 1. ��LEDһ��������ʾ���ݼ�����ʼ��
+    gpio_set_level(LED_A_GPIO, 1);  // LED_A ��
+    gpio_set_level(LED_B_GPIO, 1);  // LED_B ��
+    vTaskDelay(pdMS_TO_TICKS(500));  // ��0.5��
+
+    // 2. ����������bg audio������TTS��I2S��
+    if (mp3_) { mp3_->SetDisableDucking(true); int song = LINDA_SONG_BASE + (linda_song_counter_++ % LINDA_SONG_COUNT); ESP_LOGI(TAG, "LindaShow: playing %04d.mp3 (counter=%d)", song, (int)linda_song_counter_); show_music_index_ = song; xTaskCreate([](void* arg) { auto* s = (CuckooStateMachine*)arg; s->PlayShowMusicBg(s->show_music_index_); vTaskDelete(nullptr); }, "show_bg", 4096, this, 4, nullptr); }
+
+    // Wait for bg audio to start draining
+    int wait = 0;
+    auto& audio = Application::GetInstance().GetAudioService();
+    while (wait < 20 && is_running_ && !audio.IsBgAudioActive()) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        wait++;
+    }
+
+    // 3. LED������˸ + �赸�������ת�����������ֽ���
+    //    ǰ24�룺LED������˸ + �赸
+    //    24���LEDȫ�����赸����ֱ�����ֽ���
+    unsigned long music_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    unsigned long m1_timer = music_start_ms;
+    int m1_stage = 0;
+    int m1_rand_time = 1000 + (esp_random() % 2001);
+    int led_toggle = 0;
+    int led_state = 0;
+    bool led_final = false;
+    m1_fwd_time_ = 0;  // ��ת�ۼ�ʱ��
+    m1_rev_time_ = 0;  // ��ת�ۼ�ʱ��
+    m1_stage_start_ = music_start_ms;
+
+    while (is_running_ && Application::GetInstance().GetAudioService().IsBgAudioActive()
+           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s safety timeout
+        unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        unsigned long elapsed = now - music_start_ms;
+
+        // ����ֹͣǰԼ2�루24��ʱ����LEDȫ������ֹͣ��˸
+        if (!led_final && elapsed >= 24000) {
+            gpio_set_level(LED_A_GPIO, 1);
+            gpio_set_level(LED_B_GPIO, 1);
+            led_final = true;
+        }
+
+        // �赸����������1~3�룬������Ȼ��
+        switch (m1_stage) {
+            case 0:
+
+                if (m1_) m1_->Forward(DANCE_SPEED_PERCENT);
+
+                if (now - m1_timer > m1_rand_time) {
+                    m1_fwd_time_ += (now - m1_stage_start_);
+                    m1_stage_start_ = now;
+                    m1_timer = now; m1_stage = 1;
+                }
+
+                break;
+            case 1:
+                if (m1_) m1_->Stop();
+                if (now - m1_timer > 20) {
+                    m1_timer = now; m1_stage = 2;
+                    m1_rand_time = 1000 + (esp_random() % 2001);
+                }
+                break;
+            case 2:
+
+                if (m1_) m1_->Reverse(DANCE_SPEED_PERCENT);
+
+                if (now - m1_timer > m1_rand_time) {
+                    m1_rev_time_ += (now - m1_stage_start_);
+                    m1_stage_start_ = now;
+                    m1_timer = now; m1_stage = 3;
+                }
+
+                break;
+            case 3:
+                if (m1_) m1_->Stop();
+                if (now - m1_timer > 20) {
+                    m1_timer = now; m1_stage = 0;
+                    m1_rand_time = 1000 + (esp_random() % 2001);
+                }
+                break;
+        }
+        // LED������˸������ǰ24�룬ÿ6֡�л�һ�� = Լ300ms�����
+        if (!led_final) {
+            led_toggle++;
+            if (led_toggle >= 6) {
+                led_toggle = 0;
+                led_state = !led_state;
+                gpio_set_level(LED_A_GPIO, led_state ? 1 : 0);
+                gpio_set_level(LED_B_GPIO, led_state ? 0 : 1);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    // 5. ���ֽ��� �� �赸ͣ �� ���Ÿ�л���� �� LEDϨ��
+    if (m1_) m1_->Stop();  // ͣ�赸���
+
+    // ���ڽǶȲ�����279��/s
+    if (m1_fwd_time_ > 0 || m1_rev_time_ > 0) {
+        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;
+        int rem = (int)(net % 360); if (rem < 0) rem = -rem;
+        int ms; bool go_fwd;
+        if (rem <= 180) {
+            ms = rem * 1000 / 279;
+            go_fwd = (net < 0);
+        } else {
+            ms = (360 - rem) * 1000 / 279;
+            go_fwd = (net >= 0);
+        }
+        if (ms > 0) {
+            ESP_LOGI(TAG, "LindaShow: final: net=%lddeg rem=%ddeg, %s %dms", net, rem, go_fwd ? "fwd" : "rev", ms);
+            if (go_fwd) m1_->Forward(100); else m1_->Reverse(100);
+            vTaskDelay(pdMS_TO_TICKS(ms));
+            m1_->Stop();
+        }
+    }
+
+    // ��л�����ֻ����ţ�0~4ѭ����
+    int thanks_idx = 2001 + (thanks_counter_++ % 5);
+    char thanks_file[32];
+    snprintf(thanks_file, sizeof(thanks_file), "%d.wav", thanks_idx);
+    ESP_LOGI(TAG, "LindaShow: playing thanks: %s (counter=%d)", thanks_file, (int)thanks_counter_);
+    PlayWavAsset(thanks_file);
+
+    gpio_set_level(LED_A_GPIO, 0);  // LED_A ��
+    gpio_set_level(LED_B_GPIO, 0);  // LED_B ��
+
+    if (mp3_) mp3_->Stop();
+    Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+    Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+    MotorPowerOff();
+    is_running_ = false;
+    current_performance_ = kPerformanceNone;
+
+    app.GetAudioService().SetOutputMuted(false);
+    if (mp3_) mp3_->SetDisableDucking(false);  // �ָ� duck
+    if (app.GetDeviceState() == kDeviceStateIdle)
+        app.GetAudioService().SetWakeWordThreshold(0.02f);
+    ESP_LOGI(TAG, "LindaShow: done");
+}
+
+/**
+ * @brief ԰�ӱ���ʵ��
+ * ���̣�LED����0016.mp3���š�С���ٶ��0~180�Ȱڶ�+LED������˸��ǰ24�룩��LEDȫ�������ֽ����������λ����л������LED����ָ�
+ */
+void CuckooStateMachine::GardenShow() {
+    if (is_running_) { ESP_LOGW(TAG, "GardenShow: already running, skip"); return; }
+
+    auto& app = Application::GetInstance();
+
+    // ����� AI ˵�������ݺ�����ͬʱ���У���ֵ���ӿ��������
+
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    MotorPowerOn();
+    ESP_LOGI(TAG, "GardenShow: start, playing 0016.mp3");
+
+    // 1. ��LEDһ��������ʾ���ݼ�����ʼ��
+    gpio_set_level(LED_A_GPIO, 1);  // LED_A ��
+    gpio_set_level(LED_B_GPIO, 1);  // LED_B ��
+    vTaskDelay(pdMS_TO_TICKS(500));  // ��0.5��
+
+    // 2. ����������bg audio������TTS��I2S��
+    if (mp3_) { mp3_->SetDisableDucking(true); int song = GARDEN_SONG_BASE + (garden_song_counter_++ % GARDEN_SONG_COUNT); ESP_LOGI(TAG, "GardenShow: playing %04d.mp3 (counter=%d)", song, (int)garden_song_counter_); show_music_index_ = song; xTaskCreate([](void* arg) { auto* s = (CuckooStateMachine*)arg; s->PlayShowMusicBg(s->show_music_index_); vTaskDelete(nullptr); }, "show_bg", 4096, this, 4, nullptr); }
+
+    // Wait for bg audio to start draining
+    int wait = 0;
+    auto& audio = Application::GetInstance().GetAudioService();
+    while (wait < 20 && is_running_ && !audio.IsBgAudioActive()) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        wait++;
+    }
+
+    // 3. LED��˸ + С���ٶ����ֱ�����ֽ���
+    unsigned long music_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    int violin_angle = SERVO_CENTER_ANGLE;
+    int violin_dir = 0;  // 0: decreasing, 1: increasing
+    int led_toggle = 0;
+    int led_state = 0;
+    bool led_final = false;
+
+    while (is_running_ && Application::GetInstance().GetAudioService().IsBgAudioActive()
+           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s safety timeout
+        unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        unsigned long elapsed = now - music_start_ms;
+
+        if (!led_final && elapsed >= 24000) {
+            gpio_set_level(LED_A_GPIO, 1);
+            gpio_set_level(LED_B_GPIO, 1);
+            led_final = true;
+        }
+
+        // ���������: ÿ50ms֡�ƶ�9��, 0~140�����Ұڶ�
+        if (violin_servo_) {
+            if (violin_dir == 0) {
+                violin_angle -= 6;
+                if (violin_angle <= 0) { violin_angle = 0; violin_dir = 1; }
+            } else {
+                violin_angle += 6;
+                if (violin_angle >= 140) { violin_angle = 140; violin_dir = 0; }
+            }
+            violin_servo_->SetAngle(violin_angle);
+        }
+        if (!led_final) {
+            led_toggle++;
+            if (led_toggle >= 6) {
+                led_toggle = 0;
+                led_state = !led_state;
+                gpio_set_level(LED_A_GPIO, led_state ? 1 : 0);
+                gpio_set_level(LED_B_GPIO, led_state ? 0 : 1);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    // 5. ���ֽ��� �� С����ƽ������ �� ���Ÿ�л���� �� LEDϨ��
+    if (violin_servo_) {
+        violin_servo_->Sweep(violin_angle, SERVO_CENTER_ANGLE, 1000);  // �ӵ�ǰ�Ƕ�ƽ���ص�90��
+    }
+
+    // ��л�����ֻ����ţ�0~4ѭ����
+    int thanks_idx = 2001 + (thanks_counter_++ % 5);
+    char thanks_file[32];
+    snprintf(thanks_file, sizeof(thanks_file), "%d.wav", thanks_idx);
+    ESP_LOGI(TAG, "GardenShow: playing thanks: %s (counter=%d)", thanks_file, (int)thanks_counter_);
+    PlayWavAsset(thanks_file);
+
+    gpio_set_level(LED_A_GPIO, 0);  // LED_A ��
+    gpio_set_level(LED_B_GPIO, 0);  // LED_B ��
+
+    if (mp3_) mp3_->Stop();
+    Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+    Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+    MotorPowerOff();
+    is_running_ = false;
+    current_performance_ = kPerformanceNone;
+
+    app.GetAudioService().SetOutputMuted(false);
+    if (mp3_) mp3_->SetDisableDucking(false);  // �ָ� duck
+    if (app.GetDeviceState() == kDeviceStateIdle)
+        app.GetAudioService().SetWakeWordThreshold(0.02f);
+    ESP_LOGI(TAG, "GardenShow: done");
+}
+
 void CuckooStateMachine::Dance() {
     if (is_running_) return;
     MotorPowerOn();
@@ -2071,23 +3416,20 @@ void CuckooStateMachine::Dance() {
     current_performance_ = kPerformanceManual;
     ESP_LOGI(TAG, "Dance start (Arduino-style)");
 
-    // M1 舞蹈电机: 正转随机1-3秒 → 停 → 反转随机1-3秒 → 循环
-    // M2 小提琴: 旋转
-    // 小提琴舵机: 90°→0°→180°→90° 扫描
+    // M1�赸���: ��ת���1-3�� �� ͣ20ms �� ��ת���1-3�� �� ͣ20ms �� ѭ��������8��
     unsigned long start = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    unsigned long end = start + 8000; // 总时长8秒
+    unsigned long end = start + 8000;
 
     int m1_stage = 0;
     unsigned long m1_timer = start;
-    int m1_rand_time = 1000 + (esp_random() % 2001); // 1-3秒
+    int m1_rand_time = 1000 + (esp_random() % 2001);
 
     while ((xTaskGetTickCount() * portTICK_PERIOD_MS) < end) {
         unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-        // M1 舞蹈电机: 正转/反转交替
         switch (m1_stage) {
             case 0:
-                if (m1_) m1_->Forward(80);
+                if (m1_) m1_->Forward(DANCE_SPEED_PERCENT);
                 if (now - m1_timer > m1_rand_time) {
                     m1_timer = now;
                     m1_stage = 1;
@@ -2102,7 +3444,7 @@ void CuckooStateMachine::Dance() {
                 }
                 break;
             case 2:
-                if (m1_) m1_->Reverse(80);
+                if (m1_) m1_->Reverse(DANCE_SPEED_PERCENT);
                 if (now - m1_timer > m1_rand_time) {
                     m1_timer = now;
                     m1_stage = 3;
@@ -2118,65 +3460,128 @@ void CuckooStateMachine::Dance() {
                 break;
         }
 
-        // M2 小提琴电机: 持续正转
-        if (m2_) m2_->Forward(60);
+ // : (board B M2 via violin_motor_)
+        if (violin_motor_) violin_motor_->Forward(VIOLIN_WARMUP_PERCENT);
 
-        // 小提琴舵机: 90→0→180→90 循环摆动
+        // С���ٶ��: 90��0��180��90 ѭ���ڶ�
         if (violin_servo_) violin_servo_->Sweep(45, 135, 1500);
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     if (m1_) m1_->Stop();
-    if (m2_) m2_->Stop();
-    if (violin_servo_) violin_servo_->SetAngle(90);
+    if (violin_motor_) violin_motor_->Stop();
+    if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
     is_running_ = false;
     MotorPowerOff();
     ESP_LOGI(TAG, "Dance finished");
 }
 
+// ============================================
+// ����ٶȲ��ԣ��赸�����תָ������
+// ����: cuckoo.motor_test (seconds: 1~60)
+// ============================================
+void CuckooStateMachine::MotorTest(int seconds) {
+    if (is_running_) return;
+    is_running_ = true;
+    MotorPowerOn();
+    ESP_LOGI(TAG, "MotorTest: M1 forward %d seconds...", seconds);
+    if (m1_) m1_->Forward(100);  // GPIOֱ��ȫ��ѹ
+    vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
+    if (m1_) m1_->Stop();
+    MotorPowerOff();
+    is_running_ = false;
+    ESP_LOGI(TAG, "MotorTest: done");
+}
 
+
+/**
+ * @brief �ۺϱ�����ڣ�MCP cuckoo.start_show����������
+ * ��Core 1����cuckoo_show���� �� StartShowTask
+ */
 void CuckooStateMachine::StartShow() {
-    // 整点/半点报时任务正在运行 → 不允许 Show 打断（AI 误调保护）
+    // ����/��㱨ʱ������������ ������ Show ���AI �������
     if (is_running_ && current_performance_ != kPerformanceNone) {
         ESP_LOGW(TAG, "Performance already running (type=%d), ignoring show request",
                  (int)current_performance_);
         return;
     }
-    // 其他情况（如闹钟）可以先停再开始
+    // ��������������壩������ͣ�ٿ�ʼ
     if (is_running_) {
         StopAll();
         vTaskDelay(pdMS_TO_TICKS(200));
     }
-    MotorPowerOn();
+
+    // ���ռ�ã���ֹ�ظ�����
     is_running_ = true;
     current_performance_ = kPerformanceManual;
-    ESP_LOGI(TAG, "Show starting: dance + waterwheel + music");
 
-    // 用独立任务线性执行，不阻塞MCP调用线程
-    xTaskCreate(
-        ShowTask,
+    // �첽ִ�У�MCP ���ߵ���������ѭ���߳��ϣ�app.Schedule����
+    // �������ѭ���������ȴ� AbortSpeaking/TTS-STOP��������
+    // ��Schedule �ص��Ų��϶ӣ�TTS-STOP ��״̬ת���޷�ִ�У���
+    // ���԰��������������ŵ� Core 1 ��̨�����
+    xTaskCreatePinnedToCore(
+        [](void* arg) {
+            auto* sm = static_cast<CuckooStateMachine*>(arg);
+            sm->StartShowTask();
+            vTaskDelete(nullptr);
+        },
         "cuckoo_show",
         4096,
         this,
-        3,
-        nullptr
+        5,
+        nullptr,
+        1
     );
 }
 
+/**
+ * @brief �ۺϱ��ݺ�̨����
+ * ���AI������������LED+ˮ�������ѡ���֡�����+С������(�첽����)���赸ѭ����LED������š��ָ�
+ */
+void CuckooStateMachine::StartShowTask() {
+    auto& app0 = Application::GetInstance();
+    // Wait for AI TTS to finish (user request 2026-07-17: avoid audio clash)
+    int waited = 0;
+    while (waited < 50 && is_running_) {
+        if (app0.GetDeviceState() != kDeviceStateSpeaking) break;
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited++;
+    }
+    if (!is_running_) return;
+    ESP_LOGI(TAG, "Show: AI done (%d ms), starting", waited * 100);
+
+    // Lock out AI during show (wake word threshold 0.99 = deaf)
+    app0.GetAudioService().SetWakeWordThreshold(0.99f);
+    app0.GetAudioService().SetOutputMuted(true);  // also mute TTS during show
+
+MotorPowerOn();
+    ESP_LOGI(TAG, "Show starting: dance + dog + music");
+
+    ShowTask(this);
+}
+
+/**
+ * @brief �ۺϱ���ִ�У�ShowTask��ڵ��õ�ʵ���߼���
+ * ��PerformanceTask����RunDanceIntro/RunDanceLoop/RunDanceFinale
+ */
 void CuckooStateMachine::ShowTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
+    sm->violin_state_.Reset();
+    sm->dog_state_.Reset();
     ESP_LOGI(TAG, "Show task started");
 
-    // 开门 + 鸟跳出
-    if (sm->bird_door_) {
-        sm->bird_door_->Forward(80);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        sm->bird_door_->Stop();
-    }
-    if (sm->bird_jump_) sm->bird_jump_->Jump(200);
+    auto& app = Application::GetInstance();
 
-    // 选音乐
+    // ����� AI�����ݺ�����ͬʱ����
+    if (sm->mp3_) sm->mp3_->SetDisableDucking(true);  // �������ֲ�����
+
+    // ====== Show start: LEDs on + water wheel ======
+    gpio_set_level(LED_A_GPIO, 1);
+    gpio_set_level(LED_B_GPIO, 1);
+        if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
+
+    // ѡ����?
     int next = (esp_random() % 12) + 1;
     if (next == sm->show_music_index_ && next < 12) {
         next++;
@@ -2186,63 +3591,61 @@ void CuckooStateMachine::ShowTask(void* arg) {
     sm->show_music_index_ = next;
     if (sm->mp3_) sm->mp3_->PlayBgMusic(next);
 
-    // 等音乐开始播放（最多等3秒）
+    // �����ֿ�ʼ���ţ�����3�룩
     int wait_start = 0;
     while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
         vTaskDelay(pdMS_TO_TICKS(500));
         wait_start++;
     }
 
-    // === M1 舞蹈电机：正转/反转交替（Arduino runMotor1 移植） ===
-    unsigned long m1_timer = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    int m1_stage = 0;
-    int m1_rand_time = 1000 + (esp_random() % 2001); // 1-3秒
+    sm->violin_state_.fwd_count = 0;
+    sm->violin_state_.rev_count = 0;
+    ESP_LOGI(TAG, "DOG-MOTOR: m3_=%p", sm->m3_);
 
-    while (sm->is_running_ && sm->mp3_->IsPlaying()) {
-        unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    // �첽��������+С���������������赸ѭ��
+    xTaskCreatePinnedToCore([](void* arg) {
+        auto* s = static_cast<CuckooStateMachine*>(arg);
+        s->RunDanceIntro();
+        vTaskDelete(nullptr);
+    }, "dance_intro", 2048, sm, 5, nullptr, 1);
 
-        switch (m1_stage) {
-            case 0:
-                if (sm->m1_) sm->m1_->Forward(80);
-                if (now - m1_timer > m1_rand_time) { m1_timer = now; m1_stage = 1; }
-                break;
-            case 1:
-                if (sm->m1_) sm->m1_->Stop();
-                if (now - m1_timer > 20) {
-                    m1_timer = now; m1_stage = 2;
-                    m1_rand_time = 1000 + (esp_random() % 2001);
-                }
-                break;
-            case 2:
-                if (sm->m1_) sm->m1_->Reverse(80);
-                if (now - m1_timer > m1_rand_time) { m1_timer = now; m1_stage = 3; }
-                break;
-            case 3:
-                if (sm->m1_) sm->m1_->Stop();
-                if (now - m1_timer > 20) {
-                    m1_timer = now; m1_stage = 0;
-                    m1_rand_time = 1000 + (esp_random() % 2001);
-                }
-                break;
-        }
+    // �赸+С�������̿�ʼ���Ϳ���/С���������У�
+    sm->RunDanceLoop();
 
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-
-    // 停止 + 关门
-    if (sm->m1_) sm->m1_->Stop();
-    if (sm->bird_door_) {
-        sm->bird_door_->Reverse(80);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        sm->bird_door_->Stop();
-    }
-
+    // ���ֽ������ָ����Ѵʺ���������
+    // ע�⣺StartShow �� AbortSpeaking ������״̬���� listening���� idle����
+    // ֱ�ӻָ����������ᵼ�»��Ѵ��� listening ״̬���� AbortSpeaking �� audio_input ����
     sm->is_running_ = false;
     sm->current_performance_ = kPerformanceNone;
+    if (sm->mp3_) sm->mp3_->SetDisableDucking(false);  // �ָ� duck
+
+    // ȷ���豸�ص� idle �ٻָ���������
+    if (app.GetDeviceState() != kDeviceStateIdle) {
+        ESP_LOGI(TAG, "Show: device not idle (state=%d), aborting to return to idle", (int)app.GetDeviceState());
+        app.AbortSpeaking(kAbortReasonNone);
+        for (int i = 0; i < 10 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    app.GetAudioService().SetOutputMuted(false);
+    ESP_LOGI(TAG, "Show: music ended, wake word threshold will be restored by clock task");
+
+    sm->RunDanceFinale();
+
+    // ====== Stop water wheel + LEDs off ======
+    if (sm->water_bird_) sm->water_bird_->Stop();
+    gpio_set_level(LED_A_GPIO, 0);
+    gpio_set_level(LED_B_GPIO, 0);
+
     sm->MotorPowerOff();
 
-    Application::GetInstance().GetAudioService().EnableVoiceProcessing(true);
-    Application::GetInstance().GetAudioService().EnableWakeWordDetection(true);
+    // �ָ����Ѵ���ֵ���豸����idle���ӿز�����ת����
+    // Fix(2026-07-19): show runs while device stays idle, no state transition,
+    // clock task never restores 0.02 -> was stuck at 0.30 (hard to wake).
+    if (app.GetDeviceState() == kDeviceStateIdle)
+        app.GetAudioService().SetWakeWordThreshold(0.02f);
+    else
+        app.GetAudioService().SetWakeWordThreshold(0.30f);
 
     ESP_LOGI(TAG, "Show task finished");
     vTaskDelete(NULL);
@@ -2252,22 +3655,39 @@ void CuckooStateMachine::PlayMusic(int index) {
     if (mp3_) mp3_->PlayBgMusic(index);
 }
 
+/**
+ * @brief ����ֹͣ���е���ͱ���
+ * - ͣ���е����M1~M4 + С���� + ˮ����
+ * - �������90��
+ * - LEDϨ��
+ * - �������ֲ�ͣ�����ǲ��Ǳ���ģʽ��
+ * - ͨ��Schedule�첽�����豸״̬ΪIdle������������
+ */
 void CuckooStateMachine::StopAll() {
     is_running_ = false;
     current_performance_ = kPerformanceNone;
     current_phase_ = kPhaseIdle;
-    if (m1_) m1_->Stop();
-    if (m2_) m2_->Stop();
-    if (m3_) m3_->Stop();
-    if (m4_) m4_->Stop();
-    if (bird_door_) bird_door_->Stop();
-    if (violin_servo_) violin_servo_->SetAngle(90);
-    if (dog_servo_) dog_servo_->SetAngle(90);
-    if (bird_jump_) bird_jump_->Set(false);
-    if (mp3_) mp3_->Stop();
+    if (m1_) m1_->Stop();  // �赸
+    if (m2_) m2_->Stop();  // ����
+    if (m3_) m3_->Stop();  // С��
+    if (m4_) m4_->Stop();  // ����
+    if (violin_motor_) violin_motor_->Stop();  // С����
+    if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
+    if (dog_servo_) dog_servo_->SetAngle(SERVO_CENTER_ANGLE);
+    if (water_bird_) water_bird_->Stop();
+    gpio_set_level(LED_A_GPIO, 0);
+    gpio_set_level(LED_B_GPIO, 0);
+    // ���� stop_all+play_url �����طŴ������
+    if (mp3_) {
+        auto& audio = Application::GetInstance().GetAudioService();
+        if (audio.IsBgAudioActive()) {
+            ESP_LOGI(TAG, "StopAll: music playing, not stopping background audio");
+        } else {
+            mp3_->Stop();
+        }
+    }
 
-    // 通过 Schedule 在主循环中安全切 idle + 恢复唤醒检测
-    // 不直接 AbortSpeaking — TTS 可能正在正常播放，让它自然结束
+    // ��ֱ�� AbortSpeaking TTS ����������������������Ȼ����
     auto state = Application::GetInstance().GetDeviceState();
     if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         Application::GetInstance().Schedule([]() {
@@ -2285,45 +3705,129 @@ void CuckooStateMachine::StopAll() {
     MotorPowerOff();
 }
 
+/**
+ * @brief ֹͣ���ֲ��ţ����������Ƶ��
+ */
+void CuckooStateMachine::StopMusic() {
+    if (mp3_) {
+        mp3_->Stop();
+        Application::GetInstance().GetAudioService().ClearBackgroundAudio();
+    }
+}
+
+/**
+ * @brief ���Ŵ򿪣�M2�����ת��ʱ�� MAIN_DOOR_TIME_MS��
+ */
 void CuckooStateMachine::OpenDoor() {
     MotorPowerOn();
-    if (bird_door_) {
-        bird_door_->Forward(80);
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        bird_door_->Stop();
+    if (m2_) {
+        m2_->Forward(MAIN_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
     }
     MotorPowerOff();
 }
 
+/**
+ * @brief ���Źرգ�M2�����ת��ʱ�� MAIN_DOOR_TIME_MS��
+ */
 void CuckooStateMachine::CloseDoor() {
     MotorPowerOn();
-    if (bird_door_) {
-        bird_door_->Reverse(80);
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        bird_door_->Stop();
+    if (m2_) {
+        m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
     }
     MotorPowerOff();
 }
 
+/**
+ * @brief С�����һ����Ծ�������ͨ��500ms + �ϵ���ȴ400ms��
+ */
 void CuckooStateMachine::BirdJumpOnce() {
     MotorPowerOn();
-    if (bird_jump_) bird_jump_->Jump(300);
-    // 脉冲结束后断电
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);
     vTaskDelay(pdMS_TO_TICKS(400));
     MotorPowerOff();
 }
 
+void CuckooStateMachine::BirdJumpPulse() {
+    MotorPowerOn();
+    if (water_bird_) water_bird_->Stop();
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);
+}
+
+/**
+ * @brief С���������Ծ��AI˵��ʱ���滰�����ࣩ
+ * ����50-200ms������ȣ���ȴ300-700ms������
+ */
+void CuckooStateMachine::BirdJumpShort() {
+    // AI˵��ʱС����滰��������Ծ��������ģʽ��
+    // ����������50-200msģ����Ȼ��Ծ��
+    // ����������ȴ300-700ms������������̫��
+    MotorPowerOn();
+    if (water_bird_) water_bird_->Stop();  // ��ͣˮ�����ͷ�GPIO39�����ͻ
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);  // �����ͨ�磬С�񵯳�
+    int pulse = 50 + (esp_random() % 151);  // ���50-200ms�������
+    vTaskDelay(pdMS_TO_TICKS(pulse));
+    gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // ������ϵ磬С�����
+    int cooldown = 300 + (esp_random() % 401);  // ���300-700ms��ȴʱ��
+    vTaskDelay(pdMS_TO_TICKS(cooldown));
+}
+
+void CuckooStateMachine::OpenBirdDoor() {
+    MotorPowerOn();
+    if (m4_) {
+        m4_->Forward(BIRD_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(BIRD_DOOR_TIME_MS));
+        m4_->Stop();
+    }
+    MotorPowerOff();
+}
+
+void CuckooStateMachine::CloseBirdDoor() {
+    MotorPowerOn();
+    if (m4_) {
+        m4_->Reverse(BIRD_DOOR_CLOSE_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(BIRD_DOOR_TIME_MS));
+        m4_->Stop();
+    }
+    MotorPowerOff();
+}
+
+void CuckooStateMachine::PlayCuckooSound() {
+    MotorPowerOn();
+    if (bell_player_) {
+        bell_player_->PlayCuckooSoundSync();
+    }
+    MotorPowerOff();
+}
+
+/**
+ * @brief ���ö���Ƕ�
+ * @param servo_id 0=С���ٶ��, 1=С��β�Ͷ��
+ * @param angle 0~180��
+ */
 void CuckooStateMachine::SetServoAngle(int servo_id, int angle) {
-    MotorPowerOn();  // 舵机需持续供电保持位置
+    MotorPowerOn();  // ȷ����Դ�ȶ�
     if (servo_id == 0 && violin_servo_) violin_servo_->SetAngle(angle);
     else if (servo_id == 1 && dog_servo_) dog_servo_->SetAngle(angle);
 }
 
+/**
+ * @brief ���õ���ٶ�
+ * @param motor_id 1=M1�赸, 2=С���ٵ��, 3=С�����, 4=���ŵ��
+ * @param speed -100~100 (����=��ת)
+ */
 void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
     if (speed != 0) MotorPowerOn();
     switch (motor_id) {
         case 1: if (m1_) m1_->SetSpeed(speed); break;
-        case 2: if (m2_) m2_->SetSpeed(speed); break;
+        case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;  // С���ٵ�� (��B M2, GPIO18/45)
         case 3: if (m3_) m3_->SetSpeed(speed); break;
         case 4: if (m4_) m4_->SetSpeed(speed); break;
         default: break;
@@ -2333,33 +3837,229 @@ void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
 
 void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
     if (speed != 0) MotorPowerOn();
-    if (bird_door_) bird_door_->SetSpeed(speed);
+    if (m4_) m4_->SetSpeed(speed);
     if (speed == 0) MotorPowerOff();
+}
+
+/**
+ * @brief �������ֲ������
+ * @param url_or_path URL�����·������ "/pcm?q=�ܽ���"��
+ * @return 0=�ɹ�, <0=ʧ��
+ * - ���AI�Ի�����CPU����
+ * - �Զ�����URL�е����ĺͿո�
+ * - ���ļ�������httpǰ׺���Զ�ƴ�Ӵ�����ַ
+ * - ���ڲ���ʱ��ͣ�ɸ��ٷ��¸�
+ */
+std::string CuckooStateMachine::CantoneseLookup(const char* word) {
+    if (music_proxy_host_.empty()) {
+        ESP_LOGW(TAG, "CantoneseLookup: proxy not configured");
+        return "";
+    }
+
+    // URL-encode the word manually for esp_http_client
+    char encoded[512];
+    char* dst = encoded;
+    const char* src = word;
+    const char* end = encoded + sizeof(encoded) - 1;
+    while (*src && dst < end) {
+        unsigned char c = (unsigned char)*src;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            *dst++ = c;
+        } else if (c == ' ') {
+            *dst++ = '%'; *dst++ = '2'; *dst++ = '0';
+        } else {
+            if (dst + 3 <= end) {
+                snprintf(dst, 4, "%%%02X", c);
+                dst += 3;
+            }
+        }
+        src++;
+    }
+    *dst = '\0';
+
+    char url[1024];
+    snprintf(url, sizeof(url), "http://%s:%d/cantonese?word=%s",
+             music_proxy_host_.c_str(), music_proxy_port_, encoded);
+    ESP_LOGI(TAG, "CantoneseLookup: GET %s", url);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.timeout_ms = 10000;
+    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
+    if (!cli) { ESP_LOGW(TAG, "CantoneseLookup: init failed"); return ""; }
+
+    esp_err_t e = esp_http_client_open(cli, 0);
+    if (e != ESP_OK) { ESP_LOGW(TAG, "CantoneseLookup: open failed %d", e); esp_http_client_cleanup(cli); return ""; }
+
+    int content_len = esp_http_client_fetch_headers(cli);
+    int status = esp_http_client_get_status_code(cli);
+    if (status != 200 || content_len <= 0) {
+        ESP_LOGW(TAG, "CantoneseLookup: HTTP %d len=%d", status, content_len);
+        esp_http_client_close(cli); esp_http_client_cleanup(cli);
+        return "";
+    }
+
+    // Read response body
+    char* resp = (char*)calloc(1, content_len + 1);
+    if (!resp) { esp_http_client_close(cli); esp_http_client_cleanup(cli); return ""; }
+
+    int total = 0;
+    while (total < content_len) {
+        int n = esp_http_client_read(cli, resp + total, content_len - total);
+        if (n <= 0) break;
+        total += n;
+    }
+    resp[total] = '\0';
+    esp_http_client_close(cli);
+    esp_http_client_cleanup(cli);
+
+    ESP_LOGI(TAG, "CantoneseLookup: got %d bytes", total);
+    std::string result(resp);
+    free(resp);
+    return result;
+}
+
+std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
+    if (music_proxy_host_.empty()) return "";
+
+    // 第1步：URL编码 —— 把中文字符转成 %XX 格式
+    // 因为 esp_http_client 底层HTTP库要求URL必须是纯ASCII
+    char encoded_path[512];
+    int ep = 0;
+    for (const char* p = url_or_path; *p && ep < (int)sizeof(encoded_path) - 4; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c > 127) {
+            ep += snprintf(encoded_path + ep, sizeof(encoded_path) - ep, "%%%02X", c);
+        } else if (c == ' ') {
+            encoded_path[ep++] = '%';
+            encoded_path[ep++] = '2';
+            encoded_path[ep++] = '0';
+        } else {
+            encoded_path[ep++] = c;
+        }
+    }
+    encoded_path[ep] = '\0';
+
+    // 第2步：修正路径 —— /opus 或 /pcms 统一改成 /pcm
+    // /pcm 返回JSON时有 Content-Length 头，能区分JSON还是音频
+    char check_path[512];
+    snprintf(check_path, sizeof(check_path), "%s", encoded_path);
+    char* opus_pos = strstr(check_path, "/opus");
+    if (opus_pos) memcpy(opus_pos, "/pcm", 4);
+    else { char* ps = strstr(check_path, "/pcms"); if (ps) { memmove(ps, "/pcm", 4); memmove(ps+4, ps+5, strlen(ps+5)+1); } }
+
+    char url[1024];
+    snprintf(url, sizeof(url), "http://%s:%d%s",
+             music_proxy_host_.c_str(), music_proxy_port_, check_path);
+    ESP_LOGI(TAG, "CheckMultiArtist: GET %s", url);
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.timeout_ms = 8000;
+    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
+    if (!cli) return "";
+
+    esp_err_t e = esp_http_client_open(cli, 0);
+    if (e != ESP_OK) { esp_http_client_cleanup(cli); return ""; }
+
+    int content_len = esp_http_client_fetch_headers(cli);
+    int status = esp_http_client_get_status_code(cli);
+    ESP_LOGI(TAG, "CheckMultiArtist: status=%d content_len=%d", status, content_len);
+
+    // 第3步：没有 Content-Length = 流式传输 = 音频（不是JSON），跳过
+    if (content_len <= 0) {
+        esp_http_client_close(cli); esp_http_client_cleanup(cli);
+        return "";
+    }
+
+    // 第4步：读第一个字节 —— JSON 以 { 开头，音频是二进制乱码
+    char first_byte = 0;
+    int peek = esp_http_client_read(cli, &first_byte, 1);
+    if (peek <= 0 || first_byte != '{') {
+        esp_http_client_close(cli); esp_http_client_cleanup(cli);
+        return "";
+    }
+
+    // 第5步：读完整个 JSON 响应体
+    char* resp = (char*)calloc(1, content_len + 1);
+    if (!resp) { esp_http_client_close(cli); esp_http_client_cleanup(cli); return ""; }
+    resp[0] = '{';
+    int total = 1;
+    while (total < content_len) {
+        int n = esp_http_client_read(cli, resp + total, content_len - total);
+        if (n <= 0) break;
+        total += n;
+    }
+    resp[total] = '\0';
+    esp_http_client_close(cli);
+    esp_http_client_cleanup(cli);
+
+    // 第6步：确认包含 multi_artist 字段后，返回JSON给AI
+    if (strstr(resp, "multi_artist")) {
+        ESP_LOGI(TAG, "CheckMultiArtist: detected multi-artist, %d bytes", total);
+        std::string result(resp);
+        free(resp);
+        return result;
+    }
+    free(resp);
+    return "";
 }
 
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
     
-    // Auto-detect format and route to right player
-    // /opus? path → PlayOpus (TCP streaming Opus)
-    // /stream? or /pcm? path → PlayUrl (HTTP MP3 download, more reliable)
-
-    // Handle full HTTP URLs
-    if (strncmp(url_or_path, "http", 4) == 0) {
-        if (strstr(url_or_path, "/opus?")) {
-            return mp3_->PlayOpus(url_or_path);
-        }
-        // /stream?, /pcm?, or any other → use PlayUrl
-        return mp3_->PlayUrl(url_or_path);
+ // ����� AI ˵������ TTS ������ͬʱ���У�PlayOpus ���Զ� duck �� 30%��
+    auto& app = Application::GetInstance();
+    auto ai_state = app.GetDeviceState();
+    if (ai_state == kDeviceStateSpeaking) {
+        ESP_LOGI(TAG, "PlayOnlineMusic: AI speaking, music will overlap (ducked)");
     }
     
-    // Relative path: construct full URL
+    // If already playing, stop old task cleanly to start new one.
+    
+    // Auto-detect format from URL path
+    // ���������URL��http��ͷ����ֱ��ʹ��
+    if (strncmp(url_or_path, "http", 4) == 0) {
+        char conv_url[1280];
+        strncpy(conv_url, url_or_path, sizeof(conv_url) - 1);
+        conv_url[sizeof(conv_url) - 1] = '\0';
+        // ���� URL �еĿո�Ϊ %20
+        for (char* p = conv_url; *p; p++) {
+            if (*p == ' ') {
+                // ���� 2 �ַ�
+                size_t tail_len = strlen(p + 1);
+                if ((size_t)(p + 3 + tail_len - conv_url) >= sizeof(conv_url)) break;
+                memmove(p + 3, p + 1, tail_len + 1);
+                p[0] = '%'; p[1] = '2'; p[2] = '0';
+            }
+        }
+        ConvertToPcmUrl(conv_url, sizeof(conv_url));
+        // ������ڲ��ţ���ͣ�ɸ��ٷ��¸�
+        if (mp3_->IsPlaying()) {
+            ESP_LOGI(TAG, "PlayOnlineMusic: stopping current music for new request");
+            mp3_->Stop();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            // �Ⱦ�PlayOpusTask�˳���is_playing_��false��
+            int wait = 0;
+            while (mp3_->IsPlaying() && wait < 100) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+                wait++;
+            }
+            // ��ձ�����Ƶbuffer��ֹǰ�����׻���
+            Application::GetInstance().GetAudioService().ClearBackgroundAudio();
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        return mp3_->PlayOpus(conv_url);
+    }
+    
+    // �����ô�����ַƴ��
     if (music_proxy_host_.empty()) {
         ESP_LOGE(TAG, "Music proxy not configured. Check DEFAULT_MUSIC_PROXY_HOST in config.h.");
         return -10;
     }
     
-    // URL-encode non-ASCII chars
+ // URL-encode non-ASCII chars (Chinese etc.), esp_http_client does not support raw Chinese URLs
     char encoded_path[1024];
     const char* src = url_or_path;
     char* dst = encoded_path;
@@ -2367,14 +4067,27 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     
     while (*src && dst < end) {
         unsigned char c = (unsigned char)*src;
+        if (c == ' ') {
+            // �ո��� HTTP request line ���Ƿָ������������
+            if (dst + 3 <= end) {
+                *dst++ = '%';
+                *dst++ = '2';
+                *dst++ = '0';
+            }
+            src++;
+            continue;
+        }
         if (c < 0x80) {
+        // ASCIIֱ�Ӹ���
             *dst++ = *src;
         } else {
+        // ��ASCII %XX ����
             int bytes = 0;
             if ((c & 0xE0) == 0xC0) bytes = 2;
             else if ((c & 0xF0) == 0xE0) bytes = 3;
             else if ((c & 0xF8) == 0xF0) bytes = 4;
             else bytes = 1;
+            
             for (int i = 0; i < bytes && src[i] && dst + 3 <= end; i++) {
                 dst += snprintf(dst, 4, "%%%02X", (unsigned char)src[i]);
             }
@@ -2385,17 +4098,37 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     }
     *dst = '\0';
     
-    char full_url[1280];
-    snprintf(full_url, sizeof(full_url), "http://%s:%d%s",
-             music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
-    
-    // Route based on path
-    if (strstr(full_url, "/opus?")) {
-        return mp3_->PlayOpus(full_url);
+    char full_url[1280];  // http:// + host + :port + encoded_path
+ // Ensure path starts with /
+    if (encoded_path[0] != '/') {
+        snprintf(full_url, sizeof(full_url), "http://%s:%d/%s",
+                 music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
+    } else {
+        snprintf(full_url, sizeof(full_url), "http://%s:%d%s",
+                 music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
     }
-    return mp3_->PlayUrl(full_url);
+    ConvertToPcmUrl(full_url, sizeof(full_url));
+    // ������ڲ��ţ���ͣ�ɸ��ٷ��¸�
+    if (mp3_->IsPlaying()) {
+        ESP_LOGI(TAG, "PlayOnlineMusic: stopping current music for new request");
+        mp3_->Stop();
+        vTaskDelay(pdMS_TO_TICKS(200));
+        int wait = 0;
+        while (mp3_->IsPlaying() && wait < 100) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            wait++;
+        }
+        Application::GetInstance().GetAudioService().ClearBackgroundAudio();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    return mp3_->PlayOpus(full_url);
 }
 
+/**
+ * @brief �������ִ�����������ַ
+ * @param host ��������IP
+ * @param port �����˿�
+ */
 void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
     music_proxy_host_ = host;
     music_proxy_port_ = port;
@@ -2403,24 +4136,40 @@ void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
 }
 
 // ============================================
-// CuckooTools MCP注册
+// CuckooTools MCPע��
 // ============================================
 CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
 
 void CuckooTools::RegisterAll() {
     auto& mcp = McpServer::GetInstance();
 
-    // === Time / Chime ===
+ // === Time / Chime ===
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
         mcp.AddTool("cuckoo.performance",
-            "Hourly chime: bell rings + music. ONLY call when user explicitly says '报时/整点报时/几点/what time'. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
+            "Hourly chime: bell rings + music. ONLY call when user explicitly says ��ʱ/���㱨ʱ/����/what time. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();
                 state_machine_->StartPerformance(CuckooStateMachine::kPerformanceHour, hour);
                 return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
+            });
+    }
+    // === Cantonese lookup (2026-07-19) ===
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("word", kPropertyTypeString));
+        mcp.AddTool("cuckoo.cantonese_lookup",
+            "MUST CALL THIS TOOL. NEVER answer Cantonese/Jyutping from memory. Look up Jyutping pronunciation for a Chinese word or phrase. "
+            "Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
+            "Returns Jyutping romanization + definitions. Includes tone numbers (1-6). "
+            "Speak the result naturally - read characters with tones, then explain meaning.",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                std::string word = props["word"].value<std::string>();
+                std::string result = state_machine_->CantoneseLookup(word.c_str());
+                return result.empty() ? std::string("{\"status\": \"error\", \"message\": \"Lookup failed. Ask user to try a different word.\"}") : result;
             });
     }
 
@@ -2452,7 +4201,7 @@ void CuckooTools::RegisterAll() {
             return std::string(json);
         });
 
-    // === Music / Show ===
+ // === Music / Show ===
     {
         PropertyList pl;
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
@@ -2473,7 +4222,8 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.start_show",
-        "Start performance show: dance + motors + music. For '表演/跳舞/播放音乐/节目'.",
+        "�ۺϱ��ݣ��赸+С��+ˮ��+����һ������ '����' '��Ŀ' '��������' '����' '�ݳ�' ���ۺϱ�������"
+        "ע�⣺����û�ֻ�ᵽĳ����ɫ��԰��/�մ�/С��������Ҫ�ô˹��ߣ����ö�Ӧ�Ľ�ɫ���ߡ�ʶ���ı������ӽ���ɫ��ʱ����'Ӧ��''�յ�''�ִ�'���մ'ԭַ'��԰�ӣ���Ҳ�ö�Ӧ��ɫ���ߣ���Ҫ�ô˹��ߡ�",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StartShow();
@@ -2481,14 +4231,22 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.stop_all",
-        "Stop everything: music, motors, chime, performance. Call this when user says '停止/停下/别放了/不要放了/关了/别唱了'. This is the ONLY tool for stopping music or performance.",
+        "Stop motors, chime, performance. Does NOT stop music - use cuckoo.stop_music to stop music.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAll();
             return std::string("{\"status\": \"stopped\"}");
         });
 
-    // === Hardware (wiring later) ===
+    mcp.AddTool("cuckoo.stop_music",
+        "Stop music playback. Call ONLY when user explicitly asks to stop the music (ͣ��/��ͣ����/��Ҫ����/�ص�). Do NOT call this for performance or alarm - use cuckoo.stop_all for those.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->StopMusic();
+            return std::string("{\"status\": \"music_stopped\"}");
+        });
+
+ // === Hardware (wiring later) ===
     mcp.AddTool("cuckoo.dance",
         "Dance routine: M1+M2 motors + violin servo.",
         PropertyList(),
@@ -2496,6 +4254,21 @@ void CuckooTools::RegisterAll() {
             state_machine_->Dance();
             return std::string("{\"status\": \"dancing\"}");
         });
+
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("seconds", kPropertyTypeInteger, 1, 60));
+        mcp.AddTool("cuckoo.motor_test",
+            "�赸����ٶȲ��ԣ���תָ��������1~60s����������Ȧ����ת�١������20/30/40������ȡƽ����",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int s = props["seconds"].value<int>();
+                state_machine_->MotorTest(s);
+                char json[64];
+                snprintf(json, sizeof(json), "{\"status\": \"ok\", \"seconds\": %d}", s);
+                return std::string(json);
+            });
+    }
 
     mcp.AddTool("cuckoo.open_door",
         "Open bird door motor.",
@@ -2595,37 +4368,87 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.stop_alarm",
-        "Stop a ringing ALARM only. For '关闹钟/别响了'. NOT for stopping music/performance - use cuckoo.stop_all for that.",
+        "Stop a ringing ALARM only. For ������/ͣ����. NOT for stopping music/performance - use cuckoo.stop_all for that.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAlarm();
             return std::string("{\"status\": \"alarm_stopped\"}");
         });
 
-    // === Status ===
-    mcp.AddTool("cuckoo.get_status",
-        "Get device status: running, idle.",
+    // === Quiet Mode ===
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("mode", kPropertyTypeInteger, 0, 3));
+        pl.AddProperty(Property("start_hour", kPropertyTypeInteger, 0, 23));
+        pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
+        mcp.AddTool("cuckoo.set_quiet_mode",
+            "Set chime quiet mode. 0=ȫ�쾲��(������ʱ), 1=ȫ�챨ʱ, 2=��ھ���(LDR����), 3=ָ��ʱ��ξ���(start_hour~end_hour����). "
+            "Default start_hour=22 end_hour=6.",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                int m = props["mode"].value<int>();
+                int sh = props["start_hour"].value<int>();
+                int eh = props["end_hour"].value<int>();
+                state_machine_->quiet_mode_ = m;
+                state_machine_->quiet_start_ = sh;
+                state_machine_->quiet_end_ = eh;
+                state_machine_->SaveQuietMode();
+                char json[128];
+                snprintf(json, sizeof(json),
+                    "{\"status\": \"ok\", \"mode\": %d, \"start_hour\": %d, \"end_hour\": %d}", m, sh, eh);
+                return std::string(json);
+            });
+    }
+
+    mcp.AddTool("cuckoo.get_quiet_mode",
+        "Get current chime quiet mode: mode(0~3), start_hour, end_hour. "
+        "Return JSON, AI must translate to user-friendly description.",
         PropertyList(),
-        [this](const PropertyList& props) -> ReturnValue {
-            char json[128];
+        [this](const PropertyList&) -> ReturnValue {
+            int m = state_machine_->quiet_mode_.load();
+            int sh = state_machine_->quiet_start_.load();
+            int eh = state_machine_->quiet_end_.load();
+            char json[192];
             snprintf(json, sizeof(json),
-                "{\"running\": %s}", state_machine_->IsRunning() ? "true" : "false");
+                "{\"mode\": %d, \"start_hour\": %d, \"end_hour\": %d, "
+                "\"desc\": \"mode=%d: %s\"}",
+                m, sh, eh, m,
+                m == 0 ? "ȫ�쾲��" : m == 1 ? "ȫ�챨ʱ" :
+                m == 2 ? "��ھ���(LDR)" : "ʱ��ξ���");
             return std::string(json);
         });
 
-    // === Online Music ===
-    // Proxy is auto-configured at boot from config.h (DEFAULT_MUSIC_PROXY_HOST/PORT).
-    // set_music_proxy is a no-op stub — always succeeds instantly, no TCP check.
-    // This exists only to satisfy AI's habit of calling it before play_url.
+    // === 状态查询 ===
+    mcp.AddTool("cuckoo.get_status",
+        "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放，缓冲区健康）。\n"
+        "【重要】如果 music_playing 是 true，说明音乐正在正常播放，不要建议重启或说播放失败。"
+        "如果用户要换歌，直接调 cuckoo.play_url 传新歌名，系统会自动停掉当前歌曲。"
+        "如果用户只是说停歌，调用 cuckoo.stop_music。只有用户要全部停止才用 stop_all。",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            auto& audio = Application::GetInstance().GetAudioService();
+            bool music_on = audio.IsBgAudioActive();
+            char json[192];
+            snprintf(json, sizeof(json),
+                "{\"running\": %s, \"music_playing\": %s}",
+                state_machine_->IsRunning() ? "true" : "false",
+                music_on ? "true" : "false");
+            return std::string(json);
+        });
+
+ // === 在线音乐 ===
+ // 音乐代理在启动时自动配置（config.h 里的 DEFAULT_MUSIC_PROXY_HOST/PORT）。
+ // set_music_proxy 是空操作占位工具，永远瞬间成功，不做TCP连接检查。
+ // 这个工具只是为了满足 AI 在调用 play_url 之前先调 set_music_proxy 的习惯。
     {
         PropertyList pl;
         pl.AddProperty(Property("host", kPropertyTypeString));
         pl.AddProperty(Property("port", kPropertyTypeInteger, 8765, 8765));
         mcp.AddTool("cuckoo.set_music_proxy",
-            "Music proxy setup (always auto-configured). Returns instantly. After calling this, you MUST call cuckoo.play_url to actually play music.",
+            "音乐代理设置（开机自动配置，无需手动调）。调用后立即返回成功，请接着调用 cuckoo.play_url 才能真正播歌。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
-                // No-op: proxy is auto-set at boot. Always succeed instantly.
+ // No-op: proxy is auto-set at boot. Always succeed instantly.
                 return std::string("{\"status\":\"ok\",\"hint\":\"Proxy ready. Now call cuckoo.play_url to play music.\"}");
             });
     }
@@ -2634,60 +4457,129 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("url", kPropertyTypeString));
         mcp.AddTool("cuckoo.play_url",
-            "🔴 MUST call this tool when user asks to play any song, music, or audio. "
-            "Trigger keywords: 播放 放歌 来一首 我想听 点歌 唱一首 play listen song music. "
-            "Set url='/opus?q=SONG+SINGER' (URL-encode Chinese). "
-            "This is the ONLY way to play online music — DO NOT just reply with text saying you'll play it. "
-            "Skip only for TF card local tracks (use cuckoo.play_music track_no 1-12). "
-            "Example: user says '播放月亮代表我的心' → call play_url('/opus?q=%E6%9C%88%E4%BA%AE%E4%BB%A3%E8%A1%A8%E6%88%91%E7%9A%84%E5%BF%83')",
+            "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【最重要规则】只传歌名本身，绝不要自作主张加歌手名！系统会自动检测多版本并询问用户。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：用户说'放酒干倘卖无'→调用play_url(\'/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0\')。\n""本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 std::string url = props["url"].value<std::string>();
+                // 先检查多版本：如果服务器返回歌手列表JSON，直接返回给AI念（不播歌）
+                std::string multi = state_machine_->CheckMultiArtist(url.c_str());
+                if (!multi.empty()) {
+                return multi;  // 歌手列表JSON返回给AI，AI自动念出来让用户选
+                }
                 int ret = state_machine_->PlayOnlineMusic(url.c_str());
                 if (ret >= 0) {
                     return std::string("{\"status\": \"ok\", \"playing\": true}");
                 } else {
-                    char json[64];
+                    char json[160];
                     snprintf(json, sizeof(json),
-                        "{\"status\": \"error\", \"code\": %d}", ret);
+                        "{\"status\": \"error\", \"code\": %d, \"hint\": \"Playback failed. You may retry.\"}", ret);
                     return std::string(json);
                 }
             });
     }
+    // === ��ɫ���� ===
+    mcp.AddTool("cuckoo.dog_show",
+        "С���������ݣ����š�С���ܳ���������һ����ҡͷ����10�롢�ٽ�һ�����˻ء����š����ú�ֻ˵һ���̵Ļ�����Ҫ��˵��"
+        "���û�˵ 'С��' 'С����' 'С��С��' '��ɯ' '��ɯ��' '��ɯ������'  ʱ���ô˹��ߡ�"
+        "Dog show: call when user asks about dog/puppy/Lisa. Keep response very brief - one short sentence only.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
+            state_machine_->DogShow();
+            return std::string("{\"status\": \"dog_show_started\"}");
+        });
+
+    mcp.AddTool("cuckoo.linda_show",
+        "�մ���ݣ���������0015���赸�ߵ������ת��ֱ�����ֽ�����"
+        "���û�˵ '�մ�' '�մ���' '�մ�������' '�մ��մ�' '�յ�' 'Ӧ��' '�ִ�' '����' '������' '�赸' ʱ���ô˹��ߡ�"
+        "Linda show: call when user asks about Linda or dancing.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
+            state_machine_->StartLindaShow();
+            return std::string("{\"status\": \"linda_show_started\"}");
+        });
+
+    mcp.AddTool("cuckoo.garden_show",
+        "԰�ӱ��ݣ���������0016��С���ٶ������ת��ֱ�����ֽ�����"
+        "���û�˵ '԰��' '԰����' '԰��������' '԰��԰��' 'ԭ��' 'ԭ����' 'ԭַ' 'ԭַ��' '������' '��С����' ʱ���ô˹��ߡ�"
+        "Garden show: call when user asks about Garden/ԭ��/violin.",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
+            state_machine_->StartGardenShow();
+            return std::string("{\"status\": \"garden_show_started\"}");
+        });
+
+    // === Hourly Performance Toggle ===
+    {
+        PropertyList pl;
+        pl.AddProperty(Property("enabled", kPropertyTypeBoolean, true));
+        mcp.AddTool("cuckoo.set_hourly_performance",
+            "Enable/disable full performance after hourly bell. Default on. When disabled bell only.",
+            pl,
+            [this](const PropertyList& props) -> ReturnValue {
+                bool en = props["enabled"].value<bool>();
+                state_machine_->hourly_perf_.store(en);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"performance\":%s}", en ? "enabled" : "disabled");
+                return std::string(buf);
+            });
+    }
+    
+    mcp.AddTool("cuckoo.get_hourly_performance",
+        "Check if hourly chime performance is currently enabled.",
+        PropertyList(),
+        [this](const PropertyList&) -> ReturnValue {
+            bool en = state_machine_->hourly_perf_.load();
+            char buf[64];
+            snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"performance\":%s}", en ? "enabled" : "disabled");
+            return std::string(buf);
+        });
+
 }
 
 // ============================================
-// 钟控 FreeRTOS 任务 (Core 1)
+// �ӿ� FreeRTOS ���� (Core 1)
+//
+// ����: 250ms sub-tick, 1s per tick
+// ְ��:
+// - NTPʱ��ͬ����60s/300s����У׼��
+// - �豸״̬��أ�idle?�����Զ��������ţ�AI˵��ʱС�������Ծ��
+// - ���Ѵ���ֵ��̬�������Ի���0.3����ֹ�󴥷���idleʱ0.02��������
+// - ��Ƶʱ���ˢ�£�ÿ10s��ֹI2S��Դ�����رգ�
+// - ����/��㱨ʱ����
+// - ���Ӽ��
+// - RTC������־��ÿ30s���浽�������ڴ棩
 // ============================================
 void cuckoo_clock_task(void* params) {
-    ESP_LOGI(TAG, "Cuckoo clock task started on core %d", xPortGetCoreID());
+    // ������ȡ����ԭ�� + RTC ����
+    ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
+             esp_reset_reason(), esp_reset_reason());
+    if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
+        ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
+                 (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
+                 (int)rtc_crash_log.music_active, (int)rtc_crash_log.free_heap);
+    }
+    rtc_crash_log.magic = 0xCAFEBABE;
+
+    ESP_LOGI(TAG, "Cuckoo clock task started on core %d, stack=%d",
+             xPortGetCoreID(), (int)uxTaskGetStackHighWaterMark(NULL));
 
     auto* sm = static_cast<CuckooStateMachine*>(params);
 
-    // 关掉 WiFi 省电模式的尝试
-    // 小智框架在 idle/activating/speaking->idle 时都会重设省电为 LOW_POWER，
-    // 所以这里每隔 30 秒强制关一次
-    // ⚠️ 立即刷新音频时间戳（AudioService::Start 在 ~100ms 后启动电源定时器，
-    //    第一次检查在 ~1100ms，不刷新的话 epoch 时间戳会让 I2S 立即被关闭）
+    // ����ʱ����ˢ����Ƶʱ�������ֹ�����ڼ�I2S���Ź���ʱ
     auto& as = Application::GetInstance().GetAudioService();
     as.RefreshOutputTimestamp();
     as.RefreshInputTimestamp();
-    for (int i = 0; i < 3; i++) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        esp_wifi_set_ps(WIFI_PS_NONE);
-        as.RefreshOutputTimestamp();
-        as.RefreshInputTimestamp();
-        ESP_LOGI(TAG, "Forced WiFi power save off (attempt %d/3)", i + 1);
-    }
 
-    // 内部秒数计数器（不依赖真实 RTC，可通过 cuckoo.set_time MCP 工具校准）
+    // ������ WiFi ������ NTP gettimeofday ���ɻ�ȡ��ǰʱ��
 
-    // 启动时尝试从 ESP32 系统时间（WiFi NTP）自动同步
-    // 开机后 WiFi 已连接 NTP，gettimeofday 即可获取当前时间
+    // ������ WiFi ������ NTP gettimeofday ���ɻ�ȡ��ǰʱ��
     {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
-        if (tv.tv_sec > 1000000000) {  // 2001年以后，说明 NTP 已同步
+        if (tv.tv_sec > 1000000000) {  // 2001���Ժ�˵�� NTP ��ͬ��
             struct tm timeinfo;
             localtime_r(&tv.tv_sec, &timeinfo);
             sm->current_hour_ = timeinfo.tm_hour;
@@ -2695,32 +4587,91 @@ void cuckoo_clock_task(void* params) {
             sm->current_sec_ = timeinfo.tm_sec;
             sm->time_set_ = true;
             ESP_LOGI(TAG, "Auto-synced clock from NTP: %02d:%02d:%02d",
-                     sm->current_hour_, sm->current_min_, sm->current_sec_);
+                     sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
         } else {
             ESP_LOGW(TAG, "NTP not synced yet, internal clock waiting for cuckoo.set_time");
         }
     }
 
-    // 设置默认音乐代理地址（来自 config.h，编译时固定）
+    // ����Ĭ�����ִ�����ַ������ config.h ����ʱ�̶���
     sm->SetMusicProxy(DEFAULT_MUSIC_PROXY_HOST, DEFAULT_MUSIC_PROXY_PORT);
 
-    uint32_t tick_sec = 0;
+    // �� NVS �����ѱ��������;���ģʽ
+    sm->LoadAlarmsFromNvs();
+    sm->LoadQuietMode();
 
+uint32_t tick_sec = 0;
+
+ // TODO(#22): ��1����ѯ��Ϊ�¼�����:
+ // - ע�� OnDeviceStateChanged �ص����� idle/active ת��
+ // - ��������ʱ����NTPͬ������tick_sec����
+ // - ����Core 1�󲿷�ʱ���������ʡ��
+    uint32_t sub_tick = 0;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        tick_sec++;
+        vTaskDelay(pdMS_TO_TICKS(250));
+        sub_tick++;
 
-        // 检测设备从idle唤醒（用户唤醒AI），记录时间戳用于防误触发
+        // ����豸��idle�����û�����AI����¼ʱ������ڷ��󴥷�
         {
             auto dev_state = (int)Application::GetInstance().GetDeviceState();
             if (sm->prev_device_state_ == (int)kDeviceStateIdle && dev_state != (int)kDeviceStateIdle) {
                 sm->last_idle_exit_us_ = esp_timer_get_time();
+                ESP_LOGI(TAG, "Device woke up �� opening bird door");
+                sm->OpenBirdDoor();
+
+                // �Ի�����߻��Ѵ���ֵ��0.3������ֹ�󴥷��������ڼ䲻�裬��Show�Լ����ƣ�
+                if (!sm->IsRunning())
+                    Application::GetInstance().GetAudioService().SetWakeWordThreshold(0.3f);
+
+                // �Ի��лָ���׼��˷����棨30dB�������� AEC ���������Ŵ�
+                Application::GetInstance().GetAudioService().SetInputGain(30.0f);
+            } else if (sm->prev_device_state_ != (int)kDeviceStateIdle && dev_state == (int)kDeviceStateIdle) {
+                ESP_LOGI(TAG, "Device sleeping �� closing bird door");
+                sm->CloseBirdDoor();
+
+                // idleʱ�ָ�����ֵ��0.02�������������������ڼ�/�Ÿ��ڼ䲻����
+                // NOTE(2026-07-19): threshold restore moved to the safety-net check below
+
+                // idleʱ������˷����棨37.5dB����������װλ������
+                Application::GetInstance().GetAudioService().SetInputGain(37.5f);
             }
             sm->prev_device_state_ = dev_state;
+
+            // Safety net (2026-07-19): whenever device is in quiet idle (no show,
+            // no music), enforce sensitive wake threshold 0.02. Fixes paths that
+            // leaked 0.30: session ended during music, show finished while idle, etc.
+            // Flag ensures we only set once per quiet-idle entry (no log spam).
+            static bool idle_thresh_applied = false;
+            bool idle_quiet = (dev_state == (int)kDeviceStateIdle) && !sm->IsRunning() &&
+                              !Application::GetInstance().GetAudioService().IsBgAudioActive();
+            if (idle_quiet) {
+                if (!idle_thresh_applied) {
+                    Application::GetInstance().GetAudioService().SetWakeWordThreshold(0.02f);
+                    idle_thresh_applied = true;
+                }
+            } else {
+                idle_thresh_applied = false;
+            }
+
+            // AI˵��ʱС����滰��������Ծ�����ڱ��������ޱ�������ʱ��
+            if (dev_state == (int)kDeviceStateSpeaking && !sm->IsRunning() && !Application::GetInstance().GetAudioService().IsBgAudioActive()) {
+                // �����Ƶ�����Ծ�ȣ�300ms ������� = ����˵����
+                int64_t ms_since_output = Application::GetInstance().GetAudioService().MsSinceLastOutput();
+                if (ms_since_output < 300) {
+                    // ����˵����������������50-200ms�����
+                    sm->BirdJumpShort();
+                }
+                // ��˵��ʱ����
+            }
         }
 
-        // 每天同步一次 NTP 时间（86400秒），防止内部时钟漂移
-        if (tick_sec % 86400 == 0) {
+        // === 每秒����（sub_tick % 4 == 0�?===
+        if (sub_tick % 4 == 0) {
+            tick_sec = sub_tick / 4;
+
+        // NTPͬ����δͬ��ʱÿ60�����ԣ�ͬ����ÿ300��У׼һ��
+        // Ƶ��У׼��������ʱ���ۻ�Ư��
+        if (!sm->time_set_ ? (tick_sec % 60 == 0) : (tick_sec % 300 == 0)) {
             struct timeval tv;
             gettimeofday(&tv, nullptr);
             if (tv.tv_sec > 1000000000) {
@@ -2729,55 +4680,85 @@ void cuckoo_clock_task(void* params) {
                 sm->current_hour_ = timeinfo.tm_hour;
                 sm->current_min_ = timeinfo.tm_min;
                 sm->current_sec_ = timeinfo.tm_sec;
-                ESP_LOGI(TAG, "Daily NTP sync: %02d:%02d:%02d",
-                         sm->current_hour_, sm->current_min_, sm->current_sec_);
+                sm->time_set_ = true;
+                ESP_LOGI(TAG, "NTP sync: %02d:%02d:%02d",
+                         sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
+            } else {
+                ESP_LOGW(TAG, "NTP not synced yet, will retry in 60s");
             }
         }
 
-        // 每 30 秒强制关 WiFi 省电（防止框架重新打开）
+        // WiFiʡ����CuckooBoard::SetPowerSaveLevel���ش���
+        // �����ֲ���ʱ����LOW_POWER��
+
+ // ÿ30�뱣�������־��RTC�������ڴ棨RTC�ڿ��Ź���λ���Ա�����
         if (tick_sec % 30 == 0) {
-            esp_wifi_set_ps(WIFI_PS_NONE);
+            auto& app = Application::GetInstance();
+            rtc_crash_log.tick_sec = tick_sec;
+            rtc_crash_log.dev_state = (uint8_t)app.GetDeviceState();
+            rtc_crash_log.music_active = (uint8_t)app.GetAudioService().IsBgAudioActive();
+            rtc_crash_log.free_heap = esp_get_free_heap_size();
         }
 
-        // 每 10 秒刷新音频芯片的活跃时间戳，防止电源管理超时关闭 I2S
-        // （音频电源管理会在输入/输出空闲 15 秒后关闭 I2S，导致唤醒/喇叭失效）
+ // ÿ60������+ջˮλ�����ڱ������
+        if (tick_sec % 60 == 0) {
+            ESP_LOGI(TAG, "Heartbeat t=%ds stack_hwm=%d free_heap=%d",
+                     (int)tick_sec, (int)uxTaskGetStackHighWaterMark(NULL),
+                     (int)esp_get_free_heap_size());
+        }
+
+    // ��Ƶ��Դ������������/������� 15 ���ر� I2S ���»���ʧЧ
         if (tick_sec % 10 == 0) {
             auto& as = Application::GetInstance().GetAudioService();
             as.RefreshOutputTimestamp();
             as.RefreshInputTimestamp();
+            // ��ȡ�����������ҹ��ģʽ
+            sm->is_dark_ = sm->CheckDark();
         }
 
-        // 如果时间已通过 MCP 设置，用内部时间
+        // ���ʱ����ͨ�� NTP �� MCP ���ã����ڲ�ʱ��
         if (sm->time_set_) {
-            // 内部时钟每秒递增
-            sm->current_sec_++;
-            if (sm->current_sec_ >= 60) {
-                sm->current_sec_ = 0;
-                sm->current_min_++;
-                if (sm->current_min_ >= 60) {
-                    sm->current_min_ = 0;
-                    sm->current_hour_ = (sm->current_hour_ + 1) % 24;
+            // NTP��ͬ��ʱ��ϵͳʱ�䣬��������ʱ��Ư��
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            if (tv.tv_sec > 1000000000) {
+                struct tm timeinfo;
+                localtime_r(&tv.tv_sec, &timeinfo);
+                sm->current_hour_ = timeinfo.tm_hour;
+                sm->current_min_ = timeinfo.tm_min;
+                sm->current_sec_ = timeinfo.tm_sec;
+            } else {
+                // NTPδͬ������MCP���ʱ�䣩�����˵�����ʱ�ӵ���
+                sm->current_sec_++;
+                if (sm->current_sec_ >= 60) {
+                    sm->current_sec_ = 0;
+                    sm->current_min_++;
+                    if (sm->current_min_ >= 60) {
+                        sm->current_min_ = 0;
+                        sm->current_hour_ = (sm->current_hour_ + 1) % 24;
+                    }
                 }
             }
 
-            // 整点和半点检查
+            // ����Ͱ����
             int h = sm->current_hour_;
             int m = sm->current_min_;
 
-            // 整点报时（每分钟 == 0 时触发，用 NeedHourlyChime 防重复）
+        // ���㱨ʱÿ���� == 0 ʱ�������� NeedHourlyChime ���ظ���
             if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
                 ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
                 sm->CheckTime(h, m, sm->is_dark_);
             }
-            // 半点报时（每分钟 == 30 时触发，用 NeedHalfHourlyChime 防重复）
+        // ��㱨ʱÿ���� == 30 ʱ�������� NeedHalfHourlyChime ���ظ���
             else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
                 ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
-            // 闹钟检查（每秒检查一次）
+            // �����飨ÿ����һ�Σ�
             sm->CheckAlarms(h, m, sm->current_sec_);
         }
-        // Note: NTP sync handled at startup + daily tick_sec % 86400 above
+        }  // sub_tick >= 4 guard
+ // ע��NTPͬ��������ʱ������ÿ��tick_sec%86400У׼
     }
 }
