@@ -19,7 +19,7 @@ CuckooBoxAudioCodec::CuckooBoxAudioCodec(void* i2c_master_handle, int input_samp
     input_channels_ = input_reference_ ? 2 : 1;
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 30;
+    input_gain_ = 37.5;  // 最高增益补偿麦克风安装位置受限
 
     // EN pin: module power enable
     if (en_pin_ != GPIO_NUM_NC) {
@@ -86,6 +86,10 @@ CuckooBoxAudioCodec::CuckooBoxAudioCodec(void* i2c_master_handle, int input_samp
     es7210_cfg.mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2;
     in_codec_if_ = es7210_codec_new(&es7210_cfg);
     assert(in_codec_if_ != NULL);
+
+    // 麦克风安装位置受限，拉满 ADC 增益补偿收音不足
+    in_codec_if_->set_mic_gain(in_codec_if_, 37.5f);
+    ESP_LOGI(TAG, "ES7210 mic gain set to 37.5 dB");
 
     dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
     dev_cfg.codec_if = in_codec_if_;
@@ -241,7 +245,7 @@ void CuckooBoxAudioCodec::EnableInput(bool enable) {
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_close(input_dev_));
         // 不自动断电: 唤醒词需要模块在线
     }
     AudioCodec::EnableInput(enable);
@@ -264,7 +268,7 @@ void CuckooBoxAudioCodec::EnableOutput(bool enable) {
         ESP_ERROR_CHECK(esp_codec_dev_open(output_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(output_dev_, output_volume_));
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_close(output_dev_));
         // 不自动断电: 唤醒词需要模块在线
     }
     AudioCodec::EnableOutput(enable);

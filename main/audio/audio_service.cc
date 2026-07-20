@@ -404,7 +404,11 @@ void AudioService::OpusCodecTask() {
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
 
-            SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
+            int sample_rate = packet->sample_rate;
+            if (sample_rate > codec_->output_sample_rate()) {
+                sample_rate = codec_->output_sample_rate();
+            }
+            SetDecodeSampleRate(sample_rate, packet->frame_duration);
             if (opus_decoder_ != nullptr) {
                 task->pcm.resize(decoder_frame_size_);
                 esp_audio_dec_in_raw_t raw = {
@@ -916,6 +920,7 @@ void AudioService::SetBackgroundAudioGain(float gain) {
             // or restoring 0.3→1.0) must NOT discard buffered data.
             std::lock_guard<std::mutex> lock(bg_audio_mutex_);
             bg_audio_read_pos_ = bg_audio_write_pos_;
+            bg_audio_gain_ = gain;  // 同步初始增益，确保后续淡入生效
         }
     }
 }

@@ -144,6 +144,12 @@ private:
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
+    // Listening timing diagnostics
+    int64_t listening_start_us_ = 0;   // monotonic us when entering listening
+    int64_t first_server_msg_us_ = 0;  // first JSON message from server after listening
+    int64_t first_audio_pkt_us_ = 0;   // first audio packet from server after listening
+    bool listening_diag_logged_ = false;  // one-shot log when first server msg arrives
+
 
     // Event handlers
     void HandleStateChangedEvent();

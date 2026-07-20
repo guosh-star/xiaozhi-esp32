@@ -74,8 +74,10 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
     afe_config->afe_perferred_core = 1;
-    afe_config->afe_perferred_priority = 1;
+    afe_config->afe_perferred_priority = 2;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
+    afe_config->wakenet_mode = DET_MODE_2CH_95;  // 激进模式，提高唤醒灵敏度
+    afe_config->afe_linear_gain = 4.0f;           // 4x增益放大输入信号，补偿麦克风安装位置受限
     
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
@@ -84,7 +86,7 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
         auto this_ = (AfeWakeWord*)arg;
         this_->AudioDetectionTask();
         vTaskDelete(NULL);
-    }, "audio_detection", 4096, this, 3, nullptr);
+    }, "audio_detection", 4096, this, 5, nullptr);
 
     return true;
 }

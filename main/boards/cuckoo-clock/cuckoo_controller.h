@@ -1,4 +1,4 @@
-#ifndef __CUCKOO_CONTROLLER_H__
+﻿#ifndef __CUCKOO_CONTROLLER_H__
 #define __CUCKOO_CONTROLLER_H__
 
 #include "mcp_server.h"
@@ -7,8 +7,8 @@
 #include <driver/gpio.h>
 #include <driver/ledc.h>
 #include <driver/i2c_master.h>
-#include <driver/gpio.h>
 #include <esp_timer.h>
+#include <esp_adc/adc_oneshot.h>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -24,14 +24,14 @@
 #include <decoder/esp_audio_dec.h>
 #include <decoder/impl/esp_mp3_dec.h>
 
-// 布谷鸟唤醒声音数�?
+// 布谷鸟唤醒声音数据
 #include "cuckoo_wake_sound.h"
 
 // OGG/Opus demuxer for native decode pipeline
 #include "ogg_demuxer.h"
 
 // ============================================
-// 布谷鸟钟外设控制�?
+// 布谷鸟钟外设控制器
 // ============================================
 
 /**
@@ -43,60 +43,55 @@
  *   - 构造函数: Motor(in1, in2, ch1, ch2)  // ch1=AIN1的LEDC, ch2=AIN2的LEDC
  */
 class Motor {
-public:
-    enum DriverType { kTB6612, kDRV8833 };
-
 private:
-    gpio_num_t pwm_pin_;
     gpio_num_t in1_pin_;
     gpio_num_t in2_pin_;
-    int speed_;       // 0-100
-    bool reverse_;
+    bool use_pwm_;
+    // PWM mode fields
     ledc_channel_t ledc_channel_;
-    ledc_channel_t ledc_channel2_;  // DRV8833 专用: AIN2 的 PWM 通道
-    DriverType driver_type_;
+    ledc_channel_t ledc_channel2_;
+    ledc_timer_t ledc_timer_;
+    ledc_mode_t speed_mode_;
+    uint32_t max_duty_;  // depends on timer resolution (255 for 8-bit, 1023 for 10-bit)
 
 public:
-    // TB6612 构造: pwm_pin + in1/in2方向脚 + 1个LEDC通道
-    Motor(gpio_num_t pwm_pin, gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t channel);
-    // DRV8833 构造: in1/in2均为PWM脚 + 2个LEDC通道
-    Motor(gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t ch1, ledc_channel_t ch2);
-    void SetSpeed(int speed);       // 0=停止, 1-100=正转, -1~-100=反转
+    // GPIO 直驱模式（水车、舞蹈、大门、小提琴）
+    Motor(gpio_num_t in1_pin, gpio_num_t in2_pin);
+    // PWM 模式（鸟门、小狗）— 保留旧接口
+    Motor(gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t ch1, ledc_channel_t ch2,
+          ledc_mode_t speed_mode = LEDC_LOW_SPEED_MODE);
+    Motor(gpio_num_t in1_pin, gpio_num_t in2_pin, ledc_channel_t ch1, ledc_channel_t ch2,
+          ledc_timer_t timer, ledc_mode_t speed_mode = LEDC_LOW_SPEED_MODE);
+    void SetSpeed(int speed);
     void Stop();
-    void Forward(int speed = 80);
-    void Reverse(int speed = 80);
+    void Forward(int speed = 100);
+    void Reverse(int speed = 100);
 };
 
 /**
  * SG90 舵机封装
- * 使用 PWM 控制�?0Hz�?.5-2.5ms 脉冲
+ * 使用 PWM 控制，50Hz，0.5-2.5ms 脉冲
  */
 class Servo {
 private:
     gpio_num_t pin_;
-    int angle_;       // 0-180�?
+    int angle_;       // 0-180度
     ledc_channel_t ledc_channel_;
+    ledc_mode_t speed_mode_;  // LOW_SPEED or HIGH_SPEED
 
 public:
-    Servo(gpio_num_t pin, ledc_channel_t channel);
-    void SetAngle(int angle);       // 0-180�?
+    Servo(gpio_num_t pin, ledc_channel_t channel,
+          ledc_mode_t speed_mode = LEDC_LOW_SPEED_MODE);
+    void SetAngle(int angle);       // 0-180
     int GetAngle() { return angle_; }
     void Sweep(int from, int to, int duration_ms = 500);  // 渐进摆动
 };
 
 /**
- * 小鸟跳跃电磁铁控�?
+ * 板C M2 水车+鸟跳 (通过 DRV8833 单向独立控制，原 BirdJump 类已废弃)
  */
-class BirdJump {
-private:
-    gpio_num_t gpio_;
-    bool active_;
-
-public:
-    BirdJump(gpio_num_t gpio);
-    void Jump(int duration_ms = 200);  // 弹跳一�?
-    void Set(bool on);
-};
+// BirdJump 类已移除，改为 Motor 类控制 (DRV8833 IN2=HIGH -> 鸟跳)
+// 详见 cuckoo_controller.cc 中 water_bird_->SetSpeed(-100) 实现
 
 
 class BellSoundPlayer {
@@ -104,25 +99,30 @@ public:
     BellSoundPlayer() = default;
     ~BellSoundPlayer() = default;
 
-    // 初始化总是成功（复�?AI 音频系统�?
+    // 初始化总是成功（复用 AI 音频系统）
     bool Init() { return true; }
 
     // 播放布谷鸟叫声（同步，阻塞直到播放完成）
     void PlayCuckooSoundSync();
     void PlayBellSoundSync();
 
-    // 验证初始化状�?
+    // 播放布谷鸟叫声（异步，新任务非阻塞，与电磁铁同步）
+    void PlayCuckooSoundAsync();
+
+    // 验证初始化状态
     bool IsInitialized() { return true; }
 };
 
 /**
  * PCF8563 RTC 驱动 (I2C)
+ * 当前未使用（时间通过 NTP 同步），保留接口备用
  */
 
 /**
- * MP3 软件解码播放�?
- * �?assets 分区读取 MP3 文件 �?esp_mp3_dec 软解�?�?AudioService::OutputRawPcm �?I2S 扬声�?
- * 内部使用 FreeRTOS 任务异步播放，MCP 调用不会阻塞
+ * MP3 软件解码播放器
+ * 从 assets 分区读取 MP3 文件，用 esp_mp3_dec 软解码，
+ * 通过 AudioService::OutputRawPcm 输出到 I2S 扬声器。
+ * 内部使用 FreeRTOS 任务异步播放，MCP 调用不会阻塞。
  */
 class Mp3Player {
 private:
@@ -132,14 +132,15 @@ private:
     std::atomic<bool> stop_requested_{false};
     std::atomic<float> ducking_gain_{1.0f};     // 1.0=normal, 0.0=silent (smooth fade)
     std::atomic<int64_t> ducking_start_us_{0};  // when fading started
+    std::atomic<bool> disable_ducking_{false}; // 表演音乐不闪避 AI 语音
 
     // 播放任务
     TaskHandle_t play_task_ = nullptr;
-    int pending_track_ = 0;       // 待播放曲目编�?1-13)�?=无待�?
+    int pending_track_ = 0;       // 待播放曲目编号(1-13)，0=无待播
     int pending_bell_hour_ = 0;   // 待播钟声重复次数
 
-    // 解码缓冲�?
-    static constexpr size_t kInputBufSize = 8192;      // MP3 帧最大大�?
+    // 解码缓冲区
+    static constexpr size_t kInputBufSize = 8192;      // MP3 帧最大大小
     static constexpr size_t kOutputBufSize = 8192;     // PCM 输出缓冲区（1152样本*2字节*2声道）
     uint8_t input_buf_[kInputBufSize];
     uint8_t output_buf_[kOutputBufSize];
@@ -147,8 +148,20 @@ private:
     // 钟声播放器（PCM header，短促撞击声）
     BellSoundPlayer bell_player_;
 
+    // 狗叫软件混音：PlayDogBark 加载 PCM，DecodeSingleFile 输出循环叠加
+    std::vector<int16_t> bark_pcm_;
+    size_t bark_total_ = 0;
+    size_t bark_offset_ = 0;
+    std::atomic<bool> bark_active_{false};
+
     // 播放任务入口
     static void PlayTaskEntry(void* arg);
+
+    // === Ducking 渐隐公共方法 ===
+    // 检测 AI 状态，更新 ducking_gain_，并对 PCM 数据应用增益
+    // 所有播放路径统一调用，避免逻辑重复
+    void UpdateDuckingState();
+    void ApplyDuckingGain(int16_t* pcm, size_t num_samples);
 
 public:
     Mp3Player() = default;
@@ -164,7 +177,7 @@ public:
     int DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate);
 
     void PlayTrack(uint8_t folder, uint8_t track);  // folder=1钟声, folder=2音乐, track=索引
-    void PlayIndex(uint16_t index);                  // 直接播放序号�?001.mp3~0013.mp3�?
+    void PlayIndex(uint16_t index);                  // 直接播放序号（0001.mp3~0013.mp3）
     void Stop();
     void ResetForNextPlay();
     void Pause();
@@ -174,47 +187,36 @@ public:
     void VolumeDown();
     void Next();
     void Prev();
-    void PlayBell(int hour);                         // 播放钟声(1-12�? �?0013.mp3 重复播放
-    void PlayBgMusic(int index);                     // 播放背景音乐(1-12) — 0001~0012.mp3
+    void PlayBell(int hour);                         // 播放钟声(1-12)，用 0013.mp3 重复播放
+    void PlayBgMusic(int index);                     // 播放背景音乐(1-12) -- 0001~0012.mp3
     void PlayAlarmRing(float volume = 1.0f);         // 播放闹钟铃声（0.0~1.0，默认全音量）
-    int PlayUrl(const char* url);                    // HTTP下载MP3并播放（后台任务，非阻塞）
-    int PlayOpus(const char* url);                   // HTTP下载OGG/Opus → 原生解码管线
+    int PlayUrl(const char* url);                    // [已弃用] HTTP下载MP3并播放
+    int PlayOpus(const char* url);                   // HTTP下载OGG/Opus -> 原生解码管线
     int PlayPcm(const char* url);                    // HTTP下载raw PCM并走原生播放管线
-    static void PlayUrlTask(void* arg);              // PlayUrl后台任务入口
+    static void PlayUrlTask(void* arg);              // [已弃用] PlayUrl后台任务入口
     static void PlayOpusTask(void* arg);             // PlayOpus后台任务入口
     static void PlayPcmTask(void* arg);              // PlayPcm后台任务入口
     bool IsPlaying() { return is_playing_; }
+    void SetDisableDucking(bool disable) { disable_ducking_ = disable; }
+
+    // 狗叫混音：加载 PCM 数据，DecodeSingleFile 输出时自动叠加
+    void LoadDogBark(const int16_t* pcm, size_t num_samples);
+    bool IsBarkActive() { return bark_active_.load(); }
 };
 
 /**
- * 鸟叫播放�?
- * 通过小智 AI �?AudioService 输出原始 PCM 数据到板载扬声器
- * 不再使用独立�?I2S 通道（避免与 AI 音频冲突�?
- */
-class RtcPcf8563 {
-private:
-    i2c_port_t i2c_port_;
-    uint8_t bcd_to_dec(uint8_t bcd);
-    uint8_t dec_to_bcd(uint8_t dec);
-
-public:
-    RtcPcf8563(i2c_port_t port);
-    bool Init();
-    bool GetTime(int &year, int &month, int &day, int &hour, int &min, int &sec);
-    bool GetHourMin(int &hour, int &min);   // 只读取时和分
-};
-
-/**
- * 光敏电阻 (昼夜检�?
+ * 光敏电阻 (ADC 模拟读取，昼夜检测)
  */
 class LdrSensor {
 private:
     gpio_num_t adc_pin_;
-    // adc_channel_ removed - using GPIO level directly
-    int threshold_;     // �?亮阈�?0-4095)
+    adc_oneshot_unit_handle_t adc_handle_;
+    adc_channel_t adc_chan_;
+    int threshold_;     // 亮度阈值 (0-4095)
 
 public:
-    LdrSensor(gpio_num_t adc_pin, int threshold = 2000);
+    LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold = 2000);
+    ~LdrSensor();
     int ReadRaw();
     bool IsDark();
     void SetThreshold(int threshold);
@@ -228,17 +230,17 @@ class CuckooStateMachine {
 public:
     enum PerformanceType {
         kPerformanceNone,       // 空闲
-        kPerformanceHour,       // 整点表演(带钟�?
-        kPerformanceHalf,       // 半点表演(简�?
+        kPerformanceHour,       // 整点表演(带钟声)
+        kPerformanceHalf,       // 半点表演(简化)
         kPerformanceManual,     // 手动触发
         kPerformanceBgMusic,    // 播放背景音乐
     };
 
     enum Phase {
         kPhaseIdle,
-        kPhaseOpeningDoor,      // 开�?
+        kPhaseOpeningDoor,      // 开门
         kPhaseBirdOut,          // 小鸟弹出
-        kPhaseCalling,          // 咕咕�?固定三声)
+        kPhaseCalling,          // 咕咕叫(固定三声)
         kPhaseBirdIn,           // 小鸟回去
         kPhaseClosingDoor,      // 关门
         kPhaseChiming,          // 敲钟(0013.mp3重复整点次数)
@@ -246,47 +248,73 @@ public:
         kPhaseDone,             // 完成
     };
 
-
-    // Dedup check for hourly/half-hourly chime
+    // Dedup check for hourly/half-hourly chime (独立去重，避免竞态)
     bool NeedHourlyChime(int hour) const { return hour != last_hour_; }
     bool NeedHalfHourlyChime(int hour) const { return hour != last_half_hour_; }
-    void MarkHourlyChime(int hour) { last_hour_ = hour; last_half_hour_ = -1; }
-    void MarkHalfHourlyChime(int hour) { last_half_hour_ = hour; last_hour_ = -1; }
+    void MarkHourlyChime(int hour) { last_hour_ = hour; }
+    void MarkHalfHourlyChime(int hour) { last_half_hour_ = hour; }
+
 private:
-    Motor* m1_;          // 舞蹈电机
-    Motor* m2_;          // 小提琴电�?
-    Motor* m3_;          // 水车电机
-    Motor* m4_;          // 大门电机(�?
-    Motor* bird_door_;   // 鸟门电机(独立)
-    Servo* violin_servo_;
-    Servo* dog_servo_;
-    BirdJump* bird_jump_;
+    Motor* m1_;            // 舞蹈电机 (板A M1)
+    Motor* m2_;            // 大门电机 (板A M2)
+    Motor* m3_;            // 小狗电机 (板B M1)
+    Motor* m4_;            // 鸟门电机 (板C M1)
+    Motor* violin_motor_;  // 小提琴电机 (板B M2, GPIO18/45)
+    Servo* violin_servo_;  // 小提琴手舵机
+    Servo* dog_servo_;     // 小狗摇头舵机
+    Motor* water_bird_;    // 板C M2: 水车(IN1) + 鸟跳(IN2), 单向独立控制
     Mp3Player* mp3_;
     BellSoundPlayer* bell_player_;  // 鸟叫播放器（复用AI音频系统）
-    RtcPcf8563* rtc_;
+    // RtcPcf8563* rtc_;  // [DEPRECATED] not wired, using NTP
     LdrSensor* ldr_;
     gpio_num_t motor_power_pin_ = GPIO_NUM_NC;
 
     PerformanceType current_performance_;
     Phase current_phase_;
     int call_count_;        // 还剩余叫几声
-    int total_calls_;       // 总共要叫几声(=整点�?
+    int total_calls_;       // 总共要叫几声(=整点数)
     std::atomic<bool> is_running_{false};
-    int last_hour_;         // 上次整点(防重�?
-    int last_half_hour_;    // 上次半点(防重�?
+    int last_hour_;         // 上次整点(防重复)
+    int last_half_hour_;    // 上次半点(防重复)
     int show_music_index_;  // 上次Show播放的音乐编号(1-12)
 
+    // 动作循环状态（避免 static 局部变量）
+    struct ViolinLoopState {
+        int stage = 0;
+        int loop_count = 0;
+        int timer = 0;
+        int angle = 90;
+        int fwd_count = 0;
+        int rev_count = 0;
+        void Reset() { stage = 0; loop_count = 0; timer = 0; angle = 90; fwd_count = 0; rev_count = 0; }
+    };
+    ViolinLoopState violin_state_;
+
+    struct DogTailState {
+        int angle = 0;
+        int dir = 1;
+        int target = 50;
+        int pause = 0;
+        void Reset() { angle = 0; dir = 1; target = 50; pause = 0; }
+    };
+    DogTailState dog_state_;
+
+    // 舞蹈电机正反转时间累计（RunDanceLoop 记录，RunDanceFinale 平衡）
+    unsigned long m1_fwd_time_ = 0;
+    unsigned long m1_rev_time_ = 0;
+    unsigned long m1_stage_start_ = 0;
+
 public:
-    // 内部时钟（钟控任务访问，设为 public�?
+    // 内部时钟（钟控任务访问，设为 public）
     std::atomic<int> current_hour_{0};      // 内部小时(0-23)
     std::atomic<int> current_min_{0};       // 内部分钟(0-59)
-    std::atomic<int> current_sec_{0};       // 内部�?0-59)
-    std::atomic<bool> time_set_{false};         // 时间是否已设�?
+    std::atomic<int> current_sec_{0};       // 内部秒(0-59)
+    std::atomic<bool> time_set_{false};         // 时间是否已设置
     std::atomic<bool> is_dark_{false};          // 夜间模式(晚上不表演)
 
-    // 防AI误触发：记录设备从idle退出的时间戳（钟控任务访问，设为 public�?
+    // 防AI误触发：记录设备从idle退出的时间戳（钟控任务访问，设为 public）
     uint64_t last_idle_exit_us_ = 0;
-    int prev_device_state_ = -1;  // 上一次设备状态（用于检测idle→active转换）
+    int prev_device_state_ = -1;  // 上一次设备状态（用于检测idle->active转换）
 
     // === 闹钟功能 ===
     static constexpr int kMaxAlarms = 5;
@@ -303,6 +331,18 @@ public:
     std::atomic<int> alarm_count_{0};
     std::atomic<bool> alarm_ringing_{false};
     std::atomic<bool> alarm_stopped_{false};
+    std::atomic<int> thanks_counter_{0};  // 感谢语音轮换计数器(0~4)
+    std::atomic<int> linda_song_counter_{0};   // Linda show歌曲轮换
+    std::atomic<int> garden_song_counter_{0};  // Garden show歌曲轮换
+
+    // 静音模式
+    std::atomic<int> quiet_mode_{2};      // 0=全天静 1=全天报 2=天黑静 3=时间段
+    std::atomic<int> quiet_start_{22};    // 静音开始(时)
+    std::atomic<int> quiet_end_{6};
+    std::atomic<bool> hourly_perf_{true};       // 静音结束(时)
+
+    void SaveQuietMode();
+    void LoadQuietMode();
 
     void SetAlarm(int hour, int minute, bool repeat_daily);
     std::string GetAlarmsJson();
@@ -310,24 +350,25 @@ public:
     bool IsAlarmRinging() const { return alarm_ringing_; }
     
     // Alarm persistence (NVS-backed, survives reboot)
-    void SaveAlarmsToNvs();    // TODO: implement NVS write
-    void LoadAlarmsFromNvs();  // TODO: implement NVS read
+    void SaveAlarmsToNvs();
+    void LoadAlarmsFromNvs();
     void StopAlarm();
     void CheckAlarms(int hour, int minute, int sec);
     static void AlarmTask(void* arg);
 
     CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
-                       Motor* bird_door, Servo* violin, Servo* dog,
-                       BirdJump* bird_jump, Mp3Player* mp3,
+                       Motor* violin_motor, Servo* violin, Servo* dog,
+                       Motor* water_bird, Mp3Player* mp3,
                        BellSoundPlayer* bell_player,
-                       RtcPcf8563* rtc, LdrSensor* ldr);
+                       // RtcPcf8563* rtc,  // [DEPRECATED] using NTP
+                       LdrSensor* ldr);
     ~CuckooStateMachine();
 
     // 电机驱动电源控制
     void MotorPowerOn();
     void MotorPowerOff();
 
-    // 一次性表演（非阻塞，在独立任务中执行�?
+    // 一次性表演（非阻塞，在独立任务中执行）
     void StartPerformance(PerformanceType type, int hour = 0);
 
     // 查询是否正在播放音乐（用于后台判断是否保持 WiFi 高性能）
@@ -337,24 +378,58 @@ public:
     // 内部：表演执行任务（线性执行所有阶段，无竞态问题）
     static void PerformanceTask(void* arg);
 
-    // 整点/半点检�?
+    // 内部：舞蹈循环（PerformanceTask 和 ShowTask 共用）
+    // 50ms 帧率驱动 M1 舞蹈、小提琴舵机+电机、小狗舵机、LED 闪烁
+    // 退出条件：音乐停止 或 is_running_ == false
+    void RunDanceLoop();
+    // 内部：舞蹈结束后的收尾（平衡正反转、关门、狗舵机归位）
+    void RunDanceFinale();
+    // 内部：开门+小狗出场序列（开门异步执行，不阻塞舞蹈）
+    void RunDanceIntro();
+    static void DoorOpenTask(void* arg);  // 异步开门任务
+    void PlayDogBark();  // 播放狗叫声（WAV PCM 直播）
+
+    // 整点/半点检测
     void CheckTime(int hour, int min, bool dark);
 
     // 控制命令
     void Dance();           // 单独跳舞
-    void StartShow();       // 表演开�?跳舞+水车+音乐, 在ShowTask中线性执�?
-    static void ShowTask(void* arg);  // StartShow的线性执行任�?
+    void MotorTest(int seconds); // 舞蹈电机速度测试（正转指定秒数）
+    void StartShow();       // 表演开始(跳舞+水车+音乐, 异步启动)
+    void StartShowTask();   // StartShow 的实际执行(后台任务, Core 1)
+    static void ShowTask(void* arg);  // 表演线性执行(舞蹈+音乐循环)
     void PlayMusic(int index);  // 播放背景音乐
-    void StopAll();         // 紧急停�?
-    void OpenDoor();        // 单独开�?
+    void StopAll();         // 紧急停止
+    void OpenDoor();        // 单独开门
     void CloseDoor();       // 单独关门
-    void BirdJumpOnce();    // 小鸟跳一�?
-    void SetServoAngle(int servo_id, int angle);  // 舵机控制 0=小提�?1=小狗
+    void BirdJumpOnce();    // 小鸟跳一下
+    void OpenBirdDoor();    // 打开鸟门（唤醒AI时）
+    void CloseBirdDoor();   // 关闭鸟门（AI休眠时）
+    void PlayCuckooSound(); // 播放布谷鸟叫声
+    void BirdJumpPulse();   // 小鸟脉冲跳（说话时用）
+    void BirdJumpShort();  // 小鸟短脉冲跳（跟随话音节奏，120ms）
+    static void AutoCloseTimerCallback(TimerHandle_t timer);  // 鸟门自动关闭定时器回调
+    void SetServoAngle(int servo_id, int angle);  // 舵机控制 0=小提琴,1=小狗
     void SetMotorSpeed(int motor_id, int speed);   // 电机控制 1-4
+
+    // === 角色表演 ===
+    void DogShow();    // 小狗出场: 异步启动
+    void StartLindaShow();  // 琳达: 异步启动, 音乐0015 + 舞蹈电机左右转
+    void StartGardenShow(); // 园子: 异步启动, 音乐0016 + 小提琴舵机左右转
+    void LindaShow();  // 琳达执行 (后台任务)
+    void GardenShow(); // 园子执行 (后台任务)
+    void DogShowTask();       // 小狗表演实际执行 (后台任务)
+    void PlayDogBarkDirect(); // 直接用 OutputRawPcm 播放狗叫 WAV
+    void PlayWavAsset(const char* filename); // 播放 assets 中的 WAV 文件
+    bool PlayShowMusicBg(int index);  // Show音乐走bg audio(不跟TTS抢I2S)
     void SetBirdDoorSpeed(int speed);              // 鸟门电机
 
     // 在线音乐播放 (通过中转服务)
     int PlayOnlineMusic(const char* url);           // 在后台下载URL音频并播放，立即返回
+    std::string CheckMultiArtist(const char* url_or_path);  // 多版本检测：查服务器是否返回歌手列表JSON
+
+    // Cantonese lookup (2026-07-19): queries proxy /cantonese endpoint synchronously
+    std::string CantoneseLookup(const char* word);
 
     struct MusicTaskCtx {
         CuckooStateMachine* sm;
@@ -374,11 +449,12 @@ public:
 
     bool IsRunning() { return is_running_.load(); }
     void SetDark(bool dark) { is_dark_ = dark; }
+    bool CheckDark() { return ldr_ ? ldr_->IsDark() : false; }
 };
 
 /**
- * 布谷鸟钟 MCP 工具�?
- * 注册所有钟�?MCP 工具到小�?
+ * 布谷鸟钟 MCP 工具集
+ * 注册所有钟控 MCP 工具到小智
  */
 class CuckooTools {
 private:

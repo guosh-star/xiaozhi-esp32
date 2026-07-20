@@ -32,8 +32,9 @@
 #define AUDIO_CODEC_EN_PIN       GPIO_NUM_NC     // VCC 常通 5V
 
 // ============================================
-// I2C 共享总线 (GPIO1=SDA, GPIO2=SCL)
-//   ES8311(0x18) + ES7210(0x41) + SSD1306(0x3C) + PCF8563(0x51)
+// I2C 总线（仅音频 codec，OLED 已拆除）
+//   I2C_NUM_0 (GPIO1/2): ES8311(0x18) + ES7210(0x41)
+//   PCF8563(0x51) 未使用
 // ============================================
 #define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_1
 #define AUDIO_CODEC_I2C_SCL_PIN  GPIO_NUM_2
@@ -42,73 +43,145 @@
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
 #define TOUCH_BUTTON_GPIO       GPIO_NUM_47
 
-// LED（DevKitC-1 板载 WS2812，不用于本项目）
-#define BUILTIN_LED_GPIO        GPIO_NUM_NC
+// LED（DevKitC-1 板载 WS2812，不用于本项目，拉低省电）
+#define BUILTIN_LED_GPIO        GPIO_NUM_48  // WS2812 状态指示灯
 
 // 电机驱动电源控制 (P-MOSFET, LOW=供电, HIGH=断电)
 #define POWER_MOTOR_GPIO        GPIO_NUM_38
 
-// OLED 屏幕 (共享 I2C: SDA=GPIO1, SCL=GPIO2)
-#define DISPLAY_SDA_PIN         AUDIO_CODEC_I2C_SDA_PIN
-#define DISPLAY_SCL_PIN         AUDIO_CODEC_I2C_SCL_PIN
-#define DISPLAY_WIDTH           128
-#define DISPLAY_HEIGHT          64
-#define DISPLAY_MIRROR_X        true
-#define DISPLAY_MIRROR_Y        true
+// OLED 已拆除\uff0cGPIO42 改作 SERVO_DOG
 
 // ============================================
 // 布谷鸟钟专用引脚（新分配）
-//   J1 整排 → 电机驱动
-//   J3 整排 → 外设集中
 // ============================================
 
-// --- DRV8833 驱动板 (M1 舞蹈 + M2 小提琴) ---
-// 2线 PWM 模式，IN1/IN2 各一个 LEDC 通道
-#define DRV8833_M1_IN1      GPIO_NUM_4
-#define DRV8833_M1_IN2      GPIO_NUM_5
-#define DRV8833_M2_IN3      GPIO_NUM_6
-#define DRV8833_M2_IN4      GPIO_NUM_7
+// --- 电机驱动板（统一 DRV8833, 2线 PWM 模式）---
 
-// --- TB6612 驱动板 (M3 水车 + M4 大门) ---
-// 3线控制，每路电机 1 个 PWM + 2 个方向脚
-#define TB6612_2_PWMA      GPIO_NUM_8     // M3 PWM
-#define TB6612_2_AIN1      GPIO_NUM_3     // M3 方向1
-#define TB6612_2_AIN2      GPIO_NUM_18    // M3 方向2
-#define TB6612_2_PWMB      GPIO_NUM_9     // M4 PWM
-#define TB6612_2_BIN1      GPIO_NUM_10    // M4 方向1
-#define TB6612_2_BIN2      GPIO_NUM_11    // M4 方向2
+// 板A: DRV8833 #1 — M1舞蹈 + M2大门 (2026-06-30: 大门从板C换到板A Timer0)
+//   GPIO4,5,6,7
+#define MOTOR_DANCE_IN1  GPIO_NUM_4     // M1 舞蹈
+#define MOTOR_DANCE_IN2  GPIO_NUM_5
+#define MOTOR_BIRD_IN1   GPIO_NUM_6     // M2 大门 (原鸟门，板子已互换)
+#define MOTOR_BIRD_IN2   GPIO_NUM_7
 
-// --- 鸟门电机 (独立 H桥, 2脚方向控制) ---
-#define BIRD_DOOR_DIR1     GPIO_NUM_21    // J3
-#define BIRD_DOOR_DIR2     GPIO_NUM_46    // J1-46（唯一在 J1 的非电机脚）
+// 板B: DRV8833 #2 — M1小狗 + M2小提琴
+//   GPIO10,11,18,3
+#define MOTOR_DOG_IN1    GPIO_NUM_10    // M1 小狗
+#define MOTOR_DOG_IN2    GPIO_NUM_11
+#define MOTOR_VIOLIN_IN1 GPIO_NUM_18    // M2 小提琴
+#define MOTOR_VIOLIN_IN2 GPIO_NUM_45    // 从 GPIO3 移来\uff0c释放 GPIO3 给 LDR
 
-// --- 小鸟跳跃电磁铁 ---
-#define BIRD_JUMP_GPIO     GPIO_NUM_39
+// 板C: DRV8833 #3 — M1鸟门 + M2水车/鸟跳 (2026-06-30: 鸟门从板A换到板C Timer2)
+//   GPIO9,46 (M1鸟门), GPIO8,39 (M2水车+鸟跳)
+#define MOTOR_DOOR_IN1   GPIO_NUM_9     // M1 鸟门 (原大门，板子已互换)
+#define MOTOR_DOOR_IN2   GPIO_NUM_46
+
+// 板C M2: 水车 + 小鸟跳跃 (单向控制，各占一个IN脚)
+#define MOTOR_WATER_BIRD_IN1  GPIO_NUM_8     // M2 IN1 → 水车电机
+#define MOTOR_WATER_BIRD_IN2  GPIO_NUM_39    // M2 IN2 → 小鸟跳跃电磁铁
 
 // --- 舵机信号线 (50Hz PWM) ---
-#define SERVO_VIOLIN       GPIO_NUM_40
-#define SERVO_DOG          GPIO_NUM_48
+// HIGH_SPEED mode (独立于电机低速通道，无冲突)
+#define SERVO_VIOLIN      GPIO_NUM_40    // 小提琴手
+#define SERVO_DOG         GPIO_NUM_42    // 小狗摇头
 
 // --- RTC PCF8563 (I2C1, 地址 0x51) ---
-// 和 OLED 共享 I2C1 总线 (SDA=42, SCL=41)
 
-// --- 光敏传感器（ADC / 数字输入）---
-#define LDR_GPIO           GPIO_NUM_45    // strapping MTDI, 启动后可用
+// --- 光敏传感器（ADC 模拟读取）---
+// 分压: VCC(3.3V) → LDR → GPIO3 → R_fix(200k) → GND
+// ADC 实测范围: 全黑 ~100, 强光 ~3300 (12-bit ADC)
+#define LDR_GPIO          GPIO_NUM_3     // ADC1_CH2
+#define LDR_ADC_UNIT      ADC_UNIT_1
+#define LDR_ADC_CHANNEL   ADC_CHANNEL_2
+#define LDR_ADC_ATTEN     ADC_ATTEN_DB_12  // 0~3.3V 量程
+#define LDR_ADC_BITWIDTH  ADC_BITWIDTH_12  // 0~4095
+
+// 亮度阈值（12-bit ADC 原始值）
+#define LDR_DARK          600             // <600 = 太暗，不报时
+
+// --- LED 灯串 (S8050 驱动, GPIO→1KΩ→B极, C极→灯串负极, 灯串正极→5V) ---
+#define LED_A_GPIO        GPIO_NUM_21
+#define LED_B_GPIO        GPIO_NUM_41
 
 // --- LEDC PWM 通道分配 ---
-// DRV8833: 每路电机占 2 个 LEDC 通道（IN1+IN2 独立 PWM）
-#define LEDC_CH_M1_AIN1    LEDC_CHANNEL_0   // M1 舞蹈 IN1
-#define LEDC_CH_M1_AIN2    LEDC_CHANNEL_1   // M1 舞蹈 IN2
-#define LEDC_CH_M2_AIN1    LEDC_CHANNEL_2   // M2 小提琴 IN1
-#define LEDC_CH_M2_AIN2    LEDC_CHANNEL_3   // M2 小提琴 IN2
-#define LEDC_CH_SERVO_V    LEDC_CHANNEL_4   // 小提琴手舵机
-#define LEDC_CH_SERVO_D    LEDC_CHANNEL_5   // 小狗舵机
-// CH6-7 预留（TB6612 M3/M4 电机后续接�?
+// Timer 0 (1kHz): 板A 电机 + 板B 电机 (8通道满)
+//   板A M1舞蹈 + 板A M2大门 + 板B M1小狗 + 板B M2小提琴
+#define LEDC_CH_DANCE_IN1   LEDC_CHANNEL_0   // M1 舞蹈 IN1
+#define LEDC_CH_DANCE_IN2   LEDC_CHANNEL_1   // M1 舞蹈 IN2
+#define LEDC_CH_BIRD_IN1    LEDC_CHANNEL_2   // M2 大门 IN1 (原鸟门，现大门)
+#define LEDC_CH_BIRD_IN2    LEDC_CHANNEL_3   // M2 大门 IN2
+#define LEDC_CH_DOG_IN1     LEDC_CHANNEL_4   // M1 小狗 IN1
+#define LEDC_CH_DOG_IN2     LEDC_CHANNEL_5   // M1 小狗 IN2
+#define LEDC_CH_VIOLIN_IN1  LEDC_CHANNEL_6   // M2 小提琴 IN1
+#define LEDC_CH_VIOLIN_IN2  LEDC_CHANNEL_7   // M2 小提琴 IN2
+
+// Timer 1 (50Hz): 舵机 — LOW_SPEED 独立通道 (ESP32-S3 无 HIGH_SPEED)
+#define LEDC_CH_SERVO_V     LEDC_CHANNEL_0   // 小提琴手舵机 (timer1, LOW_SPEED)
+#define LEDC_CH_SERVO_D     LEDC_CHANNEL_1   // 小狗舵机 (timer1, LOW_SPEED)
+#define LEDC_TIMER_SERVO    LEDC_TIMER_1
+
+// Timer 2 (10kHz): 板C 鸟门
+#define LEDC_CH_DOOR_IN1    LEDC_CHANNEL_2   // M1 鸟门 IN1
+#define LEDC_CH_DOOR_IN2    LEDC_CHANNEL_3   // door IN2
+#define LEDC_TIMER_DOOR     LEDC_TIMER_2
+
+// Timer 3 (10kHz): 板C 水车/鸟跳 — 从 Timer2 迁出，隔离干扰
+#define LEDC_CH_WATER       LEDC_CHANNEL_0   // M2 水车 IN1 (timer3)
+#define LEDC_CH_JUMP        LEDC_CHANNEL_1   // M2 鸟跳 IN2 (timer3)
+#define LEDC_TIMER_WATER    LEDC_TIMER_3
+
+// Timer 0 (1kHz): 板A+板B 电机共用
+#define LEDC_TIMER_MOTOR    LEDC_TIMER_0
+
+// ============================================
+// 电机参数（速度和时长）
+// ============================================
+
+// 大门电机 (m2_, 板A M2)
+#define MAIN_DOOR_OPEN_SPEED   50      // 大门开启速度(% duty)
+#define MAIN_DOOR_CLOSE_SPEED  50      // 大门关闭速度(% duty)
+#define MAIN_DOOR_TIME_MS      1400    // 大门动作时长(ms)
+
+// 鸟门电机 (m4_, 板C M1)
+#define BIRD_DOOR_OPEN_SPEED   70      // 鸟门开启速度(% duty)
+#define BIRD_DOOR_CLOSE_SPEED  70      // 鸟门关闭速度(% duty)
+#define BIRD_DOOR_TIME_MS      600     // 鸟门动作时长(ms)
+
+// 舞蹈电机参数 (板A M1)
+#define DANCE_SPEED_PERCENT    80      // 舞蹈电机速度(% duty)
+
+// 小提琴电机参数 (板B M2)
+#define VIOLIN_SPEED_PERCENT   100     // 小提琴电机速度(% duty)
+#define VIOLIN_WARMUP_PERCENT  60      // 小提琴预热速度(% duty)
+#define VIOLIN_BALANCE_TIME_MS 1200   // 正反转平衡补偿时长
+
+// 小狗电机参数 (板B M1)
+#define DOG_SPEED_PERCENT      20      // 小狗电机速度(% duty)
+#define DOG_WALK_TIME_MS       1000     // 前进/后退持续时间
+
+// 小狗舵机参数
+#define DOG_TAIL_SWEEP_START   180     // 摇尾巴起始角度
+#define DOG_TAIL_SWEEP_END     20      // 摇尾巴结束角度
+#define DOG_TAIL_STEP_MS       15      // 每步间隔(ms)
+
+// 水车参数 (板C M2)
+#define WATER_WHEEL_SPEED      100     // 水车转速(% duty)
+
+// 舵机默认角度
+#define SERVO_CENTER_ANGLE     90      // 舵机归中角度
 
 // ============================================
 // 在线音乐代理
 // ============================================
-#define DEFAULT_MUSIC_PROXY_HOST    "192.168.31.123"
+#define DEFAULT_MUSIC_PROXY_HOST    "120.55.47.160"
 #define DEFAULT_MUSIC_PROXY_PORT    8765
+
+// ============================================
+// 角色表演音乐编号（TF卡 assets 目录）
+// ============================================
+#define LINDA_SONG_BASE     3001        // Linda Show 歌曲起始编号
+#define LINDA_SONG_COUNT    1           // Linda Show 歌曲数量
+#define GARDEN_SONG_BASE    4001        // Garden Show 歌曲起始编号
+#define GARDEN_SONG_COUNT   1           // Garden Show 歌曲数量
 
 #endif // _BOARD_CONFIG_H_

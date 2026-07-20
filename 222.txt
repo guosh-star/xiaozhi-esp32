@@ -1,0 +1,586 @@
+Executing action: monitor
+Serial port COM7
+Connecting....
+Detecting chip type... ESP32-S3
+Running idf_monitor in directory C:\Users\GUO-notebook\.openclaw\workspace\xiaozhi-esp32
+Executing "C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe C:\Espressif\frameworks\esp-idf-v5.5.4\tools/idf_monitor.py -p COM7 -b 115200 --toolchain-prefix xtensa-esp32s3-elf- --target esp32s3 --revision 0 C:\Users\GUO-notebook\.openclaw\workspace\xiaozhi-esp32\build\xiaozhi.elf C:\Users\GUO-notebook\.openclaw\workspace\xiaozhi-esp32\build\bootloader\bootloader.elf --force-color -m 'C:\Espressif\python_env\idf5.5_py3.11_env\Scripts\python.exe' 'C:\Espressif\frameworks\esp-idf-v5.5.4\tools\idf.py'"...
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0xb (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:1
+load:0x3fce2820,len:0x548
+load:0x403c8700,len:0xc3c
+load:0x403cb700,len:0x2d9c
+entry 0x403c8908
+I (34) octal_psram: vendor id    : 0x0d (AP)
+I (34) octal_psram: dev id       : 0x02 (generation 3)
+I (34) octal_psram: density      : 0x03 (64 Mbit)
+I (36) octal_psram: good-die     : 0x01 (Pass)
+I (40) octal_psram: Latency      : 0x01 (Fixed)
+I (44) octal_psram: VCC          : 0x01 (3V)
+I (48) octal_psram: SRF          : 0x01 (Fast Refresh)
+I (53) octal_psram: BurstType    : 0x01 (Hybrid Wrap)
+I (58) octal_psram: BurstLen     : 0x01 (32 Byte)
+I (62) octal_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (67) octal_psram: DriveStrength: 0x00 (1/1)
+I (71) MSPI Timing: Enter psram timing tuning
+I (76) esp_psram: Found 8MB PSRAM device
+I (79) esp_psram: Speed: 80MHz
+I (82) cpu_start: Multicore app
+I (96) cpu_start: GPIO 44 and 43 are used as console UART I/O pins
+I (97) cpu_start: Pro cpu start user code
+I (97) cpu_start: cpu freq: 240000000 Hz
+I (98) app_init: Application information:
+I (102) app_init: Project name:     xiaozhi
+I (106) app_init: App version:      2.2.6
+I (110) app_init: Compile time:     Jul 10 2026 19:18:17
+I (115) app_init: ELF file SHA256:  15d583a23...
+I (119) app_init: ESP-IDF:          v5.5.4-dirty
+I (123) efuse_init: Min chip rev:     v0.0
+I (127) efuse_init: Max chip rev:     v0.99 
+I (131) efuse_init: Chip rev:         v0.2
+I (135) heap_init: Initializing. RAM available for dynamic allocation:
+I (141) heap_init: At 3FCAB180 len 0003E590 (249 KiB): RAM
+I (146) heap_init: At 3FCE9710 len 00005724 (21 KiB): RAM
+I (152) heap_init: At 3FCF0000 len 00008000 (32 KiB): DRAM
+I (157) heap_init: At 600FE000 len 00001FD8 (7 KiB): RTCRAM
+I (162) esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+I (169) spi_flash: detected chip: generic
+I (172) spi_flash: flash io: qio
+I (176) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (182) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (188) main_task: Started on CPU0
+I (218) esp_psram: Reserving pool of 96K of internal memory for DMA/internal allocations
+I (218) main_task: Calling app_main()
+I (228) Board: UUID=2ff40775-df4a-413b-abe6-3c962b942fdf SKU=cuckoo-clock
+I (228) button: IoT Button Version: 4.1.6
+I (228) CuckooBoard: === Cuckoo Clock Board ===
+I (228) CuckooBoard: Initializing cuckoo clock peripherals...
+I (238) CuckooBoard: M1 dance ready (GPIO 4/5, GPIO)
+I (238) CuckooBoard: M2 door ready (GPIO 6/7, GPIO)
+I (248) CuckooBoard: M3 dog ready (GPIO 10/11, ch4/5)
+I (248) CuckooBoard: M2 violin motor ready (GPIO 18/45, GPIO)
+I (258) CuckooBoard: M5 bird door ready (GPIO 9/46, timer2 ch2/3)
+I (268) CuckooBoard: Violin servo ready (GPIO 40, ch0)
+I (268) CuckooBoard: Dog servo ready (GPIO 42, ch1)
+I (268) CuckooBoard: Bell sound player ready
+I (278) Assets: The storage free size is 22144 KB
+I (278) Assets: The partition size is 8192 KB
+I (648) Assets: The checksum calculation time is 362 ms
+I (648) CuckooCtrl: Mp3Player initialized (async task-based software decode)
+I (648) CuckooBoard: MP3 soft decoder ready
+I (648) CuckooBoard: Water+bird motor ready (GPIO 8/39, GPIO)
+I (658) CuckooCtrl: LDR sensor on GPIO 3 (ADC0_CH2), threshold 600
+I (668) CuckooBoard: Peripherals initialized
+I (668) CuckooBoard: State machine created
+I (668) MCP: Add tool: cuckoo.performance
+I (678) MCP: Add tool: cuckoo.set_time
+I (678) MCP: Add tool: cuckoo.get_time
+I (678) MCP: Add tool: cuckoo.play_music
+I (688) MCP: Add tool: cuckoo.start_show
+I (688) MCP: Add tool: cuckoo.stop_all
+I (698) MCP: Add tool: cuckoo.stop_music
+I (698) MCP: Add tool: cuckoo.dance
+I (698) MCP: Add tool: cuckoo.open_door
+I (708) MCP: Add tool: cuckoo.close_door
+I (708) MCP: Add tool: cuckoo.bird_jump
+I (708) MCP: Add tool: cuckoo.set_servo
+I (718) MCP: Add tool: cuckoo.set_motor
+I (718) MCP: Add tool: cuckoo.set_alarm
+I (718) MCP: Add tool: cuckoo.get_alarms
+I (728) MCP: Add tool: cuckoo.delete_alarm
+I (728) MCP: Add tool: cuckoo.stop_alarm
+I (728) MCP: Add tool: cuckoo.get_status
+I (738) MCP: Add tool: cuckoo.set_music_proxy
+I (738) MCP: Add tool: cuckoo.play_url
+I (748) CuckooBoard: MCP tools registered
+I (748) CuckooBoard: Clock task started on core 1
+I (748) CuckooCtrl: Reset reason: cpu0=1 cpu1=1
+I (748) CuckooBoard: Cuckoo board ready! Core 0: AI voice, Core 1: Clock control
+I (758) CuckooCtrl: Cuckoo clock task started on core 1, stack=6752
+I (768) StateMachine: State: unknown -> starting
+W (768) CuckooCtrl: NTP not synced yet, internal clock waiting for cuckoo.set_time
+W (778) Display: Role:system
+I (778) CuckooCtrl: Music proxy set to 120.55.47.160:8765
+W (788) Display:      cuckoo-clock/2.2.6
+I (788) CuckooCtrl: LoadAlarms: no saved alarms (nvs_open 4354)
+W (798) i2s_common: dma frame num is out of dma buffer size, limited to 511
+I (808) BoxAudioCodec: Duplex channels created
+I (818) ES8311: Work in Slave mode
+I (818) ES7210: Work in Slave mode
+I (828) ES7210: Enable ES7210_INPUT_MIC1
+I (828) ES7210: Enable ES7210_INPUT_MIC2
+I (828) ES7210: Enable ES7210_INPUT_MIC3
+I (838) ES7210: Enable ES7210_INPUT_MIC4
+I (838) ES7210: Enable TDM mode
+I (838) BoxAudioCodec: BoxAudioDevice initialized
+I (838) AudioCodec: Audio codec started
+I (848) MCP: Add tool: self.get_device_status
+I (848) MCP: Add tool: self.audio_speaker.set_volume
+I (848) MCP: Add tool: self.get_system_info [user]
+I (858) MCP: Add tool: self.reboot [user]
+I (858) MCP: Add tool: self.upgrade_firmware [user]
+I (868) MCP: Add tool: self.assets.set_download_url [user]
+I (868) WifiManager: Initializing...
+I (868) pp: pp rom version: e7ae62f
+I (878) net80211: net80211 rom version: e7ae62f
+I (888) wifi:wifi driver task: 3fce5398, prio:23, stack:6144, core=0
+I (888) wifi:wifi firmware version: 0947e8b
+I (888) wifi:wifi certification version: v7.0
+I (898) wifi:config NVS flash: disabled
+I (898) wifi:config nano formatting: enabled
+I (898) wifi:Init data frame dynamic rx buffer num: 16
+I (908) wifi:Init dynamic rx mgmt buffer num: 5
+I (908) wifi:Init management short buffer num: 32
+I (918) wifi:Init dynamic tx buffer num: 32
+I (918) wifi:Init static tx FG buffer num: 2
+I (918) wifi:Init static rx buffer size: 1600
+I (928) wifi:Init static rx buffer num: 3
+I (928) wifi:Init dynamic rx buffer num: 16
+I (938) wifi_init: rx ba win: 3
+I (938) wifi_init: accept mbox: 6
+I (938) wifi_init: tcpip mbox: 16
+I (938) wifi_init: udp mbox: 20
+I (948) wifi_init: tcp mbox: 6
+I (948) wifi_init: tcp tx win: 5760
+I (948) wifi_init: tcp rx win: 5760
+I (958) wifi_init: tcp mss: 1440
+I (958) WifiManager: Initialized
+I (958) WifiBoard: Starting WiFi connection attempt
+I (968) WifiManager: Starting station
+I (968) phy_init: phy_version 711,97bcf0a2,Aug 25 2025,19:04:10
+I (1028) wifi:mode : sta (d8:85:ac:a2:53:b4)
+I (1038) wifi:enable tsf
+I (1038) WifiBoard: WiFi scanning
+W (1038) Display: ShowNotification: 扫描 Wi-Fi...
+I (3438) WifiStation: Found AP: Guo-D-Link_2.4G, BSSID: 58:ea:1f:67:4a:ee, RSSI: -42, Channel: 5, Authmode: 3
+I (3438) WifiBoard: WiFi connecting to Guo-D-Link_2.4G
+W (3448) Display: ShowNotification: 连接 Guo-D-Link_2.4G...
+W (3448) wifi:Password length matches WPA2 standards, authmode threshold changes from OPEN to WPA2
+I (4018) wifi:new:<5,0>, old:<1,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (4018) wifi:state: init -> auth (0xb0)
+I (4038) wifi:state: auth -> assoc (0x0)
+I (4048) wifi:state: assoc -> init (0x2c0)
+I (4048) wifi:new:<5,0>, old:<5,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (4048) WifiStation: WiFi disconnected, reason: 203
+I (4248) WifiStation: Reconnecting Guo-D-Link_2.4G (attempt 1 / 15)
+I (6648) WifiStation: WiFi disconnected, reason: 205
+I (6848) WifiStation: Reconnecting Guo-D-Link_2.4G (attempt 2 / 15)
+I (6848) wifi:new:<5,0>, old:<5,0>, ap:<255,255>, sta:<5,0>, prof:1, snd_ch_cfg:0x0
+I (6848) wifi:state: init -> auth (0xb0)
+I (6858) wifi:state: auth -> assoc (0x0)
+I (6858) wifi:state: assoc -> run (0x10)
+I (6878) wifi:connected with Guo-D-Link_2.4G, aid = 2, channel 5, BW20, bssid = 58:ea:1f:67:4a:ee
+I (6878) wifi:security: WPA2-PSK, phy: bgn, rssi: -44, cipher(pairwise:0x3, group:0x3), pmf:0
+I (6878) wifi:pm start, type: 1
+
+I (6878) wifi:dp: 1, bi: 102400, li: 10, scale listen interval from 1024000 us to 1024000 us
+I (6888) wifi:set rx beacon pti, rx_bcn_pti: 0, bcn_timeout: 25000, mt_pti: 0, mt_time: 10000
+I (6918) wifi:<ba-add>idx:0 (ifx:0, 58:ea:1f:67:4a:ee), tid:6, ssn:2, winSize:64
+I (6928) wifi:AP's beacon interval = 102400 us, DTIM period = 1
+I (7908) esp_netif_handlers: sta ip: 192.168.31.113, mask: 255.255.255.0, gw: 192.168.31.1
+I (7908) WifiStation: Got IP: 192.168.31.113
+I (7908) WifiBoard: Connected to WiFi: Guo-D-Link_2.4G
+W (7908) Display: ShowNotification: 已连接 Guo-D-Link_2.4G
+I (7918) Application: Network connected
+I (7918) StateMachine: State: starting -> activating
+create static modelsI (7928) MODEL_LOADER: Successfully load srmodels
+I (7928) Assets: Refreshing display theme...
+W (7938) Display: Role:system
+W (7938) Display:      
+W (7938) Display: SetEmotion: microchip_ai
+W (7938) Display: SetStatus: 检查新版本...
+I (7948) Ota: Current version: 2.2.6
+I (7968) wifi:<ba-add>idx:1 (ifx:0, 58:ea:1f:67:4a:ee), tid:0, ssn:4, winSize:64
+I (8128) esp-x509-crt-bundle: Certificate validated
+I (8518) HttpClient: Established new connection to api.tenclass.net:443
+I (8718) HttpClient: HTTP connection closed
+I (8728) Ota: Current is the latest version
+I (8728) Ota: Running partition: ota_0
+W (8728) Display: SetStatus: 登录服务器...
+I (8728) MQTT: Connecting to endpoint mqtt.xiaozhi.me
+I (8868) esp-x509-crt-bundle: Certificate validated
+I (9248) MQTT: Connected to endpoint
+I (9248) Application: Activation done
+I (9248) SystemInfo: free sram: 118371 minimal sram: 111815
+I (9248) StateMachine: State: activating -> idle
+W (9248) Display: ShowNotification: 版本 2.2.6
+W (9258) Display: Role:system
+W (9258) Display:      
+I (9258) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+I (9268) wifi:Set ps type: 2, coexist: 0
+
+W (9268) Display: SetStatus: 待命
+W (9278) Display: SetEmotion: neutral
+I (9278) CustomWakeWord: Command: xiao niao xiao niao, Text: xiaoniao xiaoniao, Action: wake
+I (9298) CuckooCtrl: Device sleeping �� closing bird door
+Build fst from commands.
+Quantized MultiNet7:rnnt_ctc_2.0, name:mn7_cn, (Dec 16 2025 14:45:55)
+Quantized MultiNet7 search method: 2, time out:3.0 s
+set det threshold to 0.080000
+Build fst from commands.
+1 active speech commands:
+Command 1: xiao niao xiao niao
+I (10638) I2S_IF: Paired data: 0x3fceedc0, current mode: playback, paired in_enable: 0, paired out_enable: 0
+I (10638) I2S_IF: STD: TX, data_bit: 16, slot_bit: 16, ws_width: 16, slot_mode: MONO, slot_mask: 0x1
+I (10648) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10668) Adev_Codec: Open codec device OK
+I (10668) AudioCodec: Set output enable to true
+I (10668) I2S_IF: Peer mode playback need extend bits 32 to 64
+I (10668) I2S_IF: TDM: RX, data_bit: 16, slot_bit: 16, ws_width: 32, total_slot: 4, slot_mask: 0x3
+I (10688) I2S_IF: TDM: RX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10688) I2S_IF: STD: TX, data_bit: 16, slot_bit: 32, ws_width: 32, slot_mode: MONO, slot_mask: 0x1
+I (10698) I2S_IF: STD: TX, sample_rate_hz: 16000, mclk_multiple: 256, clk_src: 6
+I (10698) ES7210: Bits 16
+I (10708) ES7210: Enable ES7210_INPUT_MIC1
+I (10718) ES7210: Enable ES7210_INPUT_MIC2
+I (10718) ES7210: Enable ES7210_INPUT_MIC3
+I (10718) ES7210: Enable ES7210_INPUT_MIC4
+I (10728) ES7210: Enable TDM mode
+I (10728) ES7210: Unmuted
+I (10728) Adev_Codec: Open codec device OK
+I (10728) AudioCodec: Set input enable to true
+I (18848) SystemInfo: free sram: 94743 minimal sram: 82935
+I (23528) CustomWakeWord: Custom wake word detected: command_id=1, string= xiao niao xiao niao, prob=0.168042
+I (23528) Application: Wake word detected: xiao niao xiao niao (state: 3)
+I (23768) CustomWakeWord: Encode wake word opus 35 packets in 239 ms
+I (26828) StateMachine: State: idle -> connecting
+W (26828) Display: SetStatus: 连接中...
+W (26828) Display: SetEmotion: neutral
+W (26828) Display: Role:system
+W (26828) Display:      
+I (26898) CuckooCtrl: Device woke up �� opening bird door
+I (26908) MQTT: Session ID: 768f63b7
+I (26908) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (26908) wifi:Set ps type: 0, coexist: 0
+
+W (26908) Application: Server sample rate 24000 does not match device output sample rate 16000, resampling may cause distortion
+I (26918) Application: Wake word detected: xiao niao xiao niao
+I (26938) StateMachine: State: connecting -> listening
+W (26938) Display: SetStatus: 聆听中...
+W (26938) Display: SetEmotion: neutral
+I (26938) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=18 dropped=0
+I (26948) AudioService: WAIT-DONE: dq=0 pq=0 pushed=18 dropped=0
+I (26978) AFE: AFE Version: (1MIC_V251128)
+I (26978) AFE: Input PCM Config: total 2 channels(1 microphone, 1 playback), sample rate:16000
+I (26978) AFE: AFE Pipeline: [input] -> |AEC(VOIP_LOW_COST)| -> |AGC(WebRTC)| -> [output]
+I (26988) AudioService: RESET-DECODER: dq=0 pq=0 pushed=18 dropped=0
+I (26988) AfeAudioProcessor: Audio communication task started, feed size: 256 fetch size: 512
+I (27018) Application: >> xiao niao xiao niao
+W (27018) Display: Role:user
+W (27018) Display:      xiao niao xiao niao
+I (27038) StateMachine: State: listening -> speaking
+W (27038) Display: SetStatus: 说话中...
+I (27038) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+W (27678) Display: SetEmotion: happy
+I (27848) Application: << 我在呢，有什么可以帮你的吗？
+W (27848) Display: Role:assistant
+W (27848) Display:      我在呢，有什么可以帮你的吗？
+W (28158) EspUdp: UDP recv gap: 1248 ms
+I (28158) AudioService: Resampling audio from 24000 to 16000
+I (29168) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (30368) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (30498) Application: TTS-STOP received
+I (30498) Application: TTS-STOP scheduled, state=6
+I (30498) StateMachine: State: speaking -> listening
+W (30498) Display: SetStatus: 聆听中...
+W (30508) Display: SetEmotion: neutral
+I (30508) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=42 dropped=0
+I (30508) AudioService: WAIT-DONE: dq=0 pq=0 pushed=42 dropped=0
+I (30528) AudioService: RESET-DECODER: dq=0 pq=0 pushed=42 dropped=0
+I (34678) Application: >> 我想看演出。
+W (34678) Display: Role:user
+W (34678) Display:      我想看演出。
+I (34688) StateMachine: State: listening -> speaking
+W (34688) Display: SetStatus: 说话中...
+I (34688) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (35168) Application: << % cuckoo.start_show...
+W (35168) Display: Role:assistant
+W (35168) Display:      % cuckoo.start_show...
+I (35178) CuckooCtrl: Aborting AI before show (state=6)
+I (35178) Application: Abort speaking
+I (35208) Application: TTS-STOP received
+I (38178) CuckooCtrl: Show starting: dance + dog + music
+I (38178) CuckooCtrl: Show task started
+I (38178) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (38178) Application: TTS-STOP scheduled, state=6
+I (38178) StateMachine: State: speaking -> listening
+W (38188) Display: SetStatus: 聆听中...
+W (38188) Display: SetEmotion: neutral
+I (38198) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
+I (38198) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
+I (38208) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (38228) AudioService: Output muted, playback queue cleared
+I (38228) CuckooCtrl: Playing 0004.mp3 (324668 bytes)
+E (38228) AUDIO_DEC: Sample_rate not parsed
+I (38698) CuckooCtrl: DOG-MOTOR: m3_=0x3fceb93c
+I (47848) SystemInfo: free sram: 83311 minimal sram: 73423
+I (57848) SystemInfo: free sram: 83667 minimal sram: 73423
+I (65998) CuckooCtrl: NTP sync: 10:58:17
+I (65998) CuckooCtrl: Heartbeat t=60s stack_hwm=6704 free_heap=4985996
+I (67848) SystemInfo: free sram: 82439 minimal sram: 73423
+I (77848) SystemInfo: free sram: 83671 minimal sram: 73423
+I (87848) SystemInfo: free sram: 83667 minimal sram: 73423
+I (92038) CuckooCtrl: Finished playing 0004.mp3 (stopped=0)
+I (92058) CuckooCtrl: Violin: fwd=6 rev=5, adding reverse
+I (97848) SystemInfo: free sram: 83863 minimal sram: 73423
+I (98298) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (98298) CuckooCtrl: Show task finished
+I (99148) StateMachine: State: listening -> speaking
+W (99148) Display: SetStatus: 说话中...
+I (99148) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+W (100658) Display: SetEmotion: happy
+W (101398) EspUdp: UDP recv gap: 70905 ms
+I (102408) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (102548) Application: << 那我就先不打扰啦，下次再聊！
+W (102548) Display: Role:assistant
+W (102548) Display:      那我就先不打扰啦，下次再聊！
+I (103498) Application: TTS-STOP received
+I (103498) Application: TTS-STOP scheduled, state=6
+I (103498) StateMachine: State: speaking -> listening
+W (103498) Display: SetStatus: 聆听中...
+W (103508) Display: SetEmotion: neutral
+I (103508) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=38 dropped=0
+I (103518) AudioService: WAIT-DONE: dq=0 pq=0 pushed=38 dropped=0
+I (103528) AudioService: RESET-DECODER: dq=0 pq=0 pushed=38 dropped=0
+I (103708) MQTT: Received goodbye message, session_id: 768f63b7
+I (103708) MQTT: Closing audio channel, send_goodbye: 0
+I (103708) WifiStation: Setting WiFi power save level: LOW_POWER (MAX_MODEM)
+I (103708) wifi:Set ps type: 2, coexist: 0
+
+W (103718) Display: Role:system
+W (103718) Display:      
+I (103718) StateMachine: State: listening -> idle
+W (103728) Display: SetStatus: 待命
+W (103728) Display: SetEmotion: neutral
+I (103998) CuckooCtrl: Device sleeping �� closing bird door
+I (112748) CustomWakeWord: Custom wake word detected: command_id=1, string= xiao niao xiao niao, prob=0.169005
+I (112748) Application: Wake word detected: xiao niao xiao niao (state: 3)
+I (112988) CustomWakeWord: Encode wake word opus 35 packets in 235 ms
+I (116048) StateMachine: State: idle -> connecting
+W (116048) Display: SetStatus: 连接中...
+W (116048) Display: SetEmotion: neutral
+W (116048) Display: Role:system
+W (116048) Display:      
+I (116098) CuckooCtrl: Device woke up �� opening bird door
+I (116128) MQTT: Session ID: b030f66f
+I (116128) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (116128) wifi:Set ps type: 0, coexist: 0
+
+W (116128) Application: Server sample rate 24000 does not match device output sample rate 16000, resampling may cause distortion
+I (116138) Application: Wake word detected: xiao niao xiao niao
+I (116158) StateMachine: State: connecting -> listening
+W (116158) Display: SetStatus: 聆听中...
+W (116158) Display: SetEmotion: neutral
+I (116158) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
+I (116168) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
+I (116178) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (116238) Application: >> xiao niao xiao niao
+W (116238) Display: Role:user
+W (116238) Display:      xiao niao xiao niao
+I (116238) StateMachine: State: listening -> speaking
+W (116238) Display: SetStatus: 说话中...
+I (116248) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+W (116618) Display: SetEmotion: happy
+W (117708) EspUdp: UDP recv gap: 1588 ms
+I (118718) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (119918) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (120638) Application: << 小鸟来啦！有什么我可以帮你的吗？
+W (120638) Display: Role:assistant
+W (120638) Display:      小鸟来啦！有什么我可以帮你的吗？
+I (120878) Application: TTS-STOP received
+I (120878) Application: TTS-STOP scheduled, state=6
+I (120878) StateMachine: State: speaking -> listening
+W (120888) Display: SetStatus: 聆听中...
+W (120888) Display: SetEmotion: neutral
+I (120888) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=56 dropped=0
+I (120898) AudioService: WAIT-DONE: dq=0 pq=0 pushed=56 dropped=0
+I (120908) AudioService: RESET-DECODER: dq=0 pq=0 pushed=56 dropped=0
+I (124448) Application: >> 我想听歌。
+W (124458) Display: Role:user
+W (124458) Display:      我想听歌。
+I (124458) StateMachine: State: listening -> speaking
+W (124458) Display: SetStatus: 说话中...
+I (124458) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (125528) Application: << % self.get_device_status...
+W (125528) Display: Role:assistant
+W (125528) Display:      % self.get_device_status...
+W (125898) Display: SetEmotion: happy
+I (126038) Application: << 好呀！你想听什么歌呢？
+W (126038) Display: Role:assistant
+W (126038) Display:      好呀！你想听什么歌呢？
+W (126448) EspUdp: UDP recv gap: 5566 ms
+I (127478) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (128698) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (128848) Application: TTS-STOP received
+I (128848) Application: TTS-STOP scheduled, state=6
+I (128848) StateMachine: State: speaking -> listening
+W (128848) Display: SetStatus: 聆听中...
+W (128858) Display: SetEmotion: neutral
+I (128858) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=43 dropped=0
+I (128868) AudioService: WAIT-DONE: dq=0 pq=0 pushed=43 dropped=0
+I (128878) AudioService: RESET-DECODER: dq=0 pq=0 pushed=43 dropped=0
+I (132668) Application: >> 洪湖水浪打浪。
+W (132668) Display: Role:user
+W (132668) Display:      洪湖水浪打浪。
+I (132678) StateMachine: State: listening -> speaking
+W (132678) Display: SetStatus: 说话中...
+I (132678) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (134668) Application: << % cuckoo.play_url...
+W (134678) Display: Role:assistant
+W (134678) Display:      % cuckoo.play_url...
+I (134678) Application: Abort speaking
+I (134678) CuckooCtrl: PlayOnlineMusic: aborting AI speech to play music
+I (134688) CuckooCtrl: PlayOpus: launching for http://120.55.47.160:8765/pcm?q=%E6%B4%AA%E6%B9%96%E6%B0%B4%E6%B5%AA%E6%89%93%E6%B5%AA
+I (134698) CuckooCtrl: PlayOpus: task started for http://120.55.47.160:8765/pcm?q=%E6%B4%AA%E6%B9%96%E6%B0%B4%E6%B5%AA%E6%89%93%E6%B5%AA
+I (134708) WifiStation: Setting WiFi power save level: PERFORMANCE (NONE)
+I (134718) wifi:Set ps type: 0, coexist: 0
+
+I (134718) CuckooCtrl: PlayOpus: connecting to 120.55.47.160:8765...
+I (134738) Application: TTS-STOP received
+I (134738) Application: TTS-STOP scheduled, state=6
+I (134738) StateMachine: State: speaking -> listening
+W (134738) Display: SetStatus: 聆听中...
+W (134738) Display: SetEmotion: neutral
+I (134748) AudioService: WAIT-PLAYBACK: dq=0 pq=0 pushed=0 dropped=0
+I (134748) AudioService: WAIT-DONE: dq=0 pq=0 pushed=0 dropped=0
+I (134758) CuckooCtrl: PlayOpus: connected to 120.55.47.160:8765
+I (134758) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (136698) CuckooCtrl: Heartbeat t=120s stack_hwm=6704 free_heap=5034572
+I (140288) CuckooCtrl: PlayOpus: HTTP 200
+I (140288) CuckooCtrl: PlayOpus: downloading raw PCM...
+I (141268) CuckooCtrl: PlayOpus: drain enabled (buffered 64208 samples in 978 ms)
+I (143848) SystemInfo: free sram: 62183 minimal sram: 52619
+I (148318) CuckooCtrl: PlayOpus: buf=78144 samples dl=362KB rate=45.1KB/s
+I (153848) SystemInfo: free sram: 58339 minimal sram: 52619
+I (156418) CuckooCtrl: PlayOpus: buf=79040 samples dl=610KB rate=37.8KB/s
+I (163848) SystemInfo: free sram: 58327 minimal sram: 52619
+I (164418) CuckooCtrl: PlayOpus: buf=79488 samples dl=854KB rate=35.4KB/s
+I (172518) CuckooCtrl: PlayOpus: buf=79104 samples dl=1102KB rate=34.2KB/s
+I (173848) SystemInfo: free sram: 61899 minimal sram: 52619
+I (178698) CuckooCtrl: Hourly chime trigger: 11:00
+I (178698) CuckooCtrl: Skipping chime: device busy (state=5, bg_audio=1)
+I (180518) CuckooCtrl: PlayOpus: buf=79424 samples dl=1342KB rate=33.4KB/s
+I (183848) SystemInfo: free sram: 58087 minimal sram: 52619
+I (188618) CuckooCtrl: PlayOpus: buf=78592 samples dl=1586KB rate=32.8KB/s
+I (193848) SystemInfo: free sram: 61963 minimal sram: 52619
+I (196698) CuckooCtrl: Heartbeat t=180s stack_hwm=6704 free_heap=5024492
+I (196718) CuckooCtrl: PlayOpus: buf=78528 samples dl=1834KB rate=32.5KB/s
+I (203848) SystemInfo: free sram: 58291 minimal sram: 52619
+I (204818) CuckooCtrl: PlayOpus: buf=79424 samples dl=2082KB rate=32.3KB/s
+I (212818) CuckooCtrl: PlayOpus: buf=79872 samples dl=2326KB rate=32.1KB/s
+I (213848) SystemInfo: free sram: 58303 minimal sram: 52619
+I (220818) CuckooCtrl: PlayOpus: buf=80000 samples dl=2570KB rate=31.9KB/s
+I (223848) SystemInfo: free sram: 58307 minimal sram: 52619
+I (228918) CuckooCtrl: PlayOpus: buf=78528 samples dl=2814KB rate=31.7KB/s
+I (233848) SystemInfo: free sram: 58339 minimal sram: 52619
+I (237018) CuckooCtrl: PlayOpus: buf=78976 samples dl=3058KB rate=31.6KB/s
+I (243848) SystemInfo: free sram: 61927 minimal sram: 52619
+I (245118) CuckooCtrl: PlayOpus: buf=79552 samples dl=3306KB rate=31.5KB/s
+I (249078) StateMachine: State: listening -> speaking
+W (249078) Display: SetStatus: 说话中...
+I (249088) AudioService: RESET-DECODER: dq=0 pq=0 pushed=0 dropped=0
+I (249218) CuckooCtrl: PlayOpus: AI speaking, music -> 30%
+W (249708) Display: SetEmotion: happy
+W (250318) EspUdp: UDP recv gap: 121475 ms
+I (250318) Application: << 好啦，那我先回去休息啦，下次想听歌再叫我哦！
+W (250318) Display: Role:assistant
+W (250328) Display:      好啦，那我先回去休息啦，下次想听歌再叫我哦！
+I (251328) AudioService: DECODE-Q: pushed=20 dropped=0 q_size=0
+I (252538) AudioService: DECODE-Q: pushed=40 dropped=0 q_size=0
+I (253118) CuckooCtrl: PlayOpus: buf=17216 samples dl=3438KB rate=30.5KB/s
+I (253728) AudioService: DECODE-Q: pushed=60 dropped=0 q_size=0
+I (254748) Application: TTS-STOP received
+I (254748) Application: TTS-STOP scheduled, state=6
+I (254748) StateMachine: State: speaking -> listening
+W (254748) Display: SetStatus: 聆听中...
+I (254748) MQTT: Received goodbye message, session_id: b030f66f
+W (254748) Display: SetEmotion: neutral
+I (254758) AudioService: WAIT-PLAYBACK: dq=0 pq=1 pushed=77 dropped=0
+I (254768) CuckooCtrl: PlayOpus: AI idle, music -> 100%
+I (254798) AudioService: WAIT-DONE: dq=0 pq=0 pushed=77 dropped=0
+I (254798) AudioService: RESET-DECODER: dq=0 pq=0 pushed=77 dropped=0
+I (254798) MQTT: Closing audio channel, send_goodbye: 0
+W (254808) Display: Role:system
+W (254808) Display:      
+I (254808) StateMachine: State: listening -> idle
+W (254818) Display: SetStatus: 待命
+W (254818) Display: SetEmotion: neutral
+I (254838) MQTT: Received goodbye message, session_id: b030f66f
+I (254838) MQTT: Closing audio channel, send_goodbye: 0
+W (254838) Display: Role:system
+W (254838) Display:      
+I (254948) CuckooCtrl: Device sleeping �� closing bird door
+I (257298) CuckooCtrl: Heartbeat t=240s stack_hwm=6704 free_heap=4969956
+I (261278) CuckooCtrl: PlayOpus: buf=78640 samples dl=3811KB rate=31.5KB/s
+I (263848) SystemInfo: free sram: 57775 minimal sram: 52619
+I (269278) CuckooCtrl: PlayOpus: buf=79664 samples dl=4063KB rate=31.5KB/s
+I (273848) SystemInfo: free sram: 57531 minimal sram: 52619
+I (277378) CuckooCtrl: PlayOpus: buf=79088 samples dl=4315KB rate=31.5KB/s
+I (283848) SystemInfo: free sram: 57743 minimal sram: 52619
+I (285478) CuckooCtrl: PlayOpus: buf=78512 samples dl=4567KB rate=31.5KB/s
+I (293478) CuckooCtrl: PlayOpus: buf=79536 samples dl=4819KB rate=31.5KB/s
+I (293848) SystemInfo: free sram: 58259 minimal sram: 52619
+I (301578) CuckooCtrl: PlayOpus: buf=78960 samples dl=5071KB rate=31.4KB/s
+I (303848) SystemInfo: free sram: 57743 minimal sram: 52619
+I (309778) CuckooCtrl: PlayOpus: buf=78832 samples dl=5327KB rate=31.4KB/s
+I (313848) SystemInfo: free sram: 58255 minimal sram: 52619
+I (317298) CuckooCtrl: Heartbeat t=300s stack_hwm=6704 free_heap=4963208
+I (317778) CuckooCtrl: PlayOpus: buf=79856 samples dl=5579KB rate=31.4KB/s
+I (323848) SystemInfo: free sram: 57751 minimal sram: 52619
+I (325878) CuckooCtrl: PlayOpus: buf=79280 samples dl=5831KB rate=31.4KB/s
+I (333848) SystemInfo: free sram: 58271 minimal sram: 52619
+I (333978) CuckooCtrl: PlayOpus: buf=78704 samples dl=6083KB rate=31.4KB/s
+I (341978) CuckooCtrl: PlayOpus: buf=79728 samples dl=6335KB rate=31.4KB/s
+I (343848) SystemInfo: free sram: 57043 minimal sram: 52619
+I (349978) CuckooCtrl: PlayOpus: buf=78704 samples dl=6583KB rate=31.4KB/s
+I (353278) CuckooCtrl: PlayOpus: server closed connection
+I (353848) SystemInfo: free sram: 56855 minimal sram: 52619
+I (358278) CuckooCtrl: PlayOpus: done 217989ms, dl=6685KB
+I (363848) SystemInfo: free sram: 85291 minimal sram: 52619
+I (373848) SystemInfo: free sram: 83747 minimal sram: 52619
+I (377298) CuckooCtrl: Heartbeat t=360s stack_hwm=6704 free_heap=4972984
+I (383848) SystemInfo: free sram: 84263 minimal sram: 52619
+I (393848) SystemInfo: free sram: 84775 minimal sram: 52619
+I (403848) SystemInfo: free sram: 84263 minimal sram: 52619
+I (413848) SystemInfo: free sram: 82719 minimal sram: 52619
+I (423848) SystemInfo: free sram: 84267 minimal sram: 52619
+I (433848) SystemInfo: free sram: 84719 minimal sram: 52619
+I (437298) CuckooCtrl: Heartbeat t=420s stack_hwm=6704 free_heap=4966584
+I (443848) SystemInfo: free sram: 83751 minimal sram: 52619
+I (453848) SystemInfo: free sram: 84267 minimal sram: 52619
+I (463848) SystemInfo: free sram: 83751 minimal sram: 52619
+I (473848) SystemInfo: free sram: 84267 minimal sram: 52619
+I (483848) SystemInfo: free sram: 84779 minimal sram: 52619
+I (493848) SystemInfo: free sram: 84255 minimal sram: 52619
+I (497298) CuckooCtrl: Heartbeat t=480s stack_hwm=6704 free_heap=4972460
+I (503848) SystemInfo: free sram: 83751 minimal sram: 52619
+I (513848) SystemInfo: free sram: 82659 minimal sram: 52619
+I (523848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (533848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (543848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (553848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (557298) CuckooCtrl: Heartbeat t=540s stack_hwm=6704 free_heap=4974008
+I (563848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (573848) SystemInfo: free sram: 82683 minimal sram: 52619
+I (583848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (593848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (603848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (613848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (617298) CuckooCtrl: Heartbeat t=600s stack_hwm=6704 free_heap=4972464
+I (623848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (633848) SystemInfo: free sram: 84263 minimal sram: 52619
+I (643848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (653848) SystemInfo: free sram: 83231 minimal sram: 52619
+I (663848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (673848) SystemInfo: free sram: 83171 minimal sram: 52619
+I (677298) CuckooCtrl: Heartbeat t=660s stack_hwm=6704 free_heap=4966064
+I (683848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (693848) SystemInfo: free sram: 83747 minimal sram: 52619
+I (703848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (713848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (723848) SystemInfo: free sram: 84259 minimal sram: 52619
+I (733848) SystemInfo: free sram: 83743 minimal sram: 52619
+I (737298) CuckooCtrl: Heartbeat t=720s stack_hwm=6704 free_heap=4972980
+I (743848) SystemInfo: free sram: 84259 minimal sram: 52619
