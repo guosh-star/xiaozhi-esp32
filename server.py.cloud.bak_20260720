@@ -757,7 +757,6 @@ async function play(el){
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
@@ -1001,39 +1000,36 @@ async function play(el){
         keyword = apply_aliases(keyword)
         print(f"[{fmt}] Searching: {keyword}")
 
-        # 含空格查询已指定歌手，跳过多版本检测直接播
-        if " " not in keyword:
-            # 多版本检测：先搜索，同一首歌有多个歌手版本时返回选项
-            try:
-                songs, _ = unified_search(keyword, 6)
-                songs = rank_songs(songs or [], keyword)
-                if songs and len(songs) >= 2:
-                    import re as _re_multi
-                    top_name = _normalize(songs[0].get("name", ""))
-                    artists = []
-                    seen = set()
-                    for s in songs[:6]:
-                        sn = _normalize(s.get("name", ""))
-                        sa = s.get("singer", "")
-                        sn_clean = _re_multi.sub(r'[\(（][^)）]*[\)）]', '', sn).strip()
-                        top_clean = _re_multi.sub(r'[\(（][^)）]*[\)）]', '', top_name).strip()
-                        if (sn_clean == top_clean or top_clean in sn_clean or sn_clean in top_clean) and sa and sa not in seen:
-                            seen.add(sa)
-                            artists.append(sa)
-                    if len(artists) >= 2:
-                        from urllib.parse import quote as url_quote
-                        self._json({
-                            "multi_artist": True,
-                            "song": songs[0].get("name", keyword),
-                            "artists": artists,
-                                                    "hint": "多个歌手演唱了这首歌，请告诉用户选择一位再点歌"
-                        })
-                        print(f"[{fmt}] MULTI-ARTIST: {top_name} by {artists}")
-                        return
-            except Exception as e:
-                print(f"[{fmt}] multi-artist check skipped: {e}")
-    
-        # 单版本或无指定歌手，直接播放
+        # 多版本检测：先搜索，同一首歌有多个歌手版本时返回选项
+        try:
+            songs, _ = unified_search(keyword, 6)
+            songs = rank_songs(songs or [], keyword)
+            if songs and len(songs) >= 2:
+                import re as _re_multi
+                top_name = _normalize(songs[0].get("name", ""))
+                artists = []
+                seen = set()
+                for s in songs[:6]:
+                    sn = _normalize(s.get("name", ""))
+                    sa = s.get("singer", "")
+                    sn_clean = _re_multi.sub(r'[\(（][^)）]*[\)）]', '', sn).strip()
+                    top_clean = _re_multi.sub(r'[\(（][^)）]*[\)）]', '', top_name).strip()
+                    if (sn_clean == top_clean or top_clean in sn_clean or sn_clean in top_clean) and sa and sa not in seen:
+                        seen.add(sa)
+                        artists.append(sa)
+                if len(artists) >= 2:
+                    from urllib.parse import quote as url_quote
+                    self._json({
+                        "multi_artist": True,
+                        "song": songs[0].get("name", keyword),
+                        "artists": artists,
+                                                "hint": "多个歌手演唱了这首歌，请告诉用户选择一位再点歌"
+                    })
+                    print(f"[{fmt}] MULTI-ARTIST: {top_name} by {artists}")
+                    return
+        except Exception as e:
+            print(f"[{fmt}] multi-artist check skipped: {e}")
+
         song_info, audio_url = self._find_playable(keyword)
         if song_info is None:
             self.send_error(404, f"No result for: " + "{keyword".encode("ascii","replace").decode())
