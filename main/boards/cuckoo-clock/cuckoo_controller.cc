@@ -1,4 +1,4 @@
-// ============================================
+﻿// ============================================
 // �������ӿ����� (Cuckoo Controller)
 //
 // ���ܸ�����
@@ -1080,6 +1080,9 @@ int Mp3Player::PlayOpus(const char* url) {
     stop_requested_ = false;  // ��� Stop() ���õı�־
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
+    // Clear stale bg audio from previous session to prevent startup noise burst
+    Application::GetInstance().GetAudioService().ClearBackgroundAudio();
+
     if (strlen(url) >= 512) {
         ESP_LOGE(TAG, "PlayOpus: URL too long (%u bytes)", (unsigned)strlen(url));
         return -1;
@@ -1459,8 +1462,13 @@ serial_fallback:
         if (ai_now != ai_speaking) {
             ai_speaking = ai_now;
             app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
-            ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%",
-                     ai_now ? "speaking" : "quiet", ai_now ? 50 : 100);
+            int heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+            int bg_fill = app.GetAudioService().GetBgAudioFillLevel();
+            int task_hwm = uxTaskGetStackHighWaterMark(NULL);
+            ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%, heap=%d sram=%d bg_buf=%d task_hwm=%d",
+                     ai_now ? "speaking" : "quiet", ai_now ? 50 : 100,
+                     heap_free / 1024, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                     bg_fill, task_hwm);
         }
 
  // When AI is speaking, pause TCP download to free WiFi airtime for
@@ -1508,8 +1516,15 @@ serial_fallback:
             size_t fill = app.GetAudioService().GetBgAudioFillLevel();
             int64_t elapsed = now - t0;
             float dl_rate = elapsed > 0 ? (float)total_dl * 1000000.0f / (float)elapsed : 0;
-            ESP_LOGI(TAG, "PlayOpus: buf=%d samples dl=%dKB rate=%.1fKB/s",
-                     (int)fill, (int)(total_dl / 1024), dl_rate / 1024.0f);
+            bool duck_now = (app.GetDeviceState() == kDeviceStateSpeaking || 
+                            app.GetDeviceState() == kDeviceStateConnecting);
+            int heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+            int sram_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+            int task_hwm = uxTaskGetStackHighWaterMark(NULL);
+            bool aec_active = true;
+            ESP_LOGI(TAG, "PlayOpus: buf=%d dl=%dKB rate=%.1fKB/s duck=%d%% heap=%dKB sram=%d task_hwm=%d aec=%d",
+                     (int)fill, (int)(total_dl / 1024), dl_rate / 1024.0f, duck_now ? 50 : 100,
+                     heap_free / 1024, sram_free, task_hwm, aec_active ? 1 : 0);
             app.GetAudioService().RefreshInputTimestamp();
             last_refresh = now;
         }
@@ -2093,8 +2108,17 @@ void CuckooStateMachine::PlayDogBark() {
     size_t pcm_bytes = wav_size - 44;
     size_t num_samples = pcm_bytes / sizeof(int16_t);
 
-    if (mp3_) {
-        mp3_->LoadDogBark(pcm, num_samples);
+    // Mix dog bark on top of existing bg audio (overlap, not replace)
+    // or fall back to OutputRawPcm if bg audio is not active (e.g. DogShow)
+    auto& app = Application::GetInstance();
+    if (app.GetAudioService().IsBgAudioActive()) {
+        app.GetAudioService().MixIntoBackgroundAudio(pcm, num_samples, 0.9f);
+        ESP_LOGI(TAG, "DogBark: mixed %u samples into bg audio", (unsigned)num_samples);
+    } else {
+        app.GetAudioService().OutputRawPcm(pcm, num_samples, sample_rate);
+        int play_ms = (int)(num_samples * 1000 / sample_rate);
+        vTaskDelay(pdMS_TO_TICKS(play_ms + 100));
+        ESP_LOGI(TAG, "DogBark: played %u samples via OutputRawPcm", (unsigned)num_samples);
     }
 }
 
@@ -2111,7 +2135,7 @@ void CuckooStateMachine::RunDanceIntro() {
     // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
-        vTaskDelay(pdMS_TO_TICKS(920));
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     PlayDogBark();
@@ -2251,15 +2275,19 @@ void CuckooStateMachine::RunDanceFinale() {
 
     // ���ڽǶȲ�����279��/s��40s��31Ȧʵ�⣩��ֻ��360�����ڵĲ��
     if (m1_fwd_time_ > 0 || m1_rev_time_ > 0) {
-        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // ��ת�ǣ�+��ת,-��ת��
-        int rem = (int)(net % 360); if (rem < 0) rem = -rem;  // �������
+        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // 旋转角度：+正转,-反转
+        int rem = (int)(net % 360); if (rem < 0) rem = -rem;  // 取绝对值
         int ms; bool go_fwd;
         if (rem <= 180) {
             ms = rem * 1000 / 279;
-            go_fwd = (net < 0);  // netΪ��=��ת����������
+            go_fwd = (net < 0);  // net为负=反转太多，补正转
         } else {
             ms = (360 - rem) * 1000 / 279;
-            go_fwd = (net >= 0);  // netΪ��=��ת��������������һȦ
+            go_fwd = (net >= 0);  // net为正=正转太多，补反转绕一圈
+        }
+        // 反转<正转时，补偿×1.3
+        if (ms > 0 && m1_fwd_time_ > m1_rev_time_) {
+            ms = ms * 135 / 100;
         }
         if (ms > 0) {
             ESP_LOGI(TAG, "Dance: final: net=%lddeg rem=%ddeg, %s %dms", net, rem, go_fwd ? "fwd" : "rev", ms);
@@ -2292,6 +2320,7 @@ void CuckooStateMachine::RunDanceFinale() {
     if (dog_servo_) {
         int dog_cur = dog_state_.angle;
         dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * 15);
+        dog_state_.angle = 180;
     }
     // ����
     MotorPowerOn();
@@ -2502,16 +2531,21 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
         gpio_set_level(LED_B_GPIO, 1);
         if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
 
-    // Phase 2: bell chime - ����0013.mp3��PCM������ѭ�����ű���MP3�����������򿪵Ķ���
+    // Phase 2: music + dance (bg audio, same path as start_show/LindaShow/GardenShow)
         if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
-            sm->mp3_->PlayBgMusic(sm->total_calls_);
-            // �����ֿ�ʼ���ţ�����3�룩
+            sm->mp3_->SetDisableDucking(true);
+            int song = sm->total_calls_;
+            sm->show_music_index_ = song;
+            xTaskCreatePinnedToCore([](void* arg) {
+                auto* s = (CuckooStateMachine*)arg;
+                s->PlayShowMusicBg(s->show_music_index_);
+                vTaskDelete(nullptr);
+            }, "show_bg", 4096, sm, 4, nullptr, 1);
             int wait_start = 0;
-            while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
+            while (wait_start < 6 && sm->is_running_ && !Application::GetInstance().GetAudioService().IsBgAudioActive()) {
                 vTaskDelay(pdMS_TO_TICKS(500));
                 wait_start++;
             }
-
             sm->violin_state_.fwd_count = 0;
             sm->violin_state_.rev_count = 0;
 
@@ -2563,8 +2597,8 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
 
     // ====== Done ======
     if (sm->mp3_) sm->mp3_->Stop();
-    sm->is_running_ = false;
-    sm->current_performance_ = kPerformanceNone;
+
+
     sm->current_phase_ = kPhaseIdle;
     sm->MotorPowerOff();
     // �ָ����Ѵʼ�⣨���� EnableVoiceProcessing �� ���� ResetDecoder ���� TTS��
@@ -2676,6 +2710,24 @@ void CuckooStateMachine::LoadQuietMode() {
         if (nvs_get_i8(nvs, "qmode", &val) == ESP_OK) quiet_mode_ = (int)val;
         if (nvs_get_i8(nvs, "qstart", &val) == ESP_OK) quiet_start_ = (int)val;
         if (nvs_get_i8(nvs, "qend", &val) == ESP_OK) quiet_end_ = (int)val;
+        nvs_close(nvs);
+    }
+}
+
+void CuckooStateMachine::SaveKidsActive() {
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_i8(nvs, "kids", (int8_t)kids_active_.load());
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
+void CuckooStateMachine::LoadKidsActive() {
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READONLY, &nvs) == ESP_OK) {
+        int8_t val;
+        if (nvs_get_i8(nvs, "kids", &val) == ESP_OK) kids_active_ = (bool)val;
         nvs_close(nvs);
     }
 }
@@ -2892,48 +2944,58 @@ void CuckooStateMachine::DogShowTask() {
     is_running_ = true;
     current_performance_ = kPerformanceManual;
     ESP_LOGI(TAG, "DogShow: start");
+    is_running_ = true;
+    current_performance_ = kPerformanceManual;
+    ESP_LOGI(TAG, "DogShow: start");
 
-    MotorPowerOn();  // �򿪵����Դ��P-MOSFET ���� = ͨ�磩
+    MotorPowerOn();
 
-    // ˮ��ת��
+    // 1. Water wheel on
     if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
 
-    // ����
+    // 2. Open door
     if (m2_) {
         m2_->Forward(MAIN_DOOR_OPEN_SPEED);
         vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
         m2_->Stop();
     }
 
-    // С�������������180��ɨ��20�㣨��λ�Ƕ�180�㣬��StartShowͳһ��
+    // 3. Dog tail out: 180->20, 1200ms
     if (dog_servo_) {
-        dog_servo_->Sweep(180, 20, (180 - 20) * DOG_TAIL_STEP_MS);
+        dog_servo_->Sweep(180, 20, 1200);
         dog_state_.angle = 20;
     }
-    // С�����ǰ�� 920ms
+
+    // 4. Dog forward
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
 
-    // ������һ��
+    // 5. Bark #1
     PlayDogBarkDirect();
 
-    // ҡͷ���� 10 �루�����0~60��֮�����ذڶ���ͬ������ dog_state_.angle��
+    // 6. Tail to 0 deg
+    if (dog_servo_) {
+        dog_servo_->Sweep(20, 0, 300);
+        dog_state_.angle = 0;
+    }
+
+    // 7. Wag 10s: 0<->60
     unsigned long start = xTaskGetTickCount() * portTICK_PERIOD_MS;
-    unsigned long end_time = start + 10000;  // ����10��
-    int sweep_dir = 0;  // 0: 0->60��, 1: 60->0��
+    unsigned long end_time = start + 10000;
+    int sweep_dir = 0;
     while (is_running_ && (xTaskGetTickCount() * portTICK_PERIOD_MS) < end_time) {
-        if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ����ˮ��ת��
+        if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
         if (dog_servo_) {
             if (sweep_dir == 0) {
-                dog_servo_->Sweep(0, 60, 60 * DOG_TAIL_STEP_MS);  // 0->60��
+                dog_servo_->Sweep(0, 60, 900);
                 dog_state_.angle = 60;
                 vTaskDelay(pdMS_TO_TICKS(500));
                 sweep_dir = 1;
             } else {
-                dog_servo_->Sweep(60, 0, 60 * DOG_TAIL_STEP_MS);  // 60->0��
+                dog_servo_->Sweep(60, 0, 900);
                 dog_state_.angle = 0;
                 vTaskDelay(pdMS_TO_TICKS(500));
                 sweep_dir = 0;
@@ -2942,44 +3004,49 @@ void CuckooStateMachine::DogShowTask() {
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    // ��������һ��
+    // 8. Bark #2
     PlayDogBarkDirect();
 
-    // С���˻أ������ת920ms��
+    // 9. Tail back to 20 deg
+    if (dog_servo_) {
+        dog_servo_->Sweep(0, 20, 300);
+        dog_state_.angle = 20;
+    }
+
+    // 10. Dog reverse
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
-    // ����ӵ�ǰ�Ƕȹ�λ��180�㣨��StartShowͳһ���� dog_state_.angle �������䣩
+
+    // 11. Tail back to 180 deg
     if (dog_servo_) {
-        int dog_cur = dog_state_.angle;
-        dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * DOG_TAIL_STEP_MS);
+        dog_servo_->Sweep(20, 180, 1200);
+        dog_state_.angle = 180;
     }
 
-    // С���˻غ��ͣˮ��
+    // 12. Stop water wheel
     if (water_bird_) water_bird_->Stop();
 
-    // ���ţ����ŵ����ת��
+    // 13. Close door
     if (m2_) {
         m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
         vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
         m2_->Stop();
     }
 
-    // === ��4���������ͻָ� ===
-    MotorPowerOff();  // �رյ����Դ
+    // Cleanup
+    MotorPowerOff();
     is_running_ = false;
     current_performance_ = kPerformanceNone;
 
-    // �ָ�����
     if (app.GetDeviceState() != kDeviceStateIdle) {
         app.AbortSpeaking(kAbortReasonNone);
         for (int i = 0; i < 10 && app.GetDeviceState() != kDeviceStateIdle; i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
-    // �����ǰ��idle����ʽ�ָ�������ֵ���ӿ����񲻼��ͬ״̬��
     if (app.GetDeviceState() == kDeviceStateIdle)
         app.GetAudioService().SetWakeWordThreshold(0.02f);
     ESP_LOGI(TAG, "DogShow: done");
@@ -3031,12 +3098,11 @@ void CuckooStateMachine::PlayWavAsset(const char* filename) {
 
     ESP_LOGI(TAG, "PlayWavAsset: %s %u samples, %d Hz", filename, (unsigned)num_samples, sample_rate);
     auto& app = Application::GetInstance();
-    // ���б����������󣬲���Ҫ���棻���� WAV����л�����ȣ���Ҫ����
     bool is_bark = (strcmp(filename, "dog_bark.wav") == 0);
     if (is_bark) {
+        // DogShow path: no bg audio, use OutputRawPcm directly
         app.GetAudioService().OutputRawPcm(pcm, num_samples, sample_rate);
     } else {
-        // 4�����棨Լ+12dB������ֹ OutputRawPcm �������������Ƶ�������̫С
         std::vector<int16_t> amplified(num_samples);
         const int gain = 1;
         for (size_t i = 0; i < num_samples; i++) {
@@ -3273,6 +3339,10 @@ void CuckooStateMachine::LindaShow() {
         } else {
             ms = (360 - rem) * 1000 / 279;
             go_fwd = (net >= 0);
+        }
+        // 反转<正转时，补偿×1.3
+        if (ms > 0 && m1_fwd_time_ > m1_rev_time_) {
+            ms = ms * 135 / 100;
         }
         if (ms > 0) {
             ESP_LOGI(TAG, "LindaShow: final: net=%lddeg rem=%ddeg, %s %dms", net, rem, go_fwd ? "fwd" : "rev", ms);
@@ -3541,19 +3611,11 @@ void CuckooStateMachine::StartShow() {
  */
 void CuckooStateMachine::StartShowTask() {
     auto& app0 = Application::GetInstance();
-    // Wait for AI TTS to finish (user request 2026-07-17: avoid audio clash)
-    int waited = 0;
-    while (waited < 50 && is_running_) {
-        if (app0.GetDeviceState() != kDeviceStateSpeaking) break;
-        vTaskDelay(pdMS_TO_TICKS(100));
-        waited++;
-    }
-    if (!is_running_) return;
-    ESP_LOGI(TAG, "Show: AI done (%d ms), starting", waited * 100);
+    // Start immediately — ShowTask now uses PlayShowMusicBg (bg audio ring buffer)
+    // which the audio service mixes with TTS via ducking, no I2S conflict.
+    ESP_LOGI(TAG, "Show: starting immediately (bg audio + ducking handles overlap)");
 
-    // Lock out AI during show (wake word threshold 0.99 = deaf)
     app0.GetAudioService().SetWakeWordThreshold(0.99f);
-    app0.GetAudioService().SetOutputMuted(true);  // also mute TTS during show
 
 MotorPowerOn();
     ESP_LOGI(TAG, "Show starting: dance + dog + music");
@@ -3589,11 +3651,20 @@ void CuckooStateMachine::ShowTask(void* arg) {
         next = 1;
     }
     sm->show_music_index_ = next;
-    if (sm->mp3_) sm->mp3_->PlayBgMusic(next);
+    // Use PlayShowMusicBg (bg audio ring buffer) like LindaShow/GardenShow
+    // so audio service mixes music with TTS via ducking — no I2S conflict.
+    if (sm->mp3_) {
+        sm->mp3_->SetDisableDucking(true);
+        xTaskCreatePinnedToCore([](void* arg) {
+            auto* s = (CuckooStateMachine*)arg;
+            s->PlayShowMusicBg(s->show_music_index_);
+            vTaskDelete(nullptr);
+        }, "show_bg", 4096, sm, 4, nullptr, 1);
+    }
 
-    // �����ֿ�ʼ���ţ�����3�룩
+    // 等待音乐开始播放（bg audio 缓冲就绪）
     int wait_start = 0;
-    while (wait_start < 6 && sm->is_running_ && !sm->mp3_->IsPlaying()) {
+    while (wait_start < 6 && sm->is_running_ && !Application::GetInstance().GetAudioService().IsBgAudioActive()) {
         vTaskDelay(pdMS_TO_TICKS(500));
         wait_start++;
     }
@@ -3615,8 +3686,8 @@ void CuckooStateMachine::ShowTask(void* arg) {
     // ���ֽ������ָ����Ѵʺ���������
     // ע�⣺StartShow �� AbortSpeaking ������״̬���� listening���� idle����
     // ֱ�ӻָ����������ᵼ�»��Ѵ��� listening ״̬���� AbortSpeaking �� audio_input ����
-    sm->is_running_ = false;
-    sm->current_performance_ = kPerformanceNone;
+
+
     if (sm->mp3_) sm->mp3_->SetDisableDucking(false);  // �ָ� duck
 
     // ȷ���豸�ص� idle �ٻָ���������
@@ -3627,10 +3698,14 @@ void CuckooStateMachine::ShowTask(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
+    // Clean up bg audio to ensure get_status reports false after show
+    app.GetAudioService().EnableBgAudioDrain(false);
     app.GetAudioService().SetOutputMuted(false);
     ESP_LOGI(TAG, "Show: music ended, wake word threshold will be restored by clock task");
 
     sm->RunDanceFinale();
+    sm->is_running_ = false;
+    sm->current_performance_ = kPerformanceNone;
 
     // ====== Stop water wheel + LEDs off ======
     if (sm->water_bird_) sm->water_bird_->Stop();
@@ -3777,6 +3852,200 @@ void CuckooStateMachine::BirdJumpShort() {
     gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // ������ϵ磬С�����
     int cooldown = 300 + (esp_random() % 401);  // ���300-700ms��ȴʱ��
     vTaskDelay(pdMS_TO_TICKS(cooldown));
+}
+
+void CuckooStateMachine::MusicDanceTick() {
+    // Mp3Player tracks playback state (stays true during AI speech ducking),
+    // while IsBgAudioActive() may briefly drop when audio service clears buffers.
+    // Using both ensures music dance survives AI conversations.
+    bool music_playing = (mp3_ && mp3_->IsPlaying()) ||
+                         Application::GetInstance().GetAudioService().IsBgAudioActive();
+    // Track kids_active_ transition for mid-music changes
+    static bool was_kids_active = true;
+    bool kids_now = kids_active_.load();
+
+    if (music_playing && !IsRunning()) {
+        if (music_dance_enabled_ != 1) {
+            music_dance_phase_ = 0;
+            music_dance_enabled_ = 1;
+            // Music just started: dog comes out (no bark) — only if kids active
+            dog_outro_done_ = false;
+            if (kids_now) {
+                xTaskCreatePinnedToCore([](void* arg) {
+                    ((CuckooStateMachine*)arg)->MusicDogIntro();
+                    vTaskDelete(nullptr);
+                }, "dog_intro", 4096, this, 5, nullptr, 1);
+            }
+            was_kids_active = kids_now;
+        }
+
+        // Mid-music transition: kids became active → bring dog out
+        if (!was_kids_active && kids_now) {
+            was_kids_active = true;
+            dog_outro_done_ = false;
+            xTaskCreatePinnedToCore([](void* arg) {
+                ((CuckooStateMachine*)arg)->MusicDogIntro();
+                vTaskDelete(nullptr);
+            }, "dog_intro", 4096, this, 5, nullptr, 1);
+        }
+        // Mid-music transition: kids became resting → stop & put dog away
+        if (was_kids_active && !kids_now) {
+            was_kids_active = false;
+            if (m1_) m1_->Stop();
+            if (violin_servo_) violin_servo_->SetAngle(90);
+            if (!dog_outro_done_) {
+                dog_outro_done_ = true;
+                xTaskCreatePinnedToCore([](void* arg) {
+                    ((CuckooStateMachine*)arg)->MusicDogOutro();
+                    vTaskDelete(nullptr);
+                }, "dog_outro", 4096, this, 5, nullptr, 1);
+            }
+        }
+
+        int phase = music_dance_phase_ % 8;
+
+        // Wait for dog_intro to finish before taking over servo/motor
+        if (kids_now && dog_intro_done_) {
+            // Dance motor: brief pulse on phase 0 (fwd) and 4 (rev)
+            if (phase == 0 && m1_) {
+                m1_->Forward();
+                vTaskDelay(pdMS_TO_TICKS(70));
+                m1_->Stop();
+                m1_music_fwd_count_++;
+            } else if (phase == 4 && m1_) {
+                m1_->Reverse();
+                vTaskDelay(pdMS_TO_TICKS(87));
+                m1_->Stop();
+                m1_music_rev_count_++;
+            }
+            // Guitar + Dog servos: sync to same phase rhythm
+            // Phase 0-3: forward beat, Phase 4-7: backward beat
+            static int guitar_angle = 90;
+            static int dog_angle = 35;
+            bool forward_beat = (phase <= 3);
+            int guitar_target = forward_beat ? 110 : 70;   // +/-20
+            int dog_target = forward_beat ? 35 : 10;         // dog wags 10-35
+
+            if (violin_servo_) {
+                if (guitar_angle < guitar_target) {
+                    guitar_angle += 10;
+                    if (guitar_angle > guitar_target) guitar_angle = guitar_target;
+                } else if (guitar_angle > guitar_target) {
+                    guitar_angle -= 10;
+                    if (guitar_angle < guitar_target) guitar_angle = guitar_target;
+                }
+                violin_servo_->SetAngle(guitar_angle);
+            }
+            if (dog_servo_) {
+                if (dog_angle < dog_target) {
+                    dog_angle += 10;
+                    if (dog_angle > dog_target) dog_angle = dog_target;
+                } else if (dog_angle > dog_target) {
+                    dog_angle -= 10;
+                    if (dog_angle < dog_target) dog_angle = dog_target;
+                }
+                dog_servo_->SetAngle(dog_angle);
+                dog_state_.angle = dog_angle;
+            }
+        }
+        music_dance_phase_++;
+    } else {
+        was_kids_active = kids_now;
+        if (music_dance_enabled_ == 1) {
+            // Balance M1 motor: reverse must match forward
+            if (m1_ && m1_music_rev_count_ < m1_music_fwd_count_) {
+                int diff = m1_music_fwd_count_ - m1_music_rev_count_;
+                ESP_LOGI(TAG, "MusicDance: fwd=%d rev=%d, adding %d reverse pulses", m1_music_fwd_count_, m1_music_rev_count_, diff);
+                for (int i = 0; i < diff; i++) {
+                    m1_->Reverse();
+                    vTaskDelay(pdMS_TO_TICKS(78));
+                    m1_->Stop();
+                    vTaskDelay(pdMS_TO_TICKS(30));
+                }
+            }
+            m1_music_fwd_count_ = 0;
+            m1_music_rev_count_ = 0;
+            if (m1_) m1_->Stop();
+            if (violin_servo_) violin_servo_->SetAngle(90);
+            // Music ended: dog goes back, close door (only if kids were active)
+            if (!dog_outro_done_) {
+                dog_outro_done_ = true;
+                xTaskCreatePinnedToCore([](void* arg) {
+                    ((CuckooStateMachine*)arg)->MusicDogOutro();
+                    vTaskDelete(nullptr);
+                }, "dog_outro", 4096, this, 5, nullptr, 1);
+            }
+        }
+        dog_intro_done_ = false;
+        music_dance_enabled_ = 0;
+    }
+}
+
+void CuckooStateMachine::MusicDogIntro() {
+    MotorPowerOn();
+    auto* ctx = new DoorOpenCtx{this};
+    xTaskCreatePinnedToCore(DoorOpenTask, "door_open_m", 2048, ctx, 5, nullptr, 1);
+    if (dog_servo_) {
+        dog_servo_->Sweep(180, 20, (180 - 10) * 15);
+    }
+    if (m3_) {
+        m3_->Forward(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        m3_->Stop();
+    }
+    if (dog_servo_) {
+        dog_servo_->Sweep(20, 35, 25 * 15);
+    }
+    dog_intro_done_ = true;
+    ESP_LOGI(TAG, "MusicDogIntro: done, handing over to MusicDanceTick");
+}
+
+void CuckooStateMachine::MusicDogOutro() {
+    // First smooth return to 30deg, then back to home
+    if (dog_servo_) {
+        int cur = dog_state_.angle;
+        if (cur > 30) dog_servo_->Sweep(cur, 20, (cur - 30) * 15);
+    }
+    if (m3_) {
+        m3_->Reverse(DOG_SPEED_PERCENT);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        m3_->Stop();
+    }
+    if (dog_servo_) {
+        dog_servo_->Sweep(20, 180, (180 - 30) * 15);
+    }
+    CloseDoor();
+    MotorPowerOff();
+    dog_intro_done_ = false;
+}
+
+void CuckooStateMachine::KidsComeOut() {
+    kids_active_ = true;
+    SaveKidsActive();
+    ESP_LOGI(TAG, "KidsComeOut: kids active, will dance with music");
+}
+
+void CuckooStateMachine::KidsRest() {
+    kids_active_ = false;
+    SaveKidsActive();
+    // Balance M1 motor: reverse must match forward before stopping
+    if (m1_ && m1_music_rev_count_ < m1_music_fwd_count_) {
+        int diff = m1_music_fwd_count_ - m1_music_rev_count_;
+        ESP_LOGI(TAG, "KidsRest: fwd=%d rev=%d, adding %d reverse pulses", m1_music_fwd_count_, m1_music_rev_count_, diff);
+        for (int i = 0; i < diff; i++) {
+            m1_->Reverse();
+            vTaskDelay(pdMS_TO_TICKS(78));
+            m1_->Stop();
+            vTaskDelay(pdMS_TO_TICKS(30));
+        }
+    }
+    m1_music_fwd_count_ = 0;
+    m1_music_rev_count_ = 0;
+    // Stop all movement
+    if (m1_) m1_->Stop();
+    if (violin_servo_) violin_servo_->SetAngle(90);
+    if (dog_servo_) dog_servo_->SetAngle(dog_state_.angle);  // hold current position
+    ESP_LOGI(TAG, "KidsRest: kids resting, no movement");
 }
 
 void CuckooStateMachine::OpenBirdDoor() {
@@ -4246,6 +4515,23 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"music_stopped\"}");
         });
 
+    // === 小朋友们控制 ===
+    mcp.AddTool("cuckoo.kids_come_out",
+        "让小朋友们出来一起欣赏音乐：小狗舵机、舞蹈电机、吉他舵机随音乐节奏摆动。",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->KidsComeOut();
+            return std::string("{\"status\": \"kids_come_out\"}");
+        });
+
+    mcp.AddTool("cuckoo.kids_rest",
+        "让小朋友们回去休息：停止所有动作（小狗舵机、舞蹈电机、吉他舵机不动），只保留音乐播放。",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->KidsRest();
+            return std::string("{\"status\": \"kids_rest\"}");
+        });
+
  // === Hardware (wiring later) ===
     mcp.AddTool("cuckoo.dance",
         "Dance routine: M1+M2 motors + violin servo.",
@@ -4255,20 +4541,6 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"dancing\"}");
         });
 
-    {
-        PropertyList pl;
-        pl.AddProperty(Property("seconds", kPropertyTypeInteger, 1, 60));
-        mcp.AddTool("cuckoo.motor_test",
-            "�赸����ٶȲ��ԣ���תָ��������1~60s����������Ȧ����ת�١������20/30/40������ȡƽ����",
-            pl,
-            [this](const PropertyList& props) -> ReturnValue {
-                int s = props["seconds"].value<int>();
-                state_machine_->MotorTest(s);
-                char json[64];
-                snprintf(json, sizeof(json), "{\"status\": \"ok\", \"seconds\": %d}", s);
-                return std::string(json);
-            });
-    }
 
     mcp.AddTool("cuckoo.open_door",
         "Open bird door motor.",
@@ -4286,43 +4558,8 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"door closed\"}");
         });
 
-    mcp.AddTool("cuckoo.bird_jump",
-        "Bird jump (electromagnet pulse).",
-        PropertyList(),
-        [this](const PropertyList& props) -> ReturnValue {
-            state_machine_->BirdJumpOnce();
-            return std::string("{\"status\": \"bird jumped\"}");
-        });
 
-    {
-        PropertyList pl;
-        pl.AddProperty(Property("servo_id", kPropertyTypeInteger, 0, 1));
-        pl.AddProperty(Property("angle", kPropertyTypeInteger, 0, 180));
-        mcp.AddTool("cuckoo.set_servo",
-            "Set servo angle: 0=violinist, 1=dog.",
-            pl,
-            [this](const PropertyList& props) -> ReturnValue {
-                int id = props["servo_id"].value<int>();
-                int angle = props["angle"].value<int>();
-                state_machine_->SetServoAngle(id, angle);
-                return std::string("{\"status\": \"ok\"}");
-            });
-    }
 
-    {
-        PropertyList pl;
-        pl.AddProperty(Property("motor_id", kPropertyTypeInteger, 1, 4));
-        pl.AddProperty(Property("speed", kPropertyTypeInteger, -100, 100));
-        mcp.AddTool("cuckoo.set_motor",
-            "Set motor 1-4 speed (-100..100).",
-            pl,
-            [this](const PropertyList& props) -> ReturnValue {
-                int id = props["motor_id"].value<int>();
-                int speed = props["speed"].value<int>();
-                state_machine_->SetMotorSpeed(id, speed);
-                return std::string("{\"status\": \"ok\"}");
-            });
-    }
 
     // === Alarms ===
     {
@@ -4420,10 +4657,9 @@ void CuckooTools::RegisterAll() {
 
     // === 状态查询 ===
     mcp.AddTool("cuckoo.get_status",
-        "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放，缓冲区健康）。\n"
-        "【重要】如果 music_playing 是 true，说明音乐正在正常播放，不要建议重启或说播放失败。"
-        "如果用户要换歌，直接调 cuckoo.play_url 传新歌名，系统会自动停掉当前歌曲。"
-        "如果用户只是说停歌，调用 cuckoo.stop_music。只有用户要全部停止才用 stop_all。",
+        "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放）。\n"
+        "【强制规则】回复用户任何关于演出/表演/音乐/歌舞的问题前，必须先调用本工具。不得凭记忆或上下文猜测状态。\n"
+        "如果 running 是 false 但用户提到演出，直接说演出已经结束，不要说还在进行。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             auto& audio = Application::GetInstance().GetAudioService();
@@ -4440,18 +4676,6 @@ void CuckooTools::RegisterAll() {
  // 音乐代理在启动时自动配置（config.h 里的 DEFAULT_MUSIC_PROXY_HOST/PORT）。
  // set_music_proxy 是空操作占位工具，永远瞬间成功，不做TCP连接检查。
  // 这个工具只是为了满足 AI 在调用 play_url 之前先调 set_music_proxy 的习惯。
-    {
-        PropertyList pl;
-        pl.AddProperty(Property("host", kPropertyTypeString));
-        pl.AddProperty(Property("port", kPropertyTypeInteger, 8765, 8765));
-        mcp.AddTool("cuckoo.set_music_proxy",
-            "音乐代理设置（开机自动配置，无需手动调）。调用后立即返回成功，请接着调用 cuckoo.play_url 才能真正播歌。",
-            pl,
-            [this](const PropertyList& props) -> ReturnValue {
- // No-op: proxy is auto-set at boot. Always succeed instantly.
-                return std::string("{\"status\":\"ok\",\"hint\":\"Proxy ready. Now call cuckoo.play_url to play music.\"}");
-            });
-    }
 
     {
         PropertyList pl;
@@ -4599,6 +4823,7 @@ void cuckoo_clock_task(void* params) {
     // �� NVS �����ѱ��������;���ģʽ
     sm->LoadAlarmsFromNvs();
     sm->LoadQuietMode();
+    sm->LoadKidsActive();
 
 uint32_t tick_sec = 0;
 
@@ -4654,7 +4879,7 @@ uint32_t tick_sec = 0;
             }
 
             // AI˵��ʱС����滰��������Ծ�����ڱ��������ޱ�������ʱ��
-            if (dev_state == (int)kDeviceStateSpeaking && !sm->IsRunning() && !Application::GetInstance().GetAudioService().IsBgAudioActive()) {
+            if (dev_state == (int)kDeviceStateSpeaking) {
                 // �����Ƶ�����Ծ�ȣ�300ms ������� = ����˵����
                 int64_t ms_since_output = Application::GetInstance().GetAudioService().MsSinceLastOutput();
                 if (ms_since_output < 300) {
@@ -4663,14 +4888,14 @@ uint32_t tick_sec = 0;
                 }
                 // ��˵��ʱ����
             }
+             sm->MusicDanceTick();
         }
 
-        // === 每秒����（sub_tick % 4 == 0�?===
+        // === ÿ��（sub_tick % 4 == 0）===
         if (sub_tick % 4 == 0) {
             tick_sec = sub_tick / 4;
 
         // NTPͬ����δͬ��ʱÿ60�����ԣ�ͬ����ÿ300��У׼һ��
-        // Ƶ��У׼��������ʱ���ۻ�Ư��
         if (!sm->time_set_ ? (tick_sec % 60 == 0) : (tick_sec % 300 == 0)) {
             struct timeval tv;
             gettimeofday(&tv, nullptr);

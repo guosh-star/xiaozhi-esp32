@@ -41,7 +41,8 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_LOW_COST);
     afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;  // FD+HIGH: 线性滤波+NLP残余压制
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;  // 最强回声压制
-    afe_config->aec_filter_length = 4;  // 默认滤波长度（8太吃内存，退回4）
+    afe_config->aec_filter_length = 8;  // 长回声消除 128ms->256ms
+    ESP_LOGI(TAG, "AEC filter length: %d frames (%.0fms echo tail)", afe_config->aec_filter_length, afe_config->aec_filter_length * 32.0f);
     afe_config->vad_mode = VAD_MODE_0;
     afe_config->vad_min_noise_ms = 100;
     if (vad_model_name != nullptr) {

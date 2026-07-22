@@ -136,6 +136,7 @@ public:
     void PushRawPcmToPlayback(const int16_t* data, size_t num_samples, int sample_rate);
     void OutputRawPcm(const int16_t* data, size_t num_samples, int sample_rate);
     void PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate);
+    void MixIntoBackgroundAudio(const int16_t* data, size_t samples, float gain);
     void SetBackgroundAudioGain(float gain);
     void ClearBackgroundAudio();
     size_t GetBgAudioFillLevel();

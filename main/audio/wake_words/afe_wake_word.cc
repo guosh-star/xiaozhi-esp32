@@ -73,6 +73,8 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
+    afe_config->aec_filter_length = 8;  // 长回声消除 128ms->256ms
+    ESP_LOGI(TAG, "AEC filter length: %d frames (%.0fms echo tail)", afe_config->aec_filter_length, afe_config->aec_filter_length * 32.0f);
     afe_config->afe_perferred_core = 1;
     afe_config->afe_perferred_priority = 2;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;

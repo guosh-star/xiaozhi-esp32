@@ -930,6 +930,19 @@ void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int 
     }
 }
 
+void AudioService::MixIntoBackgroundAudio(const int16_t* data, size_t samples, float gain) {
+    if (!bg_audio_active_) return;
+    std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    size_t pos = bg_audio_read_pos_;
+    for (size_t i = 0; i < samples && pos != bg_audio_write_pos_; i++) {
+        int32_t mixed = (int32_t)bg_audio_ring_[pos] + (int32_t)((float)data[i] * gain);
+        if (mixed > 32767) mixed = 32767;
+        if (mixed < -32768) mixed = -32768;
+        bg_audio_ring_[pos] = (int16_t)mixed;
+        pos = (pos + 1) % BG_AUDIO_RING_SIZE;
+    }
+}
+
 void AudioService::SetBackgroundAudioGain(float gain) {
     bool was_active = bg_audio_active_;
     bg_audio_target_gain_ = gain;

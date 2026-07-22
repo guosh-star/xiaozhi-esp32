@@ -276,7 +276,14 @@ private:
     std::atomic<bool> is_running_{false};
     int last_hour_;         // 上次整点(防重复)
     int last_half_hour_;    // 上次半点(防重复)
-    int show_music_index_;  // 上次Show播放的音乐编号(1-12)
+    int show_music_index_;
+    int music_dance_phase_ = 0;
+    int music_dance_enabled_ = -1;
+    int m1_music_fwd_count_ = 0;   // M1 forward pulses during music
+    int m1_music_rev_count_ = 0;   // M1 reverse pulses during music
+    bool dog_outro_done_ = false;
+    std::atomic<bool> dog_intro_done_{false};  // true=狗出场完成，MusicDanceTick可以接手
+    std::atomic<bool> kids_active_{true};  // MCP控制：小狗/舞蹈/吉他是否随音乐摆动
 
     // 动作循环状态（避免 static 局部变量）
     struct ViolinLoopState {
@@ -343,6 +350,8 @@ public:
 
     void SaveQuietMode();
     void LoadQuietMode();
+    void SaveKidsActive();
+    void LoadKidsActive();
 
     void SetAlarm(int hour, int minute, bool repeat_daily);
     std::string GetAlarmsJson();
@@ -408,6 +417,11 @@ public:
     void PlayCuckooSound(); // 播放布谷鸟叫声
     void BirdJumpPulse();   // 小鸟脉冲跳（说话时用）
     void BirdJumpShort();  // 小鸟短脉冲跳（跟随话音节奏，120ms）
+    void MusicDanceTick(); // Gentle sway dance motor + violin servo during music
+    void MusicDogIntro();  // Dog comes out when music starts (no bark)
+    void MusicDogOutro();  // Dog goes back when music ends
+    void KidsComeOut();   // MCP: 让小朋友们出来欣赏音乐
+    void KidsRest();      // MCP: 让小朋友们回去休息
     static void AutoCloseTimerCallback(TimerHandle_t timer);  // 鸟门自动关闭定时器回调
     void SetServoAngle(int servo_id, int angle);  // 舵机控制 0=小提琴,1=小狗
     void SetMotorSpeed(int motor_id, int speed);   // 电机控制 1-4
