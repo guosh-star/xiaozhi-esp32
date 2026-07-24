@@ -4576,7 +4576,6 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
         mcp.AddTool("cuckoo.performance",
-            "Hourly chime: bell rings + music. ONLY call when user explicitly says ʱ/㱨ʱ//what time. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();
@@ -4650,8 +4649,6 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.start_show",
-        "ۺϱݣ赸+С+ˮ+һ '' 'Ŀ' '' '' 'ݳ' ۺϱ"
-        "ע⣺ûֻᵽĳɫ԰/մ/СҪô˹ߣöӦĽɫߡʶıӽɫʱ'Ӧ''յ''ִ'մ'ԭַ'԰ӣҲöӦɫߣҪô˹ߡ",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StartShow();
@@ -4667,7 +4664,6 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.stop_music",
-        "Stop music playback. Call ONLY when user explicitly asks to stop the music (ͣ/ͣ/Ҫ/ص). Do NOT call this for performance or alarm - use cuckoo.stop_all for those.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopMusic();
@@ -4764,7 +4760,6 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.stop_alarm",
-        "Stop a ringing ALARM only. For /ͣ. NOT for stopping music/performance - use cuckoo.stop_all for that.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAlarm();
@@ -4778,7 +4773,6 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("start_hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
         mcp.AddTool("cuckoo.set_quiet_mode",
-            "Set chime quiet mode. 0=ȫ쾲(ʱ), 1=ȫ챨ʱ, 2=ھ(LDR), 3=ָʱξ(start_hour~end_hour). "
             "Mode 2 uses light sensor only (no time limit). Mode 3 defaults to 22-6.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
@@ -4862,8 +4856,6 @@ void CuckooTools::RegisterAll() {
     }
 // === ===
     mcp.AddTool("cuckoo.dog_show",
-        "СݣšСܳһҡͷ10롢ٽһ˻ءšúֻ˵һ̵ĻҪ˵"
-        "û˵ 'С' 'С' 'СС' 'ɯ' 'ɯ' 'ɯ'  ʱô˹ߡ"
         "Dog show: call when user asks about dog/puppy/Lisa. Keep response very brief - one short sentence only.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
@@ -4873,8 +4865,6 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.linda_show",
-        "մݣ0015赸ߵתֱֽ"
-        "û˵ 'մ' 'մ' 'մ' 'մմ' 'յ' 'Ӧ' 'ִ' '' '' '赸' ʱô˹ߡ"
         "Linda show: call when user asks about Linda or dancing.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
@@ -4884,9 +4874,6 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.garden_show",
-        "԰ӱݣ0016Сٶתֱֽ"
-        "û˵ '԰' '԰' '԰' '԰԰' 'ԭ' 'ԭ' 'ԭַ' 'ԭַ' '' 'С' ʱô˹ߡ"
-        "Garden show: call when user asks about Garden/ԭ/violin.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
