@@ -230,6 +230,29 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
  SetAngle(90);
 }
 
+void Servo::SetAngle(int angle) {
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+    angle_ = angle;
+    uint32_t duty = (uint32_t)(409 + (float)(angle) / 180.0f * (2048 - 409));
+    ledc_set_duty(speed_mode_, ledc_channel_, duty);
+    ledc_update_duty(speed_mode_, ledc_channel_);
+}
+
+
+void Servo::Sweep(int from, int to, int duration_ms) {
+    if (from == to) { SetAngle(to); return; }
+    int steps = duration_ms / 20;
+    if (steps < 1) steps = 1;
+    float delta = (float)(to - from) / steps;
+    for (int i = 0; i <= steps; i++) {
+        SetAngle(from + (int)(delta * i));
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+
+
 /**
  * @brief 解码单个 MP3 文件并播放
  *
@@ -511,6 +534,27 @@ static bool IsValidMpegHeader(const uint8_t* p) {
  int srate = (p[2] >> 2) & 0x03;
  if (srate == 0x03) return false;
  return true;
+}
+
+
+/**
+ * @brief ��������������ֹͣ���ȴ����������˳���5������ڣ�������������
+ */
+Mp3Player::~Mp3Player() {
+    stop_requested_ = true;
+    // ����������5��������˳������recv�������ر�socket��
+    for (int i = 0; i < 100 && is_playing_; i++) {
+        vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
+    }
+    if (play_task_) {
+        vTaskDelete(play_task_);
+        play_task_ = nullptr;
+    }
+    is_playing_ = false;
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
 }
 
 void Mp3Player::PlayUrlTask(void* arg) {
@@ -2766,6 +2810,18 @@ volume = 0.15f + 0.85f * (float)i / 9.0f; // 15% 100% (10)
   if (sm->alarm_stopped_ || !sm->alarm_ringing_) break;
 
  // 贪睡：等待 2 分钟，每秒检查 stopped_ 状态
+
+void CuckooStateMachine::DogShow() {
+    if (is_running_) return;  // ���б��������У��ܾ��ظ�����
+    // ������̨����ִ�б��ݣ��̶��� Core 1���ӿغ��ģ�
+    xTaskCreatePinnedToCore([](void* arg) {
+        auto* sm = static_cast<CuckooStateMachine*>(arg);
+        sm->DogShowTask();
+        vTaskDelete(nullptr);  // ������ɺ���ɾ������
+    }, "dog_show", 4096, this, 5, nullptr, 1);
+}
+
+
   ESP_LOGI(TAG, "Alarm snoozing for 2 minutes...");
   for (int s = 0; s < 120; s++) {
    if (sm->alarm_stopped_ || !sm->alarm_ringing_) break;
