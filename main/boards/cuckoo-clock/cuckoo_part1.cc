@@ -1,4 +1,4 @@
-// ===== Part 1: 包含、RTC、Motor、Servo (L1-283) =====
+// ===== Part 1: 基础模块 (L1-283) - 包含、RTC、Motor、Servo =====
 // ============================================
 // 布谷鸟钟控制器 (Cuckoo Controller)
 //
@@ -48,8 +48,9 @@
 #include "esp_opus_dec.h"
 #include "ogg_demuxer.h"
 
-// RTC �������ڴ棺����/��λ����״̬���´ο����Զ���ʱ
-// RTC 崩溃日志（RTC_NOINIT_ATTR，上电不丢失，用于诊断重启原因）RTC_NOINIT_ATTR struct {
+
+// RTC 崩溃日志（RTC_NOINIT_ATTR，上电不丢失，用于诊断重启原因）
+RTC_NOINIT_ATTR struct {
     uint32_t magic;        // 魔数: 0xCAFEBABE = 数据有效
     uint32_t tick_sec;     // 重启前累计运行秒数
     uint8_t  dev_state;    // 重启前设备状态
@@ -60,14 +61,14 @@
 
 // 将 QQ 音乐代理 URL 的 /stream 或 /opus 改写为 /pcm 以降低 ESP32 解码负荷
 static void ConvertToPcmUrl(char* url, size_t url_sz) {
-    // �����滻�������������ַ���
+
     size_t url_len = strlen(url);
     if (url_len >= url_sz) return;
 
     // /stream?q=... -> /pcm?q=...
     char* pos = strstr(url, "/stream?");
     if (pos) {
-        // "/stream" = 7���ַ�, "/pcm" = 4���ַ�, ���� "?..." �� pos+7 ��
+
         size_t tail = strlen(pos + 7) + 1;
         if ((size_t)(pos + 4 + tail - url) > url_sz) return;
         memmove(pos + 4, pos + 7, tail);
@@ -77,17 +78,17 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
     // /opus?q=... -> /pcm?q=...
     pos = strstr(url, "/opus?");
     if (pos) {
-        // "/opus" = 6���ַ�, "/pcm" = 4���ַ�, ���� "?..." �� pos+5 ��
+
         size_t tail = strlen(pos + 5) + 1;
         if ((size_t)(pos + 4 + tail - url) > url_sz) return;
         memmove(pos + 4, pos + 5, tail);
         memcpy(pos, "/pcm", 4);
         return;
     }
-    // Ҳ��������ǰ��б�ܵ������AI��ʱ�� "stream?q= " �� "opus?q= "��
+
     pos = strstr(url, "stream?");
     if (pos && (pos == url || *(pos-1) != '/')) {
-        // "stream" = 6���ַ�, "pcm" = 3���ַ�, ���� "?..." �� pos+6 ��
+
         size_t tail = strlen(pos + 6) + 1;
         if ((size_t)(pos + 3 + tail - url) > url_sz) return;
         memmove(pos + 3, pos + 6, tail);
@@ -96,7 +97,7 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
     }
     pos = strstr(url, "opus?");
     if (pos && (pos == url || *(pos-1) != '/')) {
-        // "opus" = 4���ַ�, "pcm" = 3���ַ�, ���� "?..." �� pos+4 ��
+
         size_t tail = strlen(pos + 4) + 1;
         if ((size_t)(pos + 3 + tail - url) > url_sz) return;
         memmove(pos + 3, pos + 4, tail);
@@ -112,10 +113,10 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
 // TB6612 电机驱动：4路 PWM 驱动 (频率 ~10-100KHz)
 // 舵机：2路 PWM 驱动 (频率 50Hz)
 // 单向控制 L9110S: 1路 PWM 驱动 (频率 ~1-10KHz)
-// 共7路通道
+
 
 // ============================================
-// 四路主电机 (TB6612 / DRV8833)
+// TB6612 电机驱动：4路 PWM 驱动 (频率 ~10-100KHz)
 // ============================================
 
 // 通用 GPIO 初始化（支持直驱和 PWM 双模式）
@@ -125,10 +126,10 @@ static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
         .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE };
     gpio_config(&c);
 }
-// GPIOģʽ���캯����ֱ������PWM��
+// 电机构造函数 - GPIO 直驱模式（非 PWM）
 Motor::Motor(gpio_num_t in1, gpio_num_t in2)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(false), max_duty_(0) { motor_gpio_init(in1, in2); Stop(); }
-// PWMģʽ���캯����С����� (timer0, 1kHz/10-bit, ��dog-testһ��)
+// 电机构造函数 - PWM 模式（共享定时器，10-bit/1kHz）
 Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_mode_t sm)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
       ledc_timer_(LEDC_TIMER_MOTOR), speed_mode_(sm), max_duty_(1023) {
@@ -143,7 +144,7 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
     ledc_channel_config(&c2);
     Stop();
 }
-// Motor 构造函数 - PWM 模式（共享定时器，10-bit/1kHz）���timer��ָ����
+
 Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_timer_t timer, ledc_mode_t sm)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
       ledc_timer_(timer), speed_mode_(sm), max_duty_(255) {
@@ -157,7 +158,6 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
         .intr_type=LEDC_INTR_DISABLE, .timer_sel=timer, .duty=0 };
     ledc_channel_config(&c2);
     Stop();
-}
 /**
  * @brief 设置电机速度
  *
@@ -177,7 +177,6 @@ void Motor::SetSpeed(int speed) {
         if (speed > 0) { gpio_set_level(in1_pin_, 1); gpio_set_level(in2_pin_, 0); }
         else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 1); }
     }
-}
 /**
  * @brief 停止电机（制动）
  *
@@ -187,13 +186,11 @@ void Motor::Stop() {
     if (use_pwm_) { ledc_set_duty(speed_mode_, ledc_channel_, 0); ledc_set_duty(speed_mode_, ledc_channel2_, 0);
         ledc_update_duty(speed_mode_, ledc_channel_); ledc_update_duty(speed_mode_, ledc_channel2_); }
     else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 0); }
-}
 /**
  * @brief 电机正转
  *
  * @param speed 速度百分比（0~100），默认 100
  */
-void Motor::Forward(int speed) { SetSpeed(speed > 0 ? speed : 100); }
 /**
  * @brief 电机反转
  *
@@ -202,12 +199,12 @@ void Motor::Forward(int speed) { SetSpeed(speed > 0 ? speed : 100); }
 void Motor::Reverse(int speed) { SetSpeed(speed > 0 ? -speed : -100); }
 
 // ============================================
+
 // 舵机 (SG90)
-// ============================================
 Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
     : pin_(pin), angle_(90), ledc_channel_(channel), speed_mode_(speed_mode) {
 
-    // �����ʱ��ȫ��ֻ��ʼ��һ�Σ�50Hz, 14-bit�ֱ��ʣ�
+
     static bool servo_timer_inited = false;
     if (!servo_timer_inited) {
         ledc_timer_config_t timer_conf = {
@@ -237,9 +234,14 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
 }
 
 /**
- * @brief ���ö���Ƕ� (0~180��)
- * @param angle Ŀ��Ƕȣ��Զ�ǯλ�� [0, 180]
- * ���Ƕ�ת��Ϊ50Hz PWMռ�ձ� (409~2048��Ӧ 0~180��)
+
+
+ // 舵机：2路 PWM 驱动 (频率 50Hz)
+/**
+ * @brief 设置舵机角度 (0°~180°)
+ *
+ * @param angle 目标角度，自动钳位到 [0, 180]
+ * 将角度转换为 50Hz PWM 占空比 (409~2048 对应 0°~180°)
  */
 void Servo::SetAngle(int angle) {
     if (angle < 0) angle = 0;
@@ -251,10 +253,16 @@ void Servo::SetAngle(int angle) {
 }
 
 /**
- * @brief ���ƽ��ɨ�裺����ʼ�Ƕȵ�Ŀ��Ƕȣ���ָ��ʱ�������
- * @param from ��ʼ�Ƕ�
- * @param to Ŀ��Ƕ�  
- * @param duration_ms ����ʱ�䣨���룩��ÿ20msһ��
+
+
+
+
+/**
+ * @brief 舵机平滑扫描
+ *
+ * @param from 起始角度
+ * @param to 目标角度
+ * @param duration_ms 持续时间（毫秒），每 20ms 一步
  */
 void Servo::Sweep(int from, int to, int duration_ms) {
     if (from == to) { SetAngle(to); return; }
@@ -267,26 +275,28 @@ void Servo::Sweep(int from, int to, int duration_ms) {
     }
 }
 
-// С���� + �������ˮ����� (DRV8833 ������� IN1/IN2)
-// config.h ����: MOTOR_WATER_BIRD_IN1/IN2 + LEDC_CH_WATER/JUMP
-// ˮ����ת: water_bird_->SetSpeed(WATER_WHEEL_SPEED) �� IN1����
-// ˮ����ת: water_bird_->SetSpeed(-100) �� IN2����
+// 四路主电机 (TB6612 / DRV8833)
+
+
+// 水车停止: water_bird_->SetSpeed(-100) 沿 IN2 开启
 
 // ============================================
-// MP3������ (���������첽�����)
+
 // ============================================
-// Mp3Player - �������벥�������첽����棩
-// ֧��: DecodeSingleFile(����MP3) / PlayUrl(HTTP��MP3) / PlayPcm(ԭʼPCM) / PlayOpus(OGG/Opus)
-// Ducking: AI˵��ʱ�Զ�������������100%����20%��Ϊ������˵����𽥻ָ���100%
-// ���л���: LoadDogBark������PCM���ص��������������ڽ���ѭ���е���
+// 支持: DecodeSingleFile(本地MP3) / PlayUrl(HTTP流MP3) / PlayPcm(原始PCM) / PlayOpus(OGG/Opus)
+
+// Ducking: AI 说话时自动将音乐音量从 100% 降至 20%（约 400ms）
+// 狗叫混音: LoadDogBark 将预编译 PCM 加载到混音缓冲
 // ============================================
 
 /**
- * @brief ��������������ֹͣ���ȴ����������˳���5������ڣ�������������
+
+/**
+ * @brief 析构函数，停止播放并等待异步下载任务退出（5秒超时）
  */
 Mp3Player::~Mp3Player() {
     stop_requested_ = true;
-    // ����������5��������˳������recv�������ر�socket��
+    // 等待最多5秒让下载线程退出（recv 返回 error 后关 socket）
     for (int i = 0; i < 100 && is_playing_; i++) {
         vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
     }
