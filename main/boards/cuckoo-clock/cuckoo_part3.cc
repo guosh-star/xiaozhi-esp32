@@ -1,4 +1,5 @@
-// ===== Part: LdrSensor、BellSoundPlayer、Dance (1925-2394) =====
+// ===== Part 3: LdrSensor、BellSoundPlayer、Dance (L1925-2394) =====
+LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold)
     : adc_pin_(adc_pin), adc_handle_(nullptr), adc_chan_(chan), threshold_(threshold) {
 
  // ---- ADC oneshot init ----
