@@ -1,6 +1,6 @@
-// Auto-generated bell chime sound (synthesized)
-// 22050Hz, 16-bit signed, mono PCM
-// Duration: 2.00s, Samples: 44100
+// 自动生成的钟声音效（合成）
+// 22050Hz，16位有符号，单声道 PCM
+// 时长：2.00秒，采样数：44100
 #ifndef BELL_0013_H
 #define BELL_0013_H
 #include <stdint.h>

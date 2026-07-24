@@ -1,6 +1,6 @@
-// Real cuckoo bird sound sampled from hardware
-// Format: 1ch 16bit 16000Hz
-// Duration: 1.76s
+// 从硬件采集的真实布谷鸟声
+// 格式：单声道，16位，16000Hz
+// 时长：1.76秒
 #ifndef CUCKOO_WAKE_SOUND_H
 #define CUCKOO_WAKE_SOUND_H
 
@@ -10,7 +10,7 @@
 #define CUCKOO_WAKE_SOUND_NUM_SAMPLES 28160
 #define CUCKOO_WAKE_SOUND_CHANNELS 1
 
-// Real cuckoo clock bell sound (recorded from physical hardware)
+// 真实布谷鸟钟声音（从物理硬件录制）
 static const int16_t cuckoo_wake_sound[] = {
           -73,    -64,    -56,    -47,    -36,    -24,    -10,      4,     19,     33,     22,     26,
            28,     28,     27,     26,     24,     22,     21,     20,     20,     20,     19,     17,

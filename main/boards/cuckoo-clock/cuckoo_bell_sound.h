@@ -3,10 +3,10 @@
 
 #include <stdint.h>
 
-// 布谷鸟钟声 PCM (trimmed bell strike from 0013.mp3)
-// Sample rate: 22050 Hz, 16-bit signed, mono
-// Duration: 0.50s
-// Samples: 11025
+// 布谷鸟钟声 PCM（从 0013.mp3 裁剪的钟声）
+// 采样率：22050Hz，16位有符号，单声道
+// 时长：0.50秒
+// 采样数：11025
 
 #define CUCKOO_BELL_SOUND_NUM_SAMPLES 11025
 #define CUCKOO_BELL_SOUND_SAMPLE_RATE 22050
