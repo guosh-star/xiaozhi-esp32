@@ -30,9 +30,13 @@ void Mp3Player::UpdateDuckingState() {
 }
 
 /**
-
-
-
+ * @brief 加载狗叫 PCM 数据到混音缓冲区
+ *
+ * 将预编译的 PCM 采样存入 bark_pcm_，在音频输出循环中自动叠加到正在播放的
+ * 音乐数据上（不打断音乐播放）。若已有狗叫在混音中，则等待完成后加载新数据。
+ *
+ * @param pcm 狗叫 PCM 数据指针
+ * @param num_samples 采样点数
  */
 void Mp3Player::LoadDogBark(const int16_t* pcm, size_t num_samples) {
     while (bark_active_) {
@@ -57,12 +61,12 @@ void Mp3Player::ApplyDuckingGain(int16_t* pcm, size_t num_samples) {
 }
 
 /**
- * @brief ���벢���ŵ�������MP3�ļ�
+
   * @param index MP3 文件编号 (0001~0012 歌曲, 0013 报时铃声, 0015 琳达, 0016 花园)
- * @return 0=�����ֹͣ, 1=��������
+
     // 跳过 ID3v2 标签
- * - ���л��������bark_active_�Զ����ӹ�����
- * - Ducking��AI˵��ʱ����20%����
+
+
  */
 int Mp3Player::DecodeSingleFile(int index) {
     if (!assets_) {
@@ -95,7 +99,7 @@ int Mp3Player::DecodeSingleFile(int index) {
         uint32_t id3_size = ((mp3_start[6] & 0x7F) << 21) | ((mp3_start[7] & 0x7F) << 14)
                           | ((mp3_start[8] & 0x7F) << 7)  |  (mp3_start[9] & 0x7F);
         size_t skip = 10 + id3_size;
-        if (skip < mp3_size - 1024) {  // ȷ�����������㹻����
+if (skip < mp3_size - 1024) {  // 确保跳过ID3后有足够空间
             mp3_start += skip;
             mp3_data_size -= skip;
             ESP_LOGI(TAG, "Skipped ID3v2 tag: %lu bytes", (unsigned long)skip);
@@ -257,7 +261,7 @@ int Mp3Player::DecodeSingleFile(int index) {
                 consumed = 1;  //  Tiny files advance byte-by-byte
                 if (consumed > remaining) consumed = remaining;
             }
-        consecutive_errors = 0;  // ����ɹ������ô������
+consecutive_errors = 0;  // 解码成功，重置错误计数
             input_ptr += consumed;
             remaining -= consumed;
 
@@ -316,15 +320,15 @@ int Mp3Player::PlayUrl(const char* url) {
     ctx->url[sizeof(ctx->url) - 1] = '\0';
 
     xTaskCreate(PlayUrlTask, "mp3_url", 8192, ctx, 5, NULL);
-        return 0;  // ������������
+        return 0;  // 启动异步任务，返回成功
 }
 
 /**
- * @brief ͨ��HTTP������MP3�����ţ���̨�첽����
+
  * @param url HTTP URL
- * - �����أ����4MB�����ϸ�MPEG֡ͷУ�飬������������������+�ز�����24000Hz
- * - Ducking��AI˵��ʱ�Զ����͵�20%
- * - ��ʽ���룺����һ������һ����ѭ��ֱ������򱻴��
+
+
+
  */
 
 static bool IsValidMpegHeader(const uint8_t* p) {
@@ -391,8 +395,8 @@ void Mp3Player::PlayUrlTask(void* arg) {
 
     size_t batch_size = 256 * 1024;
     if (content_length > 0 && content_length < 8 * 1024 * 1024) {
-        batch_size = content_length; // ȫ��һ������
-        if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // ����4MB
+batch_size = content_length; // 内容长度可靠，全部一次下载
+if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // 限制4MB
         ESP_LOGI(TAG, "PlayUrl: batch=%dKB (content=%dKB)", (int)(batch_size/1024), content_length/1024);
     }
     uint8_t* buf = (uint8_t*)heap_caps_malloc(batch_size, MALLOC_CAP_SPIRAM);
@@ -451,7 +455,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
         uint32_t id3_size = ((buf[6] & 0x7F) << 21) | ((buf[7] & 0x7F) << 14)
                           | ((buf[8] & 0x7F) << 7)  |  (buf[9] & 0x7F);
         mp3_start = 10 + id3_size;
-        if (mp3_start > batch_len - 1024) mp3_start = 0; // ��ǩ̫��/���ݲ��㣬��ͷ��ʼ
+if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开始
         ESP_LOGI(TAG, "PlayUrl: ID3v2 %luB, MP3 @ %u", id3_size, (unsigned)mp3_start);
     }
 
@@ -564,7 +568,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                 }
 
                 size_t c = dec_info.frame_size;
-                if (c == 0) c = raw.consumed;  // �˻����
+                if (c == 0) c = raw.consumed;  // 退回标记
                 if (c == 0) c = 1;
                 if (c >= rem) { rem = 0; } else { ptr += c; rem -= c; }
             } else if (dec_ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH) {
@@ -574,7 +578,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                     size_t scan = 1;
                     while (scan + 3 < rem && !IsValidMpegHeader(ptr + scan)) scan++;
                     if (scan + 3 < rem) { ptr += scan; rem -= scan; }
-                    else { rem = 0; break; }  // δ�ҵ�ͬ��֡ͷ������carryʣ��
+else { rem = 0; break; }  // 未找到同步帧头，停止
                 }
                 if (rem < 1024) break;
             } else {
@@ -622,7 +626,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
                 ESP_LOGD(TAG, "PlayUrl: skip %d bytes to next frame", (int)s);
                 ptr += s; rem -= s;
             } else {
-                rem = 0; // ��Ч֡ͷ������
+                rem = 0; // 无效帧头，重置
             }
         }
         ESP_LOGD(TAG, "PlayUrl: batch#%d ready rem=%u %02X%02X%02X%02X...", batch_seq, (unsigned)rem,
@@ -647,11 +651,11 @@ cleanup:
 
 
 /**
+ * @brief 通过 HTTP 下载原始 PCM 音频并分块送入播放队列
+ *
+ * 分块下载（4KB/块）后透过 PushRawPcmToPlayback 送入播放队列。
+ * Ducking: AI 说话时自动降至 20% 音量。
 
-
- * @return 0=�����ɹ�
- * - �ֿ����أ�4KB����PushRawPcmToPlayback���벥�Ŷ���
- * - Ducking��AI˵��ʱ�Զ�����������20%
  */
 int Mp3Player::PlayPcm(const char* url) {
     if (is_playing_) {
@@ -718,7 +722,7 @@ void Mp3Player::PlayPcmTask(void* arg) {
     }
 
 
-    const size_t CHUNK = sizeof(self->output_buf_);  // ��������������С
+const size_t CHUNK = sizeof(self->output_buf_);  // 单次解码缓冲区大小
     const int SAMPLE_RATE = 24000;
     int64_t t0 = esp_timer_get_time();
     int bytes_yielded = 0;
@@ -727,7 +731,7 @@ void Mp3Player::PlayPcmTask(void* arg) {
         int read = esp_http_client_read(client, (char*)self->output_buf_, CHUNK);
         if (read <= 0) break;
 
-        size_t samples = read / 2;  // 16λ������
+size_t samples = read / 2;  // 16位采样数
         int16_t* pcm = (int16_t*)self->output_buf_;
 
  // ---- Smooth ducking: fade when AI starts speaking ----
@@ -779,15 +783,15 @@ void Mp3Player::PlayPcmTask(void* arg) {
 }
 
 /**
- * @brief ͨ��ԭʼBSD Socket����OGG/Opus��Ƶ�����͸�����������
- * @param url Opus��ƵURL
- * @return 0=�����ɹ�
- * - ʹ��BSD socketֱ�����ƹ�lwip esp_http_client
+ * @brief 通过 BSD Socket 下载 OGG/Opus 音频并播放
+ *
+ * 直接使用 BSD socket 进行 TCP 连接和 HTTP 请求，绕过 esp_http_client 开销。
+ * Ducking: AI 说话时暂停下载数据。下载速率自动降至 65% 以减少 AEC 回采干扰。
+ * @param url Opus 音频 URL
+ * @return 0 = 下载失败，1 = 播放成功
 
 
- * - Ducking��AI˵��ʱ��ͣ�������ݣ��������������ݣ���˵��ָ�
- * - �Զ��������͵�65%������AEC�زɸ��ţ�
- * - ���粻ͨʱ���˵�����ת��ģʽ
+
  */
 int Mp3Player::PlayOpus(const char* url) {
     if (is_playing_) {
@@ -796,7 +800,7 @@ int Mp3Player::PlayOpus(const char* url) {
     }
     ESP_LOGI(TAG, "PlayOpus: launching for %s", url);
     is_playing_ = true;
-    stop_requested_ = false;  // ��� Stop() ���õı�־
+stop_requested_ = false;  // 每次播放前重置停止标志
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
     // Clear stale bg audio from previous session to prevent startup noise burst
@@ -976,7 +980,7 @@ serial_fallback:
             if (stream_started && (now - last_data_ms > 5000)) break;  // 5s idle
             if (!stream_started && (now - serial_start > 15000)) break;  // 15s startup
             if (now - serial_start > 120000) break;  // 2min total
-            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // ���Ѵʴ��� stop
+            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // 断连词唤醒后，停止下载
 
             auto serial_state = app.GetDeviceState();
             if (serial_state == kDeviceStateSpeaking) {
@@ -1280,9 +1284,9 @@ serial_fallback:
 }
 
 /**
- * @brief ��������ringtone
- * @param volume ����ϵ�� 0.0~1.0�����忪ͷ��15%��ǿ��100%
-
+ * @brief 播放闹钟铃声（带渐强效果）
+ *
+ * @param volume 音量系数 0.0~1.0，开头渐强效果（15%→100%）
  */
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
@@ -1335,9 +1339,9 @@ void Mp3Player::PlayAlarmRing(float volume) {
 }
 
 /**
- * @brief ����������ѭ��
- * ��FreeRTOS��������ѯ pending_track_ / pending_bell_hour_��
- * ������ʱ����AI��������Ŷ�Ӧ��Ƶ�������ָ�AI���
+ * @brief 播放任务入口
+ *
+ * 根据 play_mode_ 分派到 PlayUrlTask / PlayPcmTask / PlayOpusTask。
  */
 
 void Mp3Player::PlayTaskEntry(void* arg) {
