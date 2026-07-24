@@ -617,16 +617,11 @@ void CuckooStateMachine::AlarmTask(void* arg) {
 
 
 /**
-
-
- */
-/**
-void CuckooStateMachine::DogShow() {
  * @brief 小狗秀：小狗出门→叫一声→摇尾→叫一声→回退→关门
-    if (is_running_) return;
  * 狗叫叠加混音到背景音乐上（不打断），若无音乐则OutputRawPcm直出
-
  */
+void CuckooStateMachine::DogShow() {
+    if (is_running_) return;
     xTaskCreatePinnedToCore([](void* arg) {
         auto* sm = static_cast<CuckooStateMachine*>(arg);
         sm->DogShowTask();
@@ -950,14 +945,10 @@ void CuckooStateMachine::StartGardenShow() {
 }
 
 /**
-
-
- */
-/**
-void CuckooStateMachine::LindaShow() {
  * @brief 琳达秀：播放0015.mp3 + 舞蹈开场/循环/收尾
-    if (is_running_) { ESP_LOGW(TAG, "LindaShow: already running, skip"); return; }
  */
+void CuckooStateMachine::LindaShow() {
+    if (is_running_) { ESP_LOGW(TAG, "LindaShow: already running, skip"); return; }
 
     auto& app = Application::GetInstance();
 
@@ -1130,14 +1121,10 @@ void CuckooStateMachine::LindaShow() {
 }
 
 /**
-
-
- */
-/**
-void CuckooStateMachine::GardenShow() {
  * @brief 花园秀：播放0016.mp3 + 舞蹈
-    if (is_running_) { ESP_LOGW(TAG, "GardenShow: already running, skip"); return; }
  */
+void CuckooStateMachine::GardenShow() {
+    if (is_running_) { ESP_LOGW(TAG, "GardenShow: already running, skip"); return; }
 
     auto& app = Application::GetInstance();
 
