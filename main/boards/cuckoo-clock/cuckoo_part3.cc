@@ -2,7 +2,7 @@
 LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold)
     : adc_pin_(adc_pin), adc_handle_(nullptr), adc_chan_(chan), threshold_(threshold) {
 
- // ---- ADC oneshot init ----
+ // ---- ADC oneshot 初始化 ----
     adc_oneshot_unit_init_cfg_t unit_cfg = {
         .unit_id = unit,
         .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
@@ -115,7 +115,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
     };
     gpio_config(&motor_pwr_cfg);
      // LED 指示灯 (S8050 NPN 驱动, 5V 供电)
- // LED (GPIO1KS8050 B, C, 5V)
+ // LED 指示灯 (S8050 NPN 驱动, 5V 供电)
     gpio_config_t led_cfg = {
         .pin_bit_mask = (1ULL << LED_A_GPIO) | (1ULL << LED_B_GPIO),
         .mode = GPIO_MODE_OUTPUT,
@@ -205,8 +205,8 @@ void CuckooStateMachine::PlayDogBark() {
     size_t num_samples = pcm_bytes / sizeof(int16_t);
 
         // 关键路径：如果背景音频正在播放，叠加混音（不打断音乐）；否则用 OutputRawPcm 直出（如 DogShow）
-    // Mix dog bark on top of existing bg audio (overlap, not replace)
-    // or fall back to OutputRawPcm if bg audio is not active (e.g. DogShow)
+    // 狗叫混音策略：背景音频激活时叠加（不打断）；否则 OutputRawPcm 直出（如 DogShow）
+    // 如果背景音频未激活，回退到 OutputRawPcm 直接播放
     auto& app = Application::GetInstance();
     if (app.GetAudioService().IsBgAudioActive()) {
         app.GetAudioService().MixIntoBackgroundAudio(pcm, num_samples, 0.9f);
@@ -258,8 +258,7 @@ void CuckooStateMachine::RunDanceLoop() {
     m1_stage_start_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
         // 等待背景音乐启动（最多 5 秒），避免循环内立刻退出
-    // Bg music may still be fading in while AI speaks: wait up to 5s for it
-    // to become active, otherwise the dance loop below exits instantly.
+    // 等待背景音乐启动（最多5秒），避免舞蹈循环因 bg audio 未就绪而立即退出
     for (int w = 0; w < 100 && is_running_
         && !Application::GetInstance().GetAudioService().IsBgAudioActive()
         && (!mp3_ || !mp3_->IsPlaying()); w++) {
