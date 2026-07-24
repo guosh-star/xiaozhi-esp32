@@ -32,22 +32,29 @@ int LdrSensor::ReadRaw() {
     if (adc_handle_) {
         adc_oneshot_read(adc_handle_, adc_chan_, &raw);
     }
-    return raw;  // 0-4095 (12-bit), ��=��ֵ, ��=��ֵ
+    return raw;
+        // raw: 0~4095 (12-bit ADC)，数值越小=越暗
 }
 
 /**
- * @brief �жϵ�ǰ�Ƿ�Ϊ�ڰ������������������������ֵ��
- * @return true=�ڰ�, false=����
- */
-bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
-void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
 
+
+ */
+/**
+bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
+ * @brief 判断当前是否为黑暗（光线低于阈值）
+void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
+ * @return true=黑暗, false=明亮
+
+ */
 
 // ============================================
 // BellSoundPlayer - 布谷鸟语音 + 报时钟声播放
+// BellSoundPlayer - 布谷鸟语音 + 报时钟声播放
 // ============================================
+// 同步播放布谷鸟唤醒音（阻塞，直接写入音频输出）
 void BellSoundPlayer::PlayCuckooSoundSync() {
-    // ����Ҫ SetOutputMuted��Ҳ����Ҫ vTaskDelay
+
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_wake_sound,
@@ -56,8 +63,9 @@ void BellSoundPlayer::PlayCuckooSoundSync() {
     );
 }
 
+// 同步播放钟铃声（阻塞，使用 data_if_mutex_ 与 AudioOutputTask 互斥）
 void BellSoundPlayer::PlayBellSoundSync() {
-    // ֱ��д I2S ����ֱ�����꣬ʹ�� data_if_mutex_ �� AudioOutputTask ����
+
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_bell_sound,
@@ -66,6 +74,7 @@ void BellSoundPlayer::PlayBellSoundSync() {
     );
 }
 
+// 异步播放：在新任务中执行，不阻塞调用者
 void BellSoundPlayer::PlayCuckooSoundAsync() {
     xTaskCreate([](void* arg) {
         auto* self = static_cast<BellSoundPlayer*>(arg);
@@ -75,7 +84,7 @@ void BellSoundPlayer::PlayCuckooSoundAsync() {
 }
 
 // ============================================
-// CuckooStateMachine - ��������״̬��
+
 // ============================================
 CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
                                         Motor* violin_motor, Servo* violin, Servo* dog,
@@ -83,7 +92,8 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
                                         BellSoundPlayer* bell_player,
                                         LdrSensor* ldr)
     : m1_(m1), m2_(m2), m3_(m3), m4_(m4),
-      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // С���ٵ�� (��B M2, GPIO18/45)
+      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),
+            // 小提琴舵机（IN B M2, GPIO18/45）
       water_bird_(water_bird),
       mp3_(mp3), bell_player_(bell_player), ldr_(ldr),
       motor_power_pin_(GPIO_NUM_NC),
@@ -94,7 +104,8 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
       is_dark_(false) {
     last_idle_exit_us_ = 0;
     prev_device_state_ = -1;
-    // �����Դ P-MOSFET ���� (GPIO LOW=ON, HIGH=OFF)
+
+        // 电机电源 P-MOSFET 控制 (GPIO LOW=ON 导通, HIGH=OFF 断开)
     motor_power_pin_ = (gpio_num_t)POWER_MOTOR_GPIO;
     gpio_config_t motor_pwr_cfg = {
         .pin_bit_mask = (1ULL << motor_power_pin_),
@@ -103,6 +114,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&motor_pwr_cfg);
+     // LED 指示灯 (S8050 NPN 驱动, 5V 供电)
  // LED (GPIO1KS8050 B, C, 5V)
     gpio_config_t led_cfg = {
         .pin_bit_mask = (1ULL << LED_A_GPIO) | (1ULL << LED_B_GPIO),
@@ -111,9 +123,10 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&led_cfg);
+        // LED 指示灯 (S8050 NPN 驱动, 5V 供电)
     gpio_set_level(LED_A_GPIO, 0);
     gpio_set_level(LED_B_GPIO, 0);
-    MotorPowerOff();  // Ĭ�϶ϵ磬100K �������� 5V
+    MotorPowerOff();
   }
 
 CuckooStateMachine::~CuckooStateMachine() {
@@ -122,10 +135,13 @@ CuckooStateMachine::~CuckooStateMachine() {
 }
 
 /**
- * @brief �򿪵����Դ��P-MOSFET���͡�5V��ͨ��
+
  */
+/**
 void CuckooStateMachine::MotorPowerOn() {
+ * @brief 打开电机电源（P-MOSFET 导通→5V 供电）
     gpio_set_level(motor_power_pin_, 0);
+ */
 }
 
 void CuckooStateMachine::MotorPowerOff() {
@@ -137,10 +153,12 @@ void CuckooStateMachine::MotorPowerOff() {
 // ============================================
 
 
+// 异步开门任务上下文
 struct DoorOpenCtx {
     CuckooStateMachine* sm;
 };
 
+// 异步开门任务：上电 → 正向开门 → 延时 → 停止
 void CuckooStateMachine::DoorOpenTask(void* arg) {
     auto* ctx = static_cast<DoorOpenCtx*>(arg);
     auto* sm = ctx->sm;
@@ -157,7 +175,7 @@ void CuckooStateMachine::DoorOpenTask(void* arg) {
 }
 
 void CuckooStateMachine::PlayDogBark() {
-    // �� assets ��ȡ dog_bark.wav (16kHz mono s16)
+
     const char* filename = "dog_bark.wav";
     void* wav_ptr = nullptr;
     size_t wav_size = 0;
@@ -181,11 +199,12 @@ void CuckooStateMachine::PlayDogBark() {
         return;
     }
 
-    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����
+
     const int16_t* pcm = (const int16_t*)(wav_data + 44);
     size_t pcm_bytes = wav_size - 44;
     size_t num_samples = pcm_bytes / sizeof(int16_t);
 
+        // 关键路径：如果背景音频正在播放，叠加混音（不打断音乐）；否则用 OutputRawPcm 直出（如 DogShow）
     // Mix dog bark on top of existing bg audio (overlap, not replace)
     // or fall back to OutputRawPcm if bg audio is not active (e.g. DogShow)
     auto& app = Application::GetInstance();
@@ -200,29 +219,33 @@ void CuckooStateMachine::PlayDogBark() {
     }
 }
 
+// 舞蹈开场：异步开门同时放出小狗（舵机扫出 + 前进 + 叫一声）
 void CuckooStateMachine::RunDanceIntro() {
-    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����
+
     MotorPowerOn();
     auto* ctx = new DoorOpenCtx{this};
     xTaskCreatePinnedToCore(DoorOpenTask, "door_open", 2048, ctx, 5, nullptr, 1);
 
-    // �첽���ţ������������赸/���ֲ��У�
+
     if (dog_servo_) {
+            // 小狗尾巴：180°→20° 扫出，准备前进
         dog_servo_->Sweep(180, 20, (180 - 20) * 15);
     }
-    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
+
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     PlayDogBark();
-    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
+
     if (dog_servo_) {
+            // 小狗进门后摇尾归零
         dog_servo_->Sweep(20, 0, 20 * 15);
     }
 }
 
+// 舞蹈循环：M1 正反转交替 + 小提琴手臂摆动 + 小狗摇尾 + LED 闪烁 + 水车旋转
 void CuckooStateMachine::RunDanceLoop() {
     unsigned long m1_timer = xTaskGetTickCount() * portTICK_PERIOD_MS;
     int m1_stage = 0;
@@ -234,6 +257,7 @@ void CuckooStateMachine::RunDanceLoop() {
     m1_rev_time_ = 0;
     m1_stage_start_ = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
+        // 等待背景音乐启动（最多 5 秒），避免循环内立刻退出
     // Bg music may still be fading in while AI speaks: wait up to 5s for it
     // to become active, otherwise the dance loop below exits instantly.
     for (int w = 0; w < 100 && is_running_
@@ -249,7 +273,7 @@ void CuckooStateMachine::RunDanceLoop() {
         if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
         unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-        // M1 �赸���: ��ת/��ת���棨�����1~3�룬���>3�������������
+
         switch (m1_stage) {
             case 0:
                 if (m1_) m1_->Forward(DANCE_SPEED_PERCENT);
@@ -263,7 +287,7 @@ void CuckooStateMachine::RunDanceLoop() {
                 if (m1_) m1_->Stop();
                 if (now - m1_timer > 20) {
                     m1_timer = now; m1_stage = 2;
-                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+                    m1_rand_time = 1000 + (esp_random() % 2001);
                 }
                 break;
             case 2:
@@ -278,12 +302,13 @@ void CuckooStateMachine::RunDanceLoop() {
                 if (m1_) m1_->Stop();
                 if (now - m1_timer > 20) {
                     m1_timer = now; m1_stage = 0;
-                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+                    m1_rand_time = 1000 + (esp_random() % 2001);
                 }
                 break;
         }
 
-        // С����ѭ��������ÿ֡ 9�� ƽ���ڶ�
+
+                // 小提琴 10 段循环动作：左右摆动 + 正转/反转拉琴，随机组合
         violin_state_.timer += 50;
         switch (violin_state_.stage) {
             case 0: if (violin_state_.angle < 90) violin_state_.angle+=9; else if (violin_state_.angle > 90) violin_state_.angle-=9; break;
@@ -309,8 +334,9 @@ void CuckooStateMachine::RunDanceLoop() {
             violin_state_.timer = 0;
         }
 
-        // С��ҡβ��
+
         if (dog_servo_) {
+                    // 小狗摇尾：随机方向和频率摆动，40~60° 范围
             if (dog_state_.pause > 0) {
                 dog_state_.pause--;
             } else {
@@ -328,8 +354,9 @@ void CuckooStateMachine::RunDanceLoop() {
             }
         }
 
-        // LED ��˸��ÿ6֡ ~300ms��
+
         led_toggle++;
+                // LED 交替闪烁：每 6 帧（~300ms）切换一次
         if (led_toggle >= 6) {
             led_toggle = 0;
             led_state = !led_state;
@@ -337,7 +364,8 @@ void CuckooStateMachine::RunDanceLoop() {
             gpio_set_level(LED_B_GPIO, led_state ? 0 : 1);
         }
 
-        // 50ms ֡�ʿ���
+
+                // 精确 50ms 帧率控制（20fps），用微秒级定时避免累积漂移
         next_frame_us += 50000;
         int64_t wait_us = next_frame_us - esp_timer_get_time();
         if (wait_us > 0) {
@@ -346,13 +374,15 @@ void CuckooStateMachine::RunDanceLoop() {
     }
 }
 
+// 舞蹈收尾：M1 角度归零、小提琴平衡、小狗回退关门
 void CuckooStateMachine::RunDanceFinale() {
 
     gpio_set_level(LED_A_GPIO, 1);
     gpio_set_level(LED_B_GPIO, 1);
 
-    // ���ڽǶȲ�����279��/s��40s��31Ȧʵ�⣩��ֻ��360�����ڵĲ��
+
     if (m1_fwd_time_ > 0 || m1_rev_time_ > 0) {
+            // ---- M1 齿轮角度归零：根据正反转时间差（转速 ~279°/s）计算需要补偿的角度 ----
         long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // 旋转角度：+正转,-反转
         int rem = (int)(net % 360); if (rem < 0) rem = -rem;  // 取绝对值
         int ms; bool go_fwd;
@@ -375,7 +405,8 @@ void CuckooStateMachine::RunDanceFinale() {
         }
     }
 
-    // ƽ��С��������ת����
+
+        // ---- 小提琴手臂平衡：统计正反转次数差，补转使手臂大致归中 ----
     if (violin_state_.rev_count < violin_state_.fwd_count && violin_motor_) {
         ESP_LOGI(TAG, "Violin: fwd=%d rev=%d, adding reverse", violin_state_.fwd_count, violin_state_.rev_count);
         violin_motor_->Reverse(VIOLIN_SPEED_PERCENT);
@@ -388,21 +419,23 @@ void CuckooStateMachine::RunDanceFinale() {
     if (violin_motor_) violin_motor_->Stop();
     if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
 
-    // С���˻�
+
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(920));
         m3_->Stop();
     }
-    // С������ӵ�ǰ�Ƕȹ�λ��180�㣨�������䣩
+
     if (dog_servo_) {
+            // 小狗尾巴归位：从当前角度扫描回 180°（关门）
         int dog_cur = dog_state_.angle;
         dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * 15);
         dog_state_.angle = 180;
     }
-    // ����
+
     MotorPowerOn();
     if (m2_) {
+            // 大门关闭
         m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
         vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
         m2_->Stop();
@@ -410,14 +443,17 @@ void CuckooStateMachine::RunDanceFinale() {
 }
 
 // ============================================
-// NVS ���ӳ־û�
+
 // ============================================
 
+// NVS 持久化存储：闹钟数据
 static const char* kAlarmNvsNamespace = "cuckoo_alarm";
 static const char* kAlarmNvsKey = "alarms";
 
+// 将闹钟数组写入 NVS 闪存（携带 mutex 锁防并发）
 void CuckooStateMachine::SaveAlarmsToNvs() {
     nvs_handle_t handle;
+    // NVS 持久化存储：闹钟数据
     esp_err_t err = nvs_open(kAlarmNvsNamespace, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SaveAlarms: nvs_open failed %d", err);
@@ -432,12 +468,15 @@ void CuckooStateMachine::SaveAlarmsToNvs() {
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SaveAlarms: nvs_set/commit failed %d", err);
     } else {
+        // NVS 持久化存储：闹钟数据
         ESP_LOGI(TAG, "Alarms saved to NVS (%d slots)", kMaxAlarms);
     }
 }
 
+// 从 NVS 闪存读取闹钟数组，统计有效闹钟数
 void CuckooStateMachine::LoadAlarmsFromNvs() {
     nvs_handle_t handle;
+    // NVS 持久化存储：闹钟数据
     esp_err_t err = nvs_open(kAlarmNvsNamespace, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "LoadAlarms: no saved alarms (nvs_open %d)", err);
@@ -451,22 +490,33 @@ void CuckooStateMachine::LoadAlarmsFromNvs() {
         ESP_LOGI(TAG, "LoadAlarms: nvs_get_blob failed %d", err);
         return;
     }
-    // ͳ����Ч��ʱ��
+
     int count = 0;
     for (int i = 0; i < kMaxAlarms; i++) {
         if (alarms_[i].enabled) count++;
     }
     alarm_count_ = count;
+    // NVS 持久化存储：闹钟数据
     ESP_LOGI(TAG, "Alarms loaded from NVS (%d active)", count);
 }
 
 
 /**
- * @brief ������ʱ���ݣ�����/���/�ֶ���
- * @param type �������ͣ�kPerformanceHour(����)/kPerformanceHalf(���)/kPerformanceManual(�ֶ�)
- * @param hour Сʱ�������㱨ʱ�ã�
- * - ��AI�󴥷�������5���ں��Ե���
- * - �ȴ��AI�Ի���AbortSpeaking������ֹ���������ͻ��Ѵʼ��
- * - ��Core 1����PerformanceTaskִ��
+
+
+
+
+
+
  */
+/**
 void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
+ * @brief 启动表演（整点/半点/手动触发）
+ */
+ *
+ * - 在 Core 1 上创建 PerformanceTask 执行
+ * @param type 表演类型：kPerformanceHour(整点)/kPerformanceHalf(半点)/kPerformanceManual(手动)
+ * - 先用 AbortSpeaking 终止 TTS，防止冲突
+ * @param hour 小时（半点和手动报时不用）
+ * - AI 触发后 5 秒内忽略重复触发
+ *
