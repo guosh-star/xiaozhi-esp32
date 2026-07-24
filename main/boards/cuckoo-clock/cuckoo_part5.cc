@@ -2,16 +2,14 @@
 CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
 
 void CuckooTools::RegisterAll() {
-    // ---- 注册所有 MCP 工具 (21个): 时间/报时/音乐/秀/硬件/闹钟/静音 ----
     auto& mcp = McpServer::GetInstance();
 
- // === 时间/报时 MCP 工具 ===
+ // === Time / Chime ===
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
-    // 整点报时
         mcp.AddTool("cuckoo.performance",
-"整点报时：铃声+音乐。仅在用户明确说报时/整点报时/几点时调用。切勿自动触发。",
+            "Hourly chime: bell rings + music. ONLY call when user explicitly says ��ʱ/���㱨ʱ/����/what time. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();
@@ -19,13 +17,15 @@ void CuckooTools::RegisterAll() {
                 return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
             });
     }
-    // === 粤语查询 (2026-07-19) ===
+    // === Cantonese lookup (2026-07-19) ===
     {
         PropertyList pl;
         pl.AddProperty(Property("word", kPropertyTypeString));
-    // 粤语查询
         mcp.AddTool("cuckoo.cantonese_lookup",
-            "粤语查询工具。必须在回答粤语/拼音问题前调用本工具。返回拼音+释义（含声调1-6），用自然语音朗读结果。",
+            "MUST CALL THIS TOOL. NEVER answer Cantonese/Jyutping from memory. Look up Jyutping pronunciation for a Chinese word or phrase. "
+            "Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
+            "Returns Jyutping romanization + definitions. Includes tone numbers (1-6). "
+            "Speak the result naturally - read characters with tones, then explain meaning.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 std::string word = props["word"].value<std::string>();
@@ -38,9 +38,8 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
-    // 设置时间
         mcp.AddTool("cuckoo.set_time",
-            "设置内部时钟(小时,分钟)。自动报时所需。",
+            "Set internal clock (hour, minute). Required for auto chimes.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int h = props["hour"].value<int>();
@@ -52,9 +51,8 @@ void CuckooTools::RegisterAll() {
             });
     }
 
-    // 获取时间
     mcp.AddTool("cuckoo.get_time",
-        "获取当前内部时钟(小时,分钟)。",
+        "Get current internal clock time (hour, minute).",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             int h, m;
@@ -64,13 +62,13 @@ void CuckooTools::RegisterAll() {
             return std::string(json);
         });
 
- // === 音乐/秀 MCP 工具 ===
+ // === Music / Show ===
     {
         PropertyList pl;
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
-    // 本地 MP3 播放
         mcp.AddTool("cuckoo.play_music",
-            "播放本地MP3(0001-0012.mp3)。track仅1-12。在线歌曲请用cuckoo.play_url。",
+            "Play offline MP3 from TF card (0001-0012.mp3). track: 1-12 ONLY. "
+            "NOT for online songs - use cuckoo.play_url for internet streaming.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int track = props["track"].value<int>();
@@ -84,28 +82,25 @@ void CuckooTools::RegisterAll() {
             });
     }
 
-    // 综合表演秀
     mcp.AddTool("cuckoo.start_show",
-        "综合表演。触发词: 表演/节目/出来表演/演出。"
-        "角色工具优先: 花园→cuckoo.garden_show, 琳达→cuckoo.linda_show, 小狗→cuckoo.dog_show。"
+        "�ۺϱ��ݣ��赸+С��+ˮ��+����һ������ '����' '��Ŀ' '��������' '����' '�ݳ�' ���ۺϱ�������"
+        "ע�⣺����û�ֻ�ᵽĳ����ɫ��԰��/�մ�/С��������Ҫ�ô˹��ߣ����ö�Ӧ�Ľ�ɫ���ߡ�ʶ���ı������ӽ���ɫ��ʱ����'Ӧ��''�յ�''�ִ�'���մ'ԭַ'��԰�ӣ���Ҳ�ö�Ӧ��ɫ���ߣ���Ҫ�ô˹��ߡ�",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StartShow();
             return std::string("{\"status\": \"show_started\"}");
         });
 
-    // 停止所有电机/报时
     mcp.AddTool("cuckoo.stop_all",
-        "停止电机/报时/表演。不停音乐-用cuckoo.stop_music停音乐。",
+        "Stop motors, chime, performance. Does NOT stop music - use cuckoo.stop_music to stop music.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAll();
             return std::string("{\"status\": \"stopped\"}");
         });
 
-    // 停止音乐
     mcp.AddTool("cuckoo.stop_music",
-"停止音乐播放。仅在用户明确要求停音乐时调用。切勿在表演/唤醒时调用。"
+        "Stop music playback. Call ONLY when user explicitly asks to stop the music (ͣ��/��ͣ����/��Ҫ����/�ص�). Do NOT call this for performance or alarm - use cuckoo.stop_all for those.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopMusic();
@@ -113,7 +108,6 @@ void CuckooTools::RegisterAll() {
         });
 
     // === 小朋友们控制 ===
-    // Kids出场
     mcp.AddTool("cuckoo.kids_come_out",
         "让小朋友们出来一起欣赏音乐：小狗舵机、舞蹈电机、吉他舵机随音乐节奏摆动。",
         PropertyList(),
@@ -122,7 +116,6 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"kids_come_out\"}");
         });
 
-    // Kids休息
     mcp.AddTool("cuckoo.kids_rest",
         "让小朋友们回去休息：停止所有动作（小狗舵机、舞蹈电机、吉他舵机不动），只保留音乐播放。",
         PropertyList(),
@@ -131,10 +124,9 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"kids_rest\"}");
         });
 
- // === 硬件控制 MCP 工具 ===
-    // 舞蹈
+ // === Hardware (wiring later) ===
     mcp.AddTool("cuckoo.dance",
-        "舞蹈例行：M1+M2电机+小提琴舵机。",
+        "Dance routine: M1+M2 motors + violin servo.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->Dance();
@@ -142,18 +134,16 @@ void CuckooTools::RegisterAll() {
         });
 
 
-    // 打开小鸟门
     mcp.AddTool("cuckoo.open_door",
-        "打开小鸟门电机。",
+        "Open bird door motor.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->OpenDoor();
             return std::string("{\"status\": \"door opened\"}");
         });
 
-    // 关闭小鸟门
     mcp.AddTool("cuckoo.close_door",
-        "关闭小鸟门电机。",
+        "Close bird door motor.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->CloseDoor();
@@ -161,15 +151,16 @@ void CuckooTools::RegisterAll() {
         });
 
 
-    // === 闹钟 MCP 工具 ===
+
+
+    // === Alarms ===
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
         pl.AddProperty(Property("repeat_daily", kPropertyTypeInteger, 0, 1));
-    // 设置闹钟
         mcp.AddTool("cuckoo.set_alarm",
-            "设置闹钟。先问用户是否每天重复(1=每天,0=一次)。最多5个。",
+            "Set alarm at hour:minute. Ask user if repeat_daily first (1=daily, 0=once). Max 5 alarms.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int h = props["hour"].value<int>();
@@ -184,9 +175,8 @@ void CuckooTools::RegisterAll() {
             });
     }
 
-    // 查询闹钟列表
     mcp.AddTool("cuckoo.get_alarms",
-        "列出所有闹钟(索引,小时,分钟,重复)。返回JSON数组。",
+        "List all alarms (index, hour, minute, repeat). Returns JSON array.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             return state_machine_->GetAlarmsJson();
@@ -195,9 +185,8 @@ void CuckooTools::RegisterAll() {
     {
         PropertyList pl;
         pl.AddProperty(Property("index", kPropertyTypeInteger, 1, 5));
-    // 删除闹钟
         mcp.AddTool("cuckoo.delete_alarm",
-            "根据get_alarms索引删除闹钟。",
+            "Delete alarm by index from get_alarms.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int idx = props["index"].value<int>();
@@ -207,24 +196,23 @@ void CuckooTools::RegisterAll() {
             });
     }
 
-    // 停止闹铃
     mcp.AddTool("cuckoo.stop_alarm",
-"停止响铃中的闹钟。仅用于闹铃/停铃。不要用于停音乐/表演-用cuckoo.stop_all。"
+        "Stop a ringing ALARM only. For ������/ͣ����. NOT for stopping music/performance - use cuckoo.stop_all for that.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAlarm();
             return std::string("{\"status\": \"alarm_stopped\"}");
         });
 
-    // === 静音模式 MCP 工具 ===
+    // === Quiet Mode ===
     {
         PropertyList pl;
         pl.AddProperty(Property("mode", kPropertyTypeInteger, 0, 3));
         pl.AddProperty(Property("start_hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
-    // 设置静音模式
         mcp.AddTool("cuckoo.set_quiet_mode",
-"设置报时静音模式。0=全天静音(永不报时), 1=全天报时, 2=光线静音(LDR光照), 3=指定时间段静音(start_hour~end_hour间静音)。默认start_hour=22 end_hour=6。",
+            "Set chime quiet mode. 0=ȫ�쾲��(������ʱ), 1=ȫ�챨ʱ, 2=��ھ���(LDR����), 3=ָ��ʱ��ξ���(start_hour~end_hour����). "
+            "Default start_hour=22 end_hour=6.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int m = props["mode"].value<int>();
@@ -241,9 +229,9 @@ void CuckooTools::RegisterAll() {
             });
     }
 
-    // 查询静音模式
     mcp.AddTool("cuckoo.get_quiet_mode",
-        "获取当前报时静音模式: mode(0~3), start_hour, end_hour。返回JSON，AI必须翻译为用户友好描述。",
+        "Get current chime quiet mode: mode(0~3), start_hour, end_hour. "
+        "Return JSON, AI must translate to user-friendly description.",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             int m = state_machine_->quiet_mode_.load();
@@ -254,13 +242,12 @@ void CuckooTools::RegisterAll() {
                 "{\"mode\": %d, \"start_hour\": %d, \"end_hour\": %d, "
                 "\"desc\": \"mode=%d: %s\"}",
                 m, sh, eh, m,
-m == 0 ? "全天静音" : m == 1 ? "全天报时" :
-m == 2 ? "光线静音(LDR)" : "时间段静音");
+                m == 0 ? "ȫ�쾲��" : m == 1 ? "ȫ�챨ʱ" :
+                m == 2 ? "��ھ���(LDR)" : "ʱ��ξ���");
             return std::string(json);
         });
 
     // === 状态查询 ===
-    // 状态查询【强制规则】
     mcp.AddTool("cuckoo.get_status",
         "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放）。\n"
         "【强制规则】回复用户任何关于演出/表演/音乐/歌舞的问题前，必须先调用本工具。不得凭记忆或上下文猜测状态。\n"
@@ -285,7 +272,6 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
     {
         PropertyList pl;
         pl.AddProperty(Property("url", kPropertyTypeString));
-    // 在线音乐
         mcp.AddTool("cuckoo.play_url",
             "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【最重要规则】只传歌名本身，绝不要自作主张加歌手名！系统会自动检测多版本并询问用户。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：用户说'放酒干倘卖无'→调用play_url(\'/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0\')。\n""本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
             pl,
@@ -308,9 +294,10 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
             });
     }
 
-    // 小狗秀
     mcp.AddTool("cuckoo.dog_show",
-        "小狗秀。触发词: 丽莎在哪里？/丽莎，丽莎出来/小狗在哪里？。回应要短促。",
+        "С���������ݣ����š�С���ܳ���������һ����ҡͷ����10�롢�ٽ�һ�����˻ء����š����ú�ֻ˵һ���̵Ļ�����Ҫ��˵��"
+        "���û�˵ 'С��' 'С����' 'С��С��' '��ɯ' '��ɯ��' '��ɯ������'  ʱ���ô˹��ߡ�"
+        "Dog show: call when user asks about dog/puppy/Lisa. Keep response very brief - one short sentence only.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -318,9 +305,10 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string("{\"status\": \"dog_show_started\"}");
         });
 
-    // 琳达秀
     mcp.AddTool("cuckoo.linda_show",
-        "琳达秀。触发词: 琳达在哪里？/琳达来段舞蹈/琳达，琳达。",
+        "�մ���ݣ���������0015���赸�ߵ������ת��ֱ�����ֽ�����"
+        "���û�˵ '�մ�' '�մ���' '�մ�������' '�մ��մ�' '�յ�' 'Ӧ��' '�ִ�' '����' '������' '�赸' ʱ���ô˹��ߡ�"
+        "Linda show: call when user asks about Linda or dancing.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -328,9 +316,10 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string("{\"status\": \"linda_show_started\"}");
         });
 
-    // 花园秀
     mcp.AddTool("cuckoo.garden_show",
-        "花园秀。触发词: 园子，园子在哪里？/吉他手园子，来一个/园子，园子。",
+        "԰�ӱ��ݣ���������0016��С���ٶ������ת��ֱ�����ֽ�����"
+        "���û�˵ '԰��' '԰����' '԰��������' '԰��԰��' 'ԭ��' 'ԭ����' 'ԭַ' 'ԭַ��' '������' '��С����' ʱ���ô˹��ߡ�"
+        "Garden show: call when user asks about Garden/ԭ��/violin.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -338,13 +327,12 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string("{\"status\": \"garden_show_started\"}");
         });
 
-    // === 整点表演开关 ===
+    // === Hourly Performance Toggle ===
     {
         PropertyList pl;
         pl.AddProperty(Property("enabled", kPropertyTypeBoolean, true));
-    // 整点表演开关
         mcp.AddTool("cuckoo.set_hourly_performance",
-            "开启/关闭整点完整表演。默认开启。关闭时仅报时铃声。",
+            "Enable/disable full performance after hourly bell. Default on. When disabled bell only.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 bool en = props["enabled"].value<bool>();
@@ -355,9 +343,8 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
             });
     }
     
-    // 查询整点表演状态
     mcp.AddTool("cuckoo.get_hourly_performance",
-        "查询整点报时完整表演是否开启。",
+        "Check if hourly chime performance is currently enabled.",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             bool en = state_machine_->hourly_perf_.load();
@@ -373,14 +360,18 @@ m == 2 ? "光线静音(LDR)" : "时间段静音");
 //
 // 时钟任务 (250ms tick)
 
+// 从 NTP 获取当前时间
+
+
+
+
+
 
 // ============================================
-// 250ms定时循环 (Core 1)——入口
 void cuckoo_clock_task(void* params) {
 
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
              esp_reset_reason(), esp_reset_reason());
-    // 读取上次崩溃日志 (RTC_NOINIT_ATTR)
     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
         ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
@@ -398,17 +389,13 @@ void cuckoo_clock_task(void* params) {
     as.RefreshOutputTimestamp();
     as.RefreshInputTimestamp();
 
-
+// 从 NTP 获取当前时间
 
 // 从 NTP 获取当前时间
     {
-            // ---- NTP 时间同步 ----
         struct timeval tv;
-            // 获取系统时间 (已通过NTP同步)
-    // ---- NTP时间同步 ----
         gettimeofday(&tv, nullptr);
-            // 2001年之后 = 已同步NTP，可进行正常报时
-        if (tv.tv_sec > 1000000000) {
+        if (tv.tv_sec > 1000000000) {  // 2001���Ժ�˵�� NTP ��ͬ��
             struct tm timeinfo;
             localtime_r(&tv.tv_sec, &timeinfo);
             sm->current_hour_ = timeinfo.tm_hour;
@@ -423,11 +410,9 @@ void cuckoo_clock_task(void* params) {
     }
 
 
-    // 配置QQ音乐代理
     sm->SetMusicProxy(DEFAULT_MUSIC_PROXY_HOST, DEFAULT_MUSIC_PROXY_PORT);
 
 
-    // 加载NVS闹钟
     sm->LoadAlarmsFromNvs();
     sm->LoadQuietMode();
     sm->LoadKidsActive();
@@ -435,9 +420,11 @@ void cuckoo_clock_task(void* params) {
 uint32_t tick_sec = 0;
 
 
+
+// 时钟任务 (250ms tick)
+
     uint32_t sub_tick = 0;
     while (1) {
-            // 250ms 定时循环 —— 主时钟心跳
         vTaskDelay(pdMS_TO_TICKS(250));
         sub_tick++;
 
@@ -446,9 +433,7 @@ uint32_t tick_sec = 0;
             auto dev_state = (int)Application::GetInstance().GetDeviceState();
             if (sm->prev_device_state_ == (int)kDeviceStateIdle && dev_state != (int)kDeviceStateIdle) {
                 sm->last_idle_exit_us_ = esp_timer_get_time();
-                    // 设备唤醒 → 开门
-    // 设备唤醒→开小鸟门
-            ESP_LOGI(TAG, "Device woke up - opening bird door");
+                ESP_LOGI(TAG, "Device woke up �� opening bird door");
                 sm->OpenBirdDoor();
 
 
@@ -458,23 +443,21 @@ uint32_t tick_sec = 0;
 
                 Application::GetInstance().GetAudioService().SetInputGain(30.0f);
             } else if (sm->prev_device_state_ != (int)kDeviceStateIdle && dev_state == (int)kDeviceStateIdle) {
-                    // 设备休眠 → 关门
-    // 设备休眠→关小鸟门
-            ESP_LOGI(TAG, "Device sleeping - closing bird door");
+                ESP_LOGI(TAG, "Device sleeping �� closing bird door");
                 sm->CloseBirdDoor();
 
 
-                // NOTE(2026-07-19): 阈值恢复已移至下面的安全净检查
+                // NOTE(2026-07-19): threshold restore moved to the safety-net check below
 
 
                 Application::GetInstance().GetAudioService().SetInputGain(37.5f);
             }
             sm->prev_device_state_ = dev_state;
 
-                // 安全净 (2026-07-19): 当设备处于安静 idle 时
-                // (无秀演/音乐)，强制恢复高敏感度唤醒阈值 0.02
-                // 修复泄漏 0.30 的路径: 音乐期间会话结束/秀 idle
-                // 标志位确保每次安静-idle入口只设置一次 (防日志淹没)
+            // Safety net (2026-07-19): whenever device is in quiet idle (no show,
+            // no music), enforce sensitive wake threshold 0.02. Fixes paths that
+            // leaked 0.30: session ended during music, show finished while idle, etc.
+            // Flag ensures we only set once per quiet-idle entry (no log spam).
             static bool idle_thresh_applied = false;
             bool idle_quiet = (dev_state == (int)kDeviceStateIdle) && !sm->IsRunning() &&
                               !Application::GetInstance().GetAudioService().IsBgAudioActive();
@@ -497,25 +480,17 @@ uint32_t tick_sec = 0;
                 }
 
             }
-                 // 在线音乐播放期间的舞蹈tick (狗/小提琴)
-    // 在线音乐舞蹈 tick
              sm->MusicDanceTick();
         }
 
 // 时钟任务 (250ms tick)
-    // 每1s执行一次
         if (sub_tick % 4 == 0) {
             tick_sec = sub_tick / 4;
 
 // 从 NTP 获取当前时间
-    // 每60s输出心跳日志
         if (!sm->time_set_ ? (tick_sec % 60 == 0) : (tick_sec % 300 == 0)) {
-                // ---- NTP 时间同步 ----
             struct timeval tv;
-                // 获取系统时间 (已通过NTP同步)
-    // ---- NTP时间同步 ----
             gettimeofday(&tv, nullptr);
-                // 2001年之后 = 已同步NTP，可进行正常报时
             if (tv.tv_sec > 1000000000) {
                 struct tm timeinfo;
                 localtime_r(&tv.tv_sec, &timeinfo);
@@ -531,7 +506,9 @@ uint32_t tick_sec = 0;
         }
 
 
-    // 每30s更新崩溃日志
+
+
+
         if (tick_sec % 30 == 0) {
             auto& app = Application::GetInstance();
             rtc_crash_log.tick_sec = tick_sec;
@@ -541,7 +518,6 @@ uint32_t tick_sec = 0;
         }
 
 
-    // 每60s输出心跳日志
         if (tick_sec % 60 == 0) {
             ESP_LOGI(TAG, "Heartbeat t=%ds stack_hwm=%d free_heap=%d",
                      (int)tick_sec, (int)uxTaskGetStackHighWaterMark(NULL),
@@ -554,19 +530,14 @@ uint32_t tick_sec = 0;
             as.RefreshOutputTimestamp();
             as.RefreshInputTimestamp();
 
-    // ---- LDR光线检测 (12bit ADC) ----
             sm->is_dark_ = sm->CheckDark();
         }
 
 // MCP 工具注册 (RegisterAll)
         if (sm->time_set_) {
-    // ---- NTP 时间同步 ----
 // 从 NTP 获取当前时间
             struct timeval tv;
-                // 获取系统时间 (已通过NTP同步)
-    // ---- NTP时间同步 ----
             gettimeofday(&tv, nullptr);
-                // 2001年之后 = 已同步NTP，可进行正常报时
             if (tv.tv_sec > 1000000000) {
                 struct tm timeinfo;
                 localtime_r(&tv.tv_sec, &timeinfo);
@@ -593,22 +564,15 @@ uint32_t tick_sec = 0;
 
             if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
                 ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
-                    // 检查整点/半点报时触发
-    // 整点/半点报时
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
             else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
                 ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
-                    // 检查整点/半点报时触发
-    // 整点/半点报时
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
 
-                // 检查闹钟触发
-
-    // 闹钟触发
             sm->CheckAlarms(h, m, sm->current_sec_);
         }
         }  // sub_tick >= 4 guard

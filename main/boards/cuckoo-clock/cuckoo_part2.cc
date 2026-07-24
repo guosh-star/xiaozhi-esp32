@@ -1062,7 +1062,7 @@ serial_fallback:
     bool use_opus = (strstr(path, "/opus") != nullptr);
     
     if (use_opus) {
-        // =========== Opus 路径: OGG 解复用 + PushPacketToDecodeQueue ============
+        =========== Opus 路径: OGG 解复用 + PushPacketToDecodeQueue ============
 
         ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
         
