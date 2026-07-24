@@ -2328,12 +2328,8 @@ call_count_ = 3; // 3
  }
 }
 
-/**
-* @brief ++赸
-* - N+0013.mp3N+赸LED++赸++
-* - 3赸
-* -
 // 报时/演出异步任务入口（运行在 Core 1 上）
+// 根据类型决定：整点报时→布谷鸟叫，半点报时→钟声，手动→综合演出
 void CuckooStateMachine::PerformanceTask(void* arg) {
  auto* sm = static_cast<CuckooStateMachine*>(arg);
  sm->violin_state_.Reset();
@@ -3421,9 +3417,8 @@ if (m1_) m1_->Forward(100); // GPIO
  ESP_LOGI(TAG, "MotorTest: done");
 }
 
-/**
-* @brief MCP cuckoo.start_show
- * Core 1cuckoo_show StartShowTask
+// MCP cuckoo.start_show 入口
+// 在 Core 1 上创建 cuckoo_show 任务异步运行
 // 开始综合演出：开门 + 舞蹈 + 关门
 void CuckooStateMachine::StartShow() {
 // 演出/显示 AI 交互
