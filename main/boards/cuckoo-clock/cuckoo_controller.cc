@@ -215,9 +215,9 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
 }
 
 /**
- * @brief ���ö���Ƕ� (0~180��)
- * @param angle Ŀ��Ƕȣ��Զ�ǯλ�� [0, 180]
- * ���Ƕ�ת��Ϊ50Hz PWMռ�ձ� (409~2048��Ӧ 0~180��)
+ * @brief 设置舵机角度
+ *
+ * @param angle 目标角度（0°~180°），自动钳位到 [0, 180]
  */
 void Servo::SetAngle(int angle) {
     if (angle < 0) angle = 0;
@@ -229,10 +229,11 @@ void Servo::SetAngle(int angle) {
 }
 
 /**
- * @brief ���ƽ��ɨ�裺����ʼ�Ƕȵ�Ŀ��Ƕȣ���ָ��ʱ�������
- * @param from ��ʼ�Ƕ�
- * @param to Ŀ��Ƕ�  
- * @param duration_ms ����ʱ�䣨���룩��ÿ20msһ��
+ * @brief 舵机平滑扫描
+ *
+ * @param from 起始角度
+ * @param to 目标角度
+ * @param duration_ms 持续时间（毫秒），每 20ms 一步
  */
 void Servo::Sweep(int from, int to, int duration_ms) {
     if (from == to) { SetAngle(to); return; }
@@ -260,7 +261,7 @@ void Servo::Sweep(int from, int to, int duration_ms) {
 // ============================================
 
 /**
- * @brief ��������������ֹͣ���ȴ����������˳���5������ڣ�������������
+ * @brief Mp3Player::~Mp3Player
  */
 Mp3Player::~Mp3Player() {
     stop_requested_ = true;
@@ -310,9 +311,7 @@ void Mp3Player::UpdateDuckingState() {
 }
 
 /**
- * @brief ���ع���PCM������������
- * ����DecodeSingleFile/PlayUrl�����ѭ�����bark_active_��
- * ������PCM���ӵ���������ϣ�ʵ�ֹ��к�����ͬʱ����
+ * @brief void Mp3Player::LoadDogBark
  */
 void Mp3Player::LoadDogBark(const int16_t* pcm, size_t num_samples) {
     while (bark_active_) {
@@ -337,12 +336,12 @@ void Mp3Player::ApplyDuckingGain(int16_t* pcm, size_t num_samples) {
 }
 
 /**
- * @brief ���벢���ŵ�������MP3�ļ�
- * @param index MP3�ļ���� (��Ӧ 0001~0012.mp3����0013������0015�մ0016԰��)
- * @return 0=�����ֹͣ, 1=��������
- * - ����ID3v2��ǩ���������룬OutputRawPcm���
- * - ���л��������bark_active_�Զ����ӹ�����
- * - Ducking��AI˵��ʱ����20%����
+ * @brief 解码单个 MP3 文件并播放
+ *
+ * 从 assets 读取 MP3，软件解码后通过 OutputRawPcm 输出到 I2S。
+ *
+ * @param index MP3 文件编号
+ * @return 0=失败，1=成功
  */
 int Mp3Player::DecodeSingleFile(int index) {
     if (!assets_) {
@@ -600,11 +599,13 @@ int Mp3Player::PlayUrl(const char* url) {
 }
 
 /**
- * @brief ͨ��HTTP������MP3�����ţ���̨�첽����
- * @param url HTTP URL
- * - �����أ����4MB�����ϸ�MPEG֡ͷУ�飬������������������+�ز�����24000Hz
- * - Ducking��AI˵��ʱ�Զ����͵�20%
- * - ��ʽ���룺����һ������һ����ѭ��ֱ������򱻴��
+ * @brief 验证 MPEG 音频帧头合法性
+ *
+ * 检查帧同步字 0xFFE 及各标志位是否合法。
+ * 用于流式下载中定位有效 MP3 帧边界。
+ *
+ * @param p 待检测数据指针
+ * @return true=合法帧头 false=无效
  */
 // MPEG 帧头结构：帧同步字 FF + 比特率/采样率/层信息
 static bool IsValidMpegHeader(const uint8_t* p) {
@@ -927,11 +928,9 @@ cleanup:
 
 
 /**
- * @brief ͨ��HTTP����ԭʼs16le PCM�����͵����Ŷ���
- * @param url PCM��ƵURL
- * @return 0=�����ɹ�
- * - �ֿ����أ�4KB����PushRawPcmToPlayback���벥�Ŷ���
- * - Ducking��AI˵��ʱ�Զ�����������20%
+ * @brief 通过 HTTP 下载并播放原始 PCM 音频
+ * @param url PCM 文件的 HTTP URL
+ * @return 0=失败，>0=HTTP 状态码
  */
 int Mp3Player::PlayPcm(const char* url) {
     if (is_playing_) {
@@ -1059,15 +1058,9 @@ void Mp3Player::PlayPcmTask(void* arg) {
 }
 
 /**
- * @brief ͨ��ԭʼBSD Socket����OGG/Opus��Ƶ�����͸�����������
- * @param url Opus��ƵURL
- * @return 0=�����ɹ�
- * - ʹ��BSD socketֱ�����ƹ�lwip esp_http_client
- * - Opus·����OGG���װ �� PushPacketToDecodeQueue(��ԭ��Opus�������)
- * - PCM·����legacy����PushBackgroundAudio(�߱�����Ƶring buffer)
- * - Ducking��AI˵��ʱ��ͣ�������ݣ��������������ݣ���˵��ָ�
- * - �Զ��������͵�65%������AEC�زɸ��ţ�
- * - ���粻ͨʱ���˵�����ת��ģʽ
+ * @brief 通过 HTTP 下载并解码播放 OGG/Opus 音频
+ * @param url Opus 文件的 HTTP URL
+ * @return 0=失败，>0=HTTP 状态码
  */
 int Mp3Player::PlayOpus(const char* url) {
     if (is_playing_) {
@@ -1557,9 +1550,8 @@ serial_fallback:
 }
 
 /**
- * @brief ��������ringtone
- * @param volume ����ϵ�� 0.0~1.0�����忪ͷ��15%��ǿ��100%
- * ����A5(880Hz)/C#6(1100Hz)�����PCM��������ÿ��2��
+ * @brief 播放闹钟铃声
+ * @param volume 音量系数（1.0=全音量）
  */
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
@@ -1612,9 +1604,9 @@ void Mp3Player::PlayAlarmRing(float volume) {
 }
 
 /**
- * @brief ����������ѭ��
- * ��FreeRTOS��������ѯ pending_track_ / pending_bell_hour_��
- * ������ʱ����AI��������Ŷ�Ӧ��Ƶ�������ָ�AI���
+* @brief
+* FreeRTOS pending_track_ / pending_bell_hour_
+* AIAI
  */
  // 循环迭代
 void Mp3Player::PlayTaskEntry(void* arg) {
@@ -1954,8 +1946,8 @@ int LdrSensor::ReadRaw() {
 }
 
 /**
- * @brief �жϵ�ǰ�Ƿ�Ϊ�ڰ������������������������ֵ��
- * @return true=�ڰ�, false=����
+ * @brief 检测当前环境是否偏暗
+ * @return true=偏暗（低于阈值）
  */
 bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
 void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
@@ -2041,7 +2033,8 @@ CuckooStateMachine::~CuckooStateMachine() {
 }
 
 /**
- * @brief �򿪵����Դ��P-MOSFET���͡�5V��ͨ��
+ * @brief 启用所有电机驱动电源
+ * P-MOSFET 控制：GPIO 低电平=通电
  */
 void CuckooStateMachine::MotorPowerOn() {
     gpio_set_level(motor_power_pin_, 0);
@@ -2381,12 +2374,9 @@ void CuckooStateMachine::LoadAlarmsFromNvs() {
 
 
 /**
- * @brief ������ʱ���ݣ�����/���/�ֶ���
- * @param type �������ͣ�kPerformanceHour(����)/kPerformanceHalf(���)/kPerformanceManual(�ֶ�)
- * @param hour Сʱ�������㱨ʱ�ã�
- * - ��AI�󴥷�������5���ں��Ե���
- * - �ȴ��AI�Ի���AbortSpeaking������ֹ���������ͻ��Ѵʼ��
- * - ��Core 1����PerformanceTaskִ��
+ * @brief 启动报时/演出异步流程
+ * @param type 演出类型（整点/半点/手动/背景音乐）
+ * @param hour 当前小时（用于决定布谷鸟叫声次数）
  */
 void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
     if (is_running_) { ESP_LOGW(TAG, "Already performing"); return; }
@@ -2452,10 +2442,7 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
 
 
 /**
- * @brief ��ʱ�����������š�С����+�С����Źء���������+�赸������
- * - ���㣺���N��+0013.mp3ѭ��N��+�赸��LED+ˮ��+�赸���+С����+С����
- * - ��㣺���3�Σ������ֺ��赸
- * - ������ָ����Ѵʺ���������
+ * @brief void CuckooStateMachine::PerformanceTask
  */
 void CuckooStateMachine::PerformanceTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
@@ -2620,11 +2607,11 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
     vTaskDelete(NULL);
 }
 /**
- * @brief ��鲢��������/��㱨ʱ
- * - ҹ��(22:00-6:00)����ʱ
- * - AIæʱ�򱳾���Ƶ�����в���ʱ
- * - ���� (min==0): ���� StartPerformance(kPerformanceHour)
- * - ��� (min==30): ���� StartPerformance(kPerformanceHalf)
+* @brief 鲢/
+* - (22:00-6:00)
+ * - AI
+ * - (min==0): StartPerformance(kPerformanceHour)
+ * - (min==30): StartPerformance(kPerformanceHalf)
  */
 void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     is_dark_ = dark;
@@ -2745,11 +2732,10 @@ void CuckooStateMachine::LoadKidsActive() {
 
 // ============================================
 /**
- * @brief ��������
- * @param hour Сʱ (0-23)
- * @param minute ���� (0-59)
- * @param repeat_daily true=ÿ���ظ�, false=һ����
- * �Զ�ȥ�أ�ͬʱ������ӻ����repeat_daily
+ * @brief 设置闹钟
+ * @param hour 小时
+ * @param minute 分钟
+ * @param repeat_daily 是否每天重复
  */
 void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
     std::lock_guard<std::mutex> lock(alarm_mutex_);
@@ -2778,8 +2764,8 @@ void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
 }
 
 /**
- * @brief ��ȡ�����б�JSON
- * @return JSON�����ַ�����[{"index":1,"hour":8,"minute":0,"enabled":true,"repeat_daily":true},...]
+ * @brief 获取所有闹钟的 JSON 列表
+ * @return JSON 格式闹钟列表
  */
 std::string CuckooStateMachine::GetAlarmsJson() {
     std::lock_guard<std::mutex> lock(alarm_mutex_);
@@ -2815,8 +2801,7 @@ bool CuckooStateMachine::DeleteAlarm(int index) {
 }
 
 /**
- * @brief ֹͣ�������������
- * һ��������ֹͣ���Զ����ã��ظ����ӱ�������
+ * @brief 停止当前响铃的闹钟
  */
 void CuckooStateMachine::StopAlarm() {
     alarm_stopped_ = true;
@@ -2840,10 +2825,7 @@ void CuckooStateMachine::StopAlarm() {
 }
 
 /**
- * @brief ÿ�������Ӵ���
- * - ʱ��ƥ������==0ʱ����
- * - ����AlarmTask�ں�̨��������
- * - �����в����ظ�����
+ * @brief 检查并触发闹钟（每秒调用一次）
  */
 void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
     if (alarm_ringing_) return;  // already ringing
@@ -2872,8 +2854,8 @@ void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
 }
 
 /**
- * @brief ���岥�����񣺷���50�֣�100�룩��������15%��ǿ��100%��ÿ��֮����ͣ2����
- * �ڼ���alarm_stopped_��־�����û�ֹͣ�������˳�
+ * @brief 闹钟响铃异步任务
+ * 播放铃声 50 次（约 100 秒），前 10 次音量从 15% 渐增至 100%
  */
 void CuckooStateMachine::AlarmTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
@@ -2926,8 +2908,7 @@ void CuckooStateMachine::AlarmTask(void* arg) {
 
 
 /**
- * @brief С���������ݣ�MCP��ڣ���������
- * ��Core 1����dog_show����ʵ����DogShowTask()ִ��
+ * @brief void CuckooStateMachine::DogShow
  */
 void CuckooStateMachine::DogShow() {
     if (is_running_) return;  // ���б��������У��ܾ��ظ�����
@@ -2940,8 +2921,7 @@ void CuckooStateMachine::DogShow() {
 }
 
 /**
- * @brief С����������ʵ��
- * ���̣���AI˵��������������������š�С�����ɨ����С��ǰ�����С�ҡͷ10����С��˻ء����š��ָ�
+ * @brief 小狗演出异步任务（Core 1）
  */
 void CuckooStateMachine::DogShowTask() {
     auto& app = Application::GetInstance();
@@ -3065,10 +3045,9 @@ void CuckooStateMachine::DogShowTask() {
 }
 
 /**
- * @brief ͨ��WAV�ļ�������
- * @param filename WAV�ļ������� dog_bark.wav, 2001.wav~2005.wav��
- * ����WAVͷ��ȡ�����ʺ����ݿ飬ͨ��OutputRawPcmֱ�Ӳ���
- * �ǹ����ļ�������Ŵ���������ƫС���⣩
+ * @brief 播放 WAV 音频文件
+ * 查找 RIFF header + data chunk，直接输出 PCM
+ * @param filename WAV 文件名
  */
 void CuckooStateMachine::PlayWavAsset(const char* filename) {
     void* wav_ptr = nullptr;
@@ -3201,7 +3180,7 @@ bool CuckooStateMachine::PlayShowMusicBg(int index) {
 }
 
 /**
- * @brief �մ�������ݣ�MCP��ڣ���������
+ * @brief 创建琳达演出异步任务
  */
 void CuckooStateMachine::StartLindaShow() {
 
@@ -3214,7 +3193,7 @@ void CuckooStateMachine::StartLindaShow() {
 }
 
 /**
- * @brief ԰�ӳ������ݣ�MCP��ڣ���������
+ * @brief 创建琳达演出异步任务
  */
 void CuckooStateMachine::StartGardenShow() {
 
@@ -3227,8 +3206,8 @@ void CuckooStateMachine::StartGardenShow() {
 }
 
 /**
- * @brief �մ����ʵ��
- * ���̣�LED����0015.mp3���š��赸�����������+LED������˸��ǰ24�룩��LEDȫ�������ֽ�������л������LED����ָ�
+ * @brief 琳达特别演出
+ * 播放琳达主题音乐 + 舞蹈 + 小提琴 + 小狗 + 水车 + LED
  */
 void CuckooStateMachine::LindaShow() {
     if (is_running_) { ESP_LOGW(TAG, "LindaShow: already running, skip"); return; }
@@ -3389,8 +3368,8 @@ void CuckooStateMachine::LindaShow() {
 }
 
 /**
- * @brief ԰�ӱ���ʵ��
- * ���̣�LED����0016.mp3���š�С���ٶ��0~180�Ȱڶ�+LED������˸��ǰ24�룩��LEDȫ�������ֽ����������λ����л������LED����ָ�
+ * @brief 花园特别演出
+ * 播放花园主题音乐 + 舞蹈 + 小提琴 + 小狗 + 水车 + LED
  */
 void CuckooStateMachine::GardenShow() {
     if (is_running_) { ESP_LOGW(TAG, "GardenShow: already running, skip"); return; }
@@ -3578,8 +3557,7 @@ void CuckooStateMachine::MotorTest(int seconds) {
 
 
 /**
- * @brief �ۺϱ�����ڣ�MCP cuckoo.start_show����������
- * ��Core 1����cuckoo_show���� �� StartShowTask
+ * @brief void CuckooStateMachine::StartShow
  */
 void CuckooStateMachine::StartShow() {
 // 演出/显示 AI 交互
@@ -3618,8 +3596,8 @@ void CuckooStateMachine::StartShow() {
 }
 
 /**
- * @brief �ۺϱ��ݺ�̨����
- * ���AI������������LED+ˮ�������ѡ���֡�����+С������(�첽����)���赸ѭ����LED������š��ָ�
+* @brief
+ * AILED++()赸LED
  */
 void CuckooStateMachine::StartShowTask() {
     auto& app0 = Application::GetInstance();
@@ -3636,8 +3614,7 @@ MotorPowerOn();
 }
 
 /**
- * @brief �ۺϱ���ִ�У�ShowTask��ڵ��õ�ʵ���߼���
- * ��PerformanceTask����RunDanceIntro/RunDanceLoop/RunDanceFinale
+ * @brief 综合演出异步任务
  */
 void CuckooStateMachine::ShowTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
@@ -3745,12 +3722,7 @@ void CuckooStateMachine::PlayMusic(int index) {
 }
 
 /**
- * @brief ����ֹͣ���е���ͱ���
- * - ͣ���е����M1~M4 + С���� + ˮ����
- * - �������90��
- * - LEDϨ��
- * - �������ֲ�ͣ�����ǲ��Ǳ���ģʽ��
- * - ͨ��Schedule�첽�����豸״̬ΪIdle������������
+ * @brief 停止所有演出活动（音乐+电机+舵机）
  */
 void CuckooStateMachine::StopAll() {
     is_running_ = false;
@@ -3795,7 +3767,7 @@ void CuckooStateMachine::StopAll() {
 }
 
 /**
- * @brief ֹͣ���ֲ��ţ����������Ƶ��
+ * @brief 停止当前播放的音乐
  */
 void CuckooStateMachine::StopMusic() {
     if (mp3_) {
@@ -3805,7 +3777,7 @@ void CuckooStateMachine::StopMusic() {
 }
 
 /**
- * @brief ���Ŵ򿪣�M2�����ת��ʱ�� MAIN_DOOR_TIME_MS��
+ * @brief 打开大门（M2 电机正转）
  */
 void CuckooStateMachine::OpenDoor() {
     MotorPowerOn();
@@ -3818,7 +3790,7 @@ void CuckooStateMachine::OpenDoor() {
 }
 
 /**
- * @brief ���Źرգ�M2�����ת��ʱ�� MAIN_DOOR_TIME_MS��
+ * @brief 关闭大门（M2 电机反转）
  */
 void CuckooStateMachine::CloseDoor() {
     MotorPowerOn();
@@ -3831,7 +3803,7 @@ void CuckooStateMachine::CloseDoor() {
 }
 
 /**
- * @brief С�����һ����Ծ�������ͨ��500ms + �ϵ���ȴ400ms��
+ * @brief 布谷鸟跳一次（500ms 上冲 + 400ms 回落）
  */
 void CuckooStateMachine::BirdJumpOnce() {
     MotorPowerOn();
@@ -3851,8 +3823,7 @@ void CuckooStateMachine::BirdJumpPulse() {
 }
 
 /**
- * @brief С���������Ծ��AI˵��ʱ���滰�����ࣩ
- * ����50-200ms������ȣ���ȴ300-700ms������
+ * @brief 布谷鸟短跳（AI 说话时的快速鸟跳）
  */
 void CuckooStateMachine::BirdJumpShort() {
  // 重新使能电机电源，防止 MusicDogOutro 中途关闭
@@ -4126,9 +4097,9 @@ void CuckooStateMachine::PlayCuckooSound() {
 }
 
 /**
- * @brief ���ö���Ƕ�
- * @param servo_id 0=С���ٶ��, 1=С��β�Ͷ��
- * @param angle 0~180��
+ * @brief 设置舵机角度
+ * @param servo_id 1=小提琴手臂，2=狗尾
+ * @param angle 角度（0°~180°）
  */
 void CuckooStateMachine::SetServoAngle(int servo_id, int angle) {
     MotorPowerOn();  // ȷ����Դ�ȶ�
@@ -4137,9 +4108,9 @@ void CuckooStateMachine::SetServoAngle(int servo_id, int angle) {
 }
 
 /**
- * @brief ���õ���ٶ�
- * @param motor_id 1=M1�赸, 2=С���ٵ��, 3=С�����, 4=���ŵ��
- * @param speed -100~100 (����=��ת)
+* @brief
+ * @param motor_id 1=M1赸, 2=, 3=, 4=
+* @param speed -100~100 (=)
  */
 void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
     if (speed != 0) MotorPowerOn();
@@ -4160,13 +4131,13 @@ void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
 }
 
 /**
- * @brief �������ֲ������
- * @param url_or_path URL�����·������ "/pcm?q=�ܽ���"��
- * @return 0=�ɹ�, <0=ʧ��
- * - ���AI�Ի�����CPU����
- * - �Զ�����URL�е����ĺͿո�
- * - ���ļ�������httpǰ׺���Զ�ƴ�Ӵ�����ַ
- * - ���ڲ���ʱ��ͣ�ɸ��ٷ��¸�
+* @brief
+* @param url_or_path URL "/pcm?q="
+* @return 0=, <0=
+* - AICPU
+* - URL
+* - http
+* -
  */
 std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     if (music_proxy_host_.empty()) {
@@ -4442,9 +4413,9 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
 }
 
 /**
- * @brief �������ִ�����������ַ
- * @param host ��������IP
- * @param port �����˿�
+* @brief
+ * @param host IP
+* @param port
  */
 void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
     music_proxy_host_ = host;
