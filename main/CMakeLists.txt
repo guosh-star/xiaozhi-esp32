@@ -809,6 +809,14 @@ elseif(CONFIG_BOARD_TYPE_CUCKOO_CLOCK)
     set(BOARD_TYPE "cuckoo-clock")
     # Include cuckoo clock MP3 music files in assets partition
     set(DEFAULT_ASSETS_EXTRA_FILES "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/assets")
+    # cuckoo_controller.cc is built by concatenating 5 part files
+    set(CUCKOO_PARTS
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_part1.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_part2.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_part3.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_part4.cc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_part5.cc"
+    )
 endif()
 
 if(MANUFACTURER)
@@ -823,6 +831,19 @@ else()
     )
 endif()
 list(APPEND SOURCES ${BOARD_SOURCES})
+
+# Cuckoo Clock: concatenate 5 part files into cuckoo_controller.cc at build time
+if(CONFIG_BOARD_TYPE_CUCKOO_CLOCK)
+    list(FILTER SOURCES EXCLUDE REGEX ".*cuckoo_part[0-9]+\\.cc$")
+    set(CUCKOO_GENERATED "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_TYPE}/cuckoo_controller.cc")
+    add_custom_command(
+        OUTPUT ${CUCKOO_GENERATED}
+        COMMAND ${CMAKE_COMMAND} -E cat ${CUCKOO_PARTS} > ${CUCKOO_GENERATED}
+        DEPENDS ${CUCKOO_PARTS}
+        COMMENT "Building cuckoo_controller.cc from 5 parts..."
+    )
+    list(APPEND SOURCES ${CUCKOO_GENERATED})
+endif()
 
 # Select audio processor according to Kconfig
 if(CONFIG_USE_AUDIO_PROCESSOR)
