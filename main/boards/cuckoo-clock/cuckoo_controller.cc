@@ -675,6 +675,14 @@ static bool IsValidMpegHeader(const uint8_t* p) {
     return true;
 }
 
+/**
+ * @brief HTTP 批量流式下载 MP3 异步任务
+ *
+ * 建立 HTTP 连接，流式下载 MP3 数据，逐帧解码。
+ * 支持 HTTP 302 重定向，提供下载进度回调。
+ *
+ * @param arg 线程参数（包含 URL 和播放器指针）
+ */
 void Mp3Player::PlayUrlTask(void* arg) {
     struct PlayUrlCtx { Mp3Player* self; char url[512]; };
     auto* ctx = (PlayUrlCtx*)arg;
@@ -1722,6 +1730,16 @@ void Mp3Player::PlayTaskEntry(void* arg) {
     }
 }
 
+/**
+ * @brief 按文件夹和曲目编号播放
+ *
+ * folder=1 → 播放钟声 (PlayBell)；
+ * folder=2 → 播放 MP3 音乐 (1~12)，
+ * 夹 3~5 → 播放 assets 分区 WAV/PCM 文件。
+ *
+ * @param folder 文件夹编号 (1=钟声, 2=MP3音乐, 3-5=assets)
+ * @param track 曲目编号 (1-based)
+ */
 void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
     if (folder == 1) {
   // 条件判断
@@ -1734,6 +1752,14 @@ void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
     }
 }
 
+/**
+ * @brief 按索引值播放 MP3 音乐
+ *
+ * 自动计算 folder/track，调用 PlayTrack。
+ * 索引 1~12 → 曲目 1~12。
+ *
+ * @param index 曲目索引 (1-based)
+ */
 void Mp3Player::PlayIndex(uint16_t index) {
     if (index < 1) index = 1;
 
@@ -2072,6 +2098,12 @@ void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
 // ============================================
 // ============================================
 // ============================================
+/**
+ * @brief 异步播放布谷鸟叫声
+ *
+ * 在 FreeRTOS 任务中执行，不阻塞调用者。
+ * 数据来自 cuckoo_wake_sound.h 预编译 PCM。
+ */
 void BellSoundPlayer::PlayCuckooSoundSync() {
 // AI TTS 播放期间，Opus 下载限速至 30%
     auto& app = Application::GetInstance();
@@ -2082,6 +2114,11 @@ void BellSoundPlayer::PlayCuckooSoundSync() {
     );
 }
 
+/**
+ * @brief 同步播放钟声（阻塞式）
+ *
+ * 从 bell_0013.h 读取预编译 PCM 数据，通过 OutputRawPcm 直接输出。
+ */
 void BellSoundPlayer::PlayBellSoundSync() {
 // AI TTS 播放期间，Opus 下载限速至 30%
     auto& app = Application::GetInstance();
@@ -2169,6 +2206,14 @@ struct DoorOpenCtx {
     CuckooStateMachine* sm;
 };
 
+/**
+ * @brief 异步开门任务
+ *
+ * 在 Core 1 后台执行：打开大门 → 小鸟跳跃（整点次数）
+ * → 播放钟声 → 关门。
+ *
+ * @param arg 未使用的线程参数
+ */
 void CuckooStateMachine::DoorOpenTask(void* arg) {
     auto* ctx = static_cast<DoorOpenCtx*>(arg);
     auto* sm = ctx->sm;
@@ -2233,6 +2278,12 @@ void CuckooStateMachine::PlayDogBark() {
     }
 }
 
+/**
+ * @brief 舞蹈开场：开门 + 小鸟跳跃 + 狗出场
+ *
+ * 执行顺序：打开大门 → 小鸟跳跃 (x2)
+ * → 小狗探出摇尾 → 狗叫。
+ */
 void CuckooStateMachine::RunDanceIntro() {
  // 重新使能电机电源，防止 MusicDogOutro 中途关闭
     MotorPowerOn();
@@ -2256,6 +2307,12 @@ void CuckooStateMachine::RunDanceIntro() {
     }
 }
 
+/**
+ * @brief 舞蹈循环主体
+ *
+ * 等待背景音乐激活后，循环执行舞蹈电机、小提琴舵机、狗尾舵机等动作，
+ * 直到音乐结束或被停止。
+ */
 void CuckooStateMachine::RunDanceLoop() {
     unsigned long m1_timer = xTaskGetTickCount() * portTICK_PERIOD_MS;
     int m1_stage = 0;
@@ -2379,6 +2436,12 @@ void CuckooStateMachine::RunDanceLoop() {
     }
 }
 
+/**
+ * @brief 舞蹈终场：停车 + 小狗归位 + 关门
+ *
+ * 停止所有电机/舵机，小狗后退归位，
+ * 关闭大门，停止水车 + 关闭 LED。
+ */
 void CuckooStateMachine::RunDanceFinale() {
  // ====== 演出开始：LED 亮 + 水车开始 ======
     gpio_set_level(LED_A_GPIO, 1);
@@ -2449,6 +2512,11 @@ void CuckooStateMachine::RunDanceFinale() {
 static const char* kAlarmNvsNamespace = "cuckoo_alarm";
 static const char* kAlarmNvsKey = "alarms";
 
+/**
+ * @brief 将闹钟配置写入 NVS（断电保留）
+ *
+ * 存储内容：闹钟小时/分钟、使能状态、每天重复标志。
+ */
 void CuckooStateMachine::SaveAlarmsToNvs() {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(kAlarmNvsNamespace, NVS_READWRITE, &handle);
@@ -3770,6 +3838,13 @@ if (sm->mp3_) sm->mp3_->SetDisableDucking(false); // duck
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief 播放指定索引的本地音乐（MCP 入口）
+ *
+ * 调用 Mp3Player::PlayIndex 播放 assets 分区中的 MP3 文件。
+ *
+ * @param index 曲目索引 (1-based)
+ */
 void CuckooStateMachine::PlayMusic(int index) {
     if (mp3_) mp3_->PlayBgMusic(index);
 }
@@ -4031,6 +4106,12 @@ void CuckooStateMachine::MusicDanceTick() {
     }
 }
 
+/**
+ * @brief 音乐播放时小狗出场动画
+ *
+ * 狗尾舵机探出 (180° → 20°) → 小狗前进
+ * → 摇尾。异步执行，由 MusicDanceTick 状态机触发。
+ */
 void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: ENTER");
     dog_intro_running_ = true;
@@ -4056,6 +4137,12 @@ void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: done, handing over to MusicDanceTick");
 }
 
+/**
+ * @brief 音乐结束时小狗归位动画
+ *
+ * 狗尾舵机归位 (cur° → 20°) → 小狗后退
+ * → 狗尾归位 (20° → 180°) → 关门。
+ */
 void CuckooStateMachine::MusicDogOutro() {
     dog_outro_running_ = true;
     // 先平滑回到 30°，再归位
@@ -4103,6 +4190,12 @@ void CuckooStateMachine::KidsComeOut() {
     }
 }
 
+/**
+ * @brief 小人休息状态（音乐停止、小人归位）
+ *
+ * 闭门 + 小狗归位（通过 MusicDogOutro），
+ * 吉他手舵机保持 90°不动。
+ */
 void CuckooStateMachine::KidsRest() {
     kids_active_ = false;
     SaveKidsActive();
@@ -4126,6 +4219,9 @@ void CuckooStateMachine::KidsRest() {
     ESP_LOGI(TAG, "KidsRest: kids resting, no movement");
 }
 
+/**
+ * @brief 打开小鸟门（M4 电机正转）
+ */
 void CuckooStateMachine::OpenBirdDoor() {
     MotorPowerOn();
     if (m4_) {
@@ -4367,6 +4463,15 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
     return "";
 }
 
+/**
+ * @brief 播放在线音乐（MCP 入口）
+ *
+ * 自动识别 URL 格式 (Opus/PCM)，停止旧任务后启动新播放。
+ * 若 URL 含中文，手动 URL Encode 后再调用 Mp3Player。
+ *
+ * @param url_or_path QQ 音乐代理 URL 或搜索词
+ * @return 0=成功，-1=失败
+ */
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
     
