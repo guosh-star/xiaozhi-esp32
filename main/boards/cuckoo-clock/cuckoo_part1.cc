@@ -126,10 +126,32 @@ static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
         .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE };
     gpio_config(&c);
 }
-// 电机构造函数 - GPIO 直驱模式（非 PWM）
+/**
+ * @brief 电机构造函数 - GPIO 直驱模式（非 PWM）
+ *
+ * 通过 GPIO 高低电平直接控制电机正反转，无速度调节。
+ * in1 高 + in2 低 = 正转，in1 低 + in2 高 = 反转。
+ * 适用于 L9110S 等单极性驱动芯片。
+ *
+ * @param in1 正转引脚
+ * @param in2 反转引脚
+ */
 Motor::Motor(gpio_num_t in1, gpio_num_t in2)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(false), max_duty_(0) { motor_gpio_init(in1, in2); Stop(); }
-// 电机构造函数 - PWM 模式（共享定时器，10-bit/1kHz）
+/**
+ * @brief 电机构造函数 - PWM 共享定时器模式（10-bit/1kHz）
+ *
+ * 使用 LEDC_TIMER_MOTOR 定时器（10-bit 分辨率，max_duty=1023，频率 1kHz）。
+ * 定时器通过 static t0_done 全局只初始化一次，后续实例复用同一配置。
+ * 两个 LEDC 通道 (ch1/ch2) 分别控制正反转占空比，SetSpeed 时根据速度正负选择通道输出。
+ * 适用于 TB6612 四路主电机驱动。
+ *
+ * @param in1 正向 GPIO 引脚
+ * @param in2 反向 GPIO 引脚
+ * @param ch1 正向 LEDC 通道号
+ * @param ch2 反向 LEDC 通道号
+ * @param sm LEDC 速度模式（通常为 LEDC_LOW_SPEED_MODE）
+ */
 Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_mode_t sm)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
       ledc_timer_(LEDC_TIMER_MOTOR), speed_mode_(sm), max_duty_(1023) {
@@ -145,6 +167,21 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
     Stop();
 }
 
+/**
+ * @brief 电机构造函数 - PWM 独立定时器模式（8-bit/10kHz）
+ *
+ * 使用自定义 LEDC 定时器编号（8-bit 分辨率，max_duty=255，频率 10kHz）。
+ * 通过 static custom_done[timer] 数组确保每个定时器编号只初始化一次，
+ * 不同编号的电机可独立调速互不干扰。
+ * 适用于水车、鸟跳等需要独立频率控制的电机（DRV8833 单向驱动）。
+ *
+ * @param in1 正向 GPIO 引脚
+ * @param in2 反向 GPIO 引脚
+ * @param ch1 正向 LEDC 通道号
+ * @param ch2 反向 LEDC 通道号
+ * @param timer LEDC 定时器编号（独立于 LEDC_TIMER_MOTOR）
+ * @param sm LEDC 速度模式
+ */
 Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_timer_t timer, ledc_mode_t sm)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
       ledc_timer_(timer), speed_mode_(sm), max_duty_(255) {
@@ -310,5 +347,3 @@ Mp3Player::~Mp3Player() {
         mp3_dec_handle_ = nullptr;
     }
 }
-
-void Mp3Player::Init(Assets* assets) {

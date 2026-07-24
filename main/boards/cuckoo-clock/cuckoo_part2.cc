@@ -1,4 +1,5 @@
 // ===== Part 2: Mp3Player 类 (L284-1924) =====
+void Mp3Player::Init(Assets* assets) {
     assets_ = assets;
     ESP_LOGI(TAG, "Mp3Player initialized (async task-based software decode)");
 }
