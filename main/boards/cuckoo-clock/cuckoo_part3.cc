@@ -135,9 +135,8 @@ CuckooStateMachine::~CuckooStateMachine() {
 }
 
 /**
-
+ * @brief 打开电机电源（P-MOSFET 导通→5V 供电）
  */
-/**
 void CuckooStateMachine::MotorPowerOn() {
     gpio_set_level(motor_power_pin_, 0);
 }
