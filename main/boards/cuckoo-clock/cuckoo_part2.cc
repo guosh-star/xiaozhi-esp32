@@ -168,9 +168,9 @@ if (skip < mp3_size - 1024) {  // 确保跳过ID3后有足够空间
 
                 auto& app = Application::GetInstance();
 
- // ---- Smooth ducking: fade music out when AI starts speaking ----
-                // Use a state machine: 0=idle, 1=fading, 2=ducked, 3=restoring
-                static int duck_state = 0;  // 0=idle, 1=fading, 2=ducked, 3=restoring
+ // ---- Ducking 状态机: AI 说话时平滑淡出音乐 ----
+                // 0=空闲, 1=淡出中, 2=已压低, 3=恢复中
+                static int duck_state = 0;  // 当前状态: 0=空闲, 1=淡出中, 2=已压低, 3=恢复中
                 static int64_t duck_transition_us = 0;
                 bool ai_speaking = (app.GetDeviceState() == kDeviceStateSpeaking);
 
@@ -219,7 +219,7 @@ if (skip < mp3_size - 1024) {  // 确保跳过ID3后有足够空间
                     }
                 }
 
- // Apply gain + clip
+ // Ducking 增益 + 限幅
                 float gain = ducking_gain_;
                 for (size_t i = 0; i < num_samples; i++) {
                     int32_t s = (int32_t)(pcm_data[i] * gain);
@@ -418,7 +418,7 @@ if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // 限制4MB
 
 
     const int kOutRate = 24000;
-                // Buffer for worst-case MP3 frame (1152 stereo) upsampled from 8000->24000Hz
+                // MP3 最差情况缓冲区: 1152立体声从8000→24000Hz升采样
 
 
     const int kResampBufSamples = 4096;
@@ -497,7 +497,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
 
             if (dec_ret == ESP_AUDIO_ERR_OK) {
                 if (frame.decoded_size > 0 && !self->stop_requested_) {
- // ---- Smooth ducking: fade when AI starts speaking ----
+ // ---- Ducking: AI 说话时平滑淡出音乐 ----
                     auto dev_state = app.GetDeviceState();
                     if (dev_state == kDeviceStateSpeaking && self->ducking_gain_ >= 1.0f) {
                         self->ducking_gain_ = 1.0f;
@@ -523,7 +523,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
 
 
                     if (sample_rate != kOutRate && mono_ns > 0) {
-                    // Step 1: stereo -> mono (average L/R)
+                    // 第1步: 立体声→单声道 (左右声道平均)
                         for (size_t i = 0; i < mono_ns; i++) {
                             int32_t sum = (int32_t)pcm[2*i] + (int32_t)pcm[2*i+1];
                             resample_buf1[i] = (int16_t)(sum / 2);
@@ -734,7 +734,7 @@ const size_t CHUNK = sizeof(self->output_buf_);  // 单次解码缓冲区大小
 size_t samples = read / 2;  // 16位采样数
         int16_t* pcm = (int16_t*)self->output_buf_;
 
- // ---- Smooth ducking: fade when AI starts speaking ----
+ // ---- Ducking: AI 说话时平滑淡出音乐 ----
         auto dev_state = app.GetDeviceState();
         if (dev_state == kDeviceStateSpeaking && self->ducking_gain_ >= 1.0f) {
             self->ducking_gain_ = 1.0f;
@@ -785,7 +785,7 @@ size_t samples = read / 2;  // 16位采样数
 /**
  * @brief 通过 BSD Socket 下载 OGG/Opus 音频并播放
  *
- * 直接使用 BSD socket 进行 TCP 连接和 HTTP 请求，绕过 esp_http_client 开销。
+ // 原始BSD socket
  * Ducking: AI 说话时暂停下载数据。下载速率自动降至 65% 以减少 AEC 回采干扰。
  * @param url Opus 音频 URL
  * @return 0 = 下载失败，1 = 播放成功
@@ -803,7 +803,7 @@ int Mp3Player::PlayOpus(const char* url) {
 stop_requested_ = false;  // 每次播放前重置停止标志
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
-    // Clear stale bg audio from previous session to prevent startup noise burst
+    // 清除上次会话残留的背景音频数据，防止开机噪声入侵
     Application::GetInstance().GetAudioService().ClearBackgroundAudio();
 
     if (strlen(url) >= 512) {
@@ -863,7 +863,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     
-    // ԭʼBSD socket
+    // 原始BSD socket
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0) {
         ESP_LOGE(TAG, "PlayOpus: socket() failed errno=%d", errno);
@@ -926,7 +926,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
 serial_fallback:
 
         
- // === Serial fallback ===
+    // === 串口回退模式 ===
         printf("\x01MUSIC_REQ\x02%s\x03\n", url);
         fflush(stdout);
         
@@ -967,7 +967,7 @@ serial_fallback:
 
                 uint64_t now_ms = esp_timer_get_time() / 1000;
                 if (now_ms - last_refresh_ms > 8000) {  // every 8s
- // HACK: Prevent audio watchdog timeout during long downloads
+        // HACK: 长时间下载时防止音频看门狗超时
                 app.GetAudioService().RefreshInputTimestamp();
 
                     last_refresh_ms = now_ms;
@@ -1039,12 +1039,12 @@ serial_fallback:
         return;
     }
 
- // === Detect format: /opus uses OGG demuxer + main audio pipeline ===
- // === /pcm uses raw bytes pushed to background ring buffer ===
+    // === 格式检测: /opus 走 OGG 解复用器 + 主音频管道 ===
+    // === /pcm 走原始字节推送背景环形缓冲区 ===
     bool use_opus = (strstr(path, "/opus") != nullptr);
     
     if (use_opus) {
-        // ============ Opus path: OGG demux + PushPacketToDecodeQueue ============
+        =========== Opus 路径: OGG 解复用 + PushPacketToDecodeQueue ============
 
         ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
         
@@ -1129,7 +1129,7 @@ serial_fallback:
         return;
     }
     
- // ============ PCM path (legacy): raw s16le PushBackgroundAudio ============
+    // ============ PCM 路径 (旧): 原始 s16le PushBackgroundAudio ============
     const size_t CHUNK = 4096;
     uint8_t buf[CHUNK];
     int64_t t0 = esp_timer_get_time(), last_refresh = t0;
@@ -1139,7 +1139,7 @@ serial_fallback:
     app.GetAudioService().SetBackgroundAudioGain(0.001f);  // near-silent but keeps bg_audio_active_=true
     ESP_LOGI(TAG, "PlayOpus: downloading raw PCM...");
 
- // === Pre-buffer phase: fill ring buffer before enabling drain ===
+    // === 预填充阶段: 先填满环形缓冲区再开启消耗 ===
     int64_t prebuf_start = esp_timer_get_time();
     while (self->is_playing_ && !self->stop_requested_) {
         int read = recv(sock, buf, CHUNK, 0);
@@ -1151,10 +1151,10 @@ serial_fallback:
 
         size_t fill = app.GetAudioService().GetBgAudioFillLevel();
         if (fill >= 64000) {
- // Set gain based on current AI state before enabling drain
- // (prevents full-volume music + TTS overlap noise)
+        // 开启消耗前根据当前 AI 状态设置增益
+        // (防止满量音乐 + TTS 重叠噪声)
             auto state = app.GetDeviceState();
-            // Duck only while AI actually talks; listening keeps full volume (user request 2026-07-19)
+            // 仅在 AI 说话时 Ducking; 监听保持满音量 (用户 2026/7/20 要求)
             bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
             ai_speaking = ai_now;
             app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
@@ -1164,7 +1164,7 @@ serial_fallback:
             break;
         }
         if (esp_timer_get_time() - prebuf_start > 10000000) {
- // Set gain even on timeout otherwise stays at 0.001f
+        // 超时也要设置增益，否则会停留在 0.001f
             auto state = app.GetDeviceState();
             bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
             ai_speaking = ai_now;
@@ -1176,11 +1176,11 @@ serial_fallback:
         }
     }
 
- // === Main download push loop ===
+    // === 主下载推送循环 ===
     int recv_errors = 0;
     while (self->is_playing_ && !self->stop_requested_) {
         auto state = app.GetDeviceState();
-        // Listening keeps music at 100%; duck to 50% only while AI speaks/connects
+            // 监听时保持100% 音量; 仅 AI 说话/连接时降至50%
         bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
         if (ai_now != ai_speaking) {
             ai_speaking = ai_now;
@@ -1194,9 +1194,9 @@ serial_fallback:
                      bg_fill, task_hwm);
         }
 
- // When AI is speaking, pause TCP download to free WiFi airtime for
- // UDP audio packets (prevents WiFi buffer starvation TTS stutter).
- // Only pause if buffer sufficient to ride through typical AI reply.
+            // AI 说话时暂停 TCP 下载，释放 WiFi 空中时间给
+            // UDP 音频包 (防止 WiFi 缓冲区饥饿导致 TTS 卡顿)
+            // 仅在缓冲区足够支撑典型 AI 回复时长时暂停
         if (ai_speaking && app.GetAudioService().GetBgAudioFillLevel() > 64000) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
@@ -1209,22 +1209,22 @@ serial_fallback:
             app.GetAudioService().PushBackgroundAudio(
                 reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
         } else if (read == 0) {
- // Server closed connection gracefully
+            // 服务器优雅关闭连接
             ESP_LOGI(TAG, "PlayOpus: server closed connection");
             break;
         } else {
- // read < 0: timeout or transient error
+            // read < 0: 超时或瞬时错误
             recv_errors++;
             if (recv_errors > 5) {
                 ESP_LOGE(TAG, "PlayOpus: recv failed %d times, giving up (errno=%d)", recv_errors, errno);
                 break;
             }
- // Wait 1s before retry WiFi may be reconnecting after AI conversation
+            // 等待1s 后重试 (WiFi 可能在 AI 对话后重连中)
             ESP_LOGW(TAG, "PlayOpus: recv error %d/%d (errno=%d), retrying...", recv_errors, 5, errno);
             for (int w = 0; w < 10 && self->is_playing_ && !self->stop_requested_; w++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
- // Refresh power save in case it was changed by channel close
+            // 刷新省电设置 (通道关闭可能改变了它)
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
             continue;
         }
@@ -1235,7 +1235,7 @@ serial_fallback:
 
         int64_t now = esp_timer_get_time();
         if (now - last_refresh > 8000000) {
- // Diagnostic: log buffer fill + download rate every 8s
+            // 诊断日志: 每8s 记录缓冲区填充 + 下载速率
             size_t fill = app.GetAudioService().GetBgAudioFillLevel();
             int64_t elapsed = now - t0;
             float dl_rate = elapsed > 0 ? (float)total_dl * 1000000.0f / (float)elapsed : 0;
@@ -1275,8 +1275,8 @@ serial_fallback:
         app.GetAudioService().EnableWakeWordDetection(false);
         vTaskDelay(pdMS_TO_TICKS(50));
         app.GetAudioService().EnableWakeWordDetection(true);
-        // Fix(2026-07-19): idle transition during music skips threshold restore
-        // (IsBgAudioActive guard), leaving 0.30 stuck. Restore sensitive 0.02 here.
+        // Fix(2026-07-19): 音乐期间 idle 切换会跳过阈值恢复
+        // (IsBgAudioActive 守卫) 会卡在0.30。在此处恢复敏感度0.02
         app.GetAudioService().SetWakeWordThreshold(0.02f);
     }
 
@@ -1357,7 +1357,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
         }
 
         if (self->pending_track_ > 0) {
- // play single track - manage mute here
+    // 播放单曲 - 在此处管理静音
             self->is_playing_ = true;
             int track = self->pending_track_;
             self->pending_track_ = 0;
@@ -1372,7 +1372,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
         }
 
         if (self->pending_bell_hour_ > 0) {
- // play bell chime using short PCM bell sound (~0.5s each)
+            // 播放钟声 (短 PCM 铃声, 每次~0.5s)
             self->is_playing_ = true;
             int hour = self->pending_bell_hour_;
             self->pending_bell_hour_ = 0;
@@ -1380,7 +1380,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
             for (int i = 0; i < hour; i++) {
                 if (self->stop_requested_) break;
                 self->bell_player_.PlayBellSoundSync();
- // pause ~1s between strikes for natural clock sound
+            // 每次敲击间隔~1s, 模拟自然钟声
                 if (i < hour - 1 && !self->stop_requested_) {
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 }
@@ -1602,7 +1602,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
             }
             size_t consumed = raw.consumed;
             if (consumed == 0) {
- // Decoder buffered all input; no progress possible, stop
+                // 解码器已缓冲全部输入; 无法继续, 停止
                 break;
             }
             if (consumed > remaining) consumed = remaining;
