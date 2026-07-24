@@ -479,17 +479,17 @@ uint32_t tick_sec = 0;
                 sm->CloseBirdDoor();
 
 
-                // NOTE(2026-07-19): éå¼æ¢å¤å·²ç§»è³ä¸é¢çå®å¨åæ£æ¥
+                // NOTE(2026-07-19): 阈值恢复已移至下面的安全净检查
 
 
                 Application::GetInstance().GetAudioService().SetInputGain(37.5f);
             }
             sm->prev_device_state_ = dev_state;
 
-                // å®å¨å (2026-07-19): å½è®¾å¤å¤äºå®é idle æ¶
-                // (æ ç§æ¼/é³ä¹)ï¼å¼ºå¶æ¢å¤é«ææåº¦å¤ééå¼ 0.02
-                // ä¿®å¤æ³æ¼ 0.30 çè·¯å¾: é³ä¹æé´ä¼è¯ç»æ/ç§ idle
-                // æ å¿ä½ç¡®ä¿æ¯æ¬¡å®é-idleå¥å£åªè®¾ç½®ä¸æ¬¡ (é²æ¥å¿æ·¹æ²¡)
+                // 安全净 (2026-07-19): 当设备处于安静 idle 时
+                // (无秀演/音乐)，强制恢复高敏感度唤醒阈值 0.02
+                // 修复泄漏 0.30 的路径: 音乐期间会话结束/秀 idle
+                // 标志位确保每次安静-idle入口只设置一次 (防日志淹没)
             static bool idle_thresh_applied = false;
             bool idle_quiet = (dev_state == (int)kDeviceStateIdle) && !sm->IsRunning() &&
                               !Application::GetInstance().GetAudioService().IsBgAudioActive();
