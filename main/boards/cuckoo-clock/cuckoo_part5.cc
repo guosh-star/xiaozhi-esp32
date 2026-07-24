@@ -161,8 +161,6 @@ void CuckooTools::RegisterAll() {
         });
 
 
-
-
     // === 闹钟 MCP 工具 ===
     {
         PropertyList pl;
@@ -257,7 +255,7 @@ void CuckooTools::RegisterAll() {
                 "\"desc\": \"mode=%d: %s\"}",
                 m, sh, eh, m,
 m == 0 ? "全天静音" : m == 1 ? "全天报时" :
-m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
+m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string(json);
         });
 
@@ -375,19 +373,12 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 //
 // 时钟任务 (250ms tick)
 
-// 从 NTP 获取当前时间
-
-
-
-
-
 
 // ============================================
 // 250ms定时循环 (Core 1)——入口
 void cuckoo_clock_task(void* params) {
 
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
- * 时间同步 + 整点/半点检查 + 黑暗检测 + 闹钟触发 + 音乐舞蹈 tick
              esp_reset_reason(), esp_reset_reason());
     // 读取上次崩溃日志 (RTC_NOINIT_ATTR)
     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
@@ -407,7 +398,7 @@ void cuckoo_clock_task(void* params) {
     as.RefreshOutputTimestamp();
     as.RefreshInputTimestamp();
 
-// 从 NTP 获取当前时间
+
 
 // 从 NTP 获取当前时间
     {
@@ -443,9 +434,6 @@ void cuckoo_clock_task(void* params) {
 
 uint32_t tick_sec = 0;
 
-
-
-// 时钟任务 (250ms tick)
 
     uint32_t sub_tick = 0;
     while (1) {
@@ -541,9 +529,6 @@ uint32_t tick_sec = 0;
                 ESP_LOGW(TAG, "NTP not synced yet, will retry in 60s");
             }
         }
-
-
-
 
 
     // 每30s更新崩溃日志
