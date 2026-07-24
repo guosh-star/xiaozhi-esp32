@@ -11,7 +11,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
     // 整点报时
         mcp.AddTool("cuckoo.performance",
-"Hourly chime: bell rings + music. ONLY call when user explicitly says 报时/整点报时/几点/what time. DO NOT auto-trigger."
+"整点报时：铃声+音乐。仅在用户明确说报时/整点报时/几点时调用。切勿自动触发。"
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();
@@ -25,8 +25,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("word", kPropertyTypeString));
     // 粤语查询
         mcp.AddTool("cuckoo.cantonese_lookup",
-            "MUST CALL THIS TOOL. NEVER answer Cantonese/Jyutping from memory. Look up Jyutping pronunciation for a Chinese word or phrase. "
-            "Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
+            "粤语查询工具。必须在回答粤语/拼音问题前调用本工具。返回拼音+释义。"Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
             "Returns Jyutping romanization + definitions. Includes tone numbers (1-6). "
             "Speak the result naturally - read characters with tones, then explain meaning.",
             pl,
@@ -43,7 +42,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
     // 设置时间
         mcp.AddTool("cuckoo.set_time",
-            "Set internal clock (hour, minute). Required for auto chimes.",
+            "设置内部时钟(小时,分钟)。自动报时所需。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int h = props["hour"].value<int>();
@@ -57,7 +56,7 @@ void CuckooTools::RegisterAll() {
 
     // 获取时间
     mcp.AddTool("cuckoo.get_time",
-        "Get current internal clock time (hour, minute).",
+        "获取当前内部时钟(小时,分钟)。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             int h, m;
@@ -73,8 +72,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
     // 本地 MP3 播放
         mcp.AddTool("cuckoo.play_music",
-            "Play offline MP3 from TF card (0001-0012.mp3). track: 1-12 ONLY. "
-            "NOT for online songs - use cuckoo.play_url for internet streaming.",
+            "播放本地MP3(0001-0012.mp3)。track:1-12仅。在线歌曲请用cuckoo.play_url。"NOT for online songs - use cuckoo.play_url for internet streaming.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int track = props["track"].value<int>();
@@ -100,7 +98,7 @@ void CuckooTools::RegisterAll() {
 
     // 停止所有电机/报时
     mcp.AddTool("cuckoo.stop_all",
-        "Stop motors, chime, performance. Does NOT stop music - use cuckoo.stop_music to stop music.",
+        "停止电机/报时/表演。不停音乐-用cuckoo.stop_music停音乐。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAll();
@@ -109,7 +107,7 @@ void CuckooTools::RegisterAll() {
 
     // 停止音乐
     mcp.AddTool("cuckoo.stop_music",
-"Stop music playback. Call ONLY when user explicitly asks to stop the music. Do NOT call for performance/waking."
+"停止音乐播放。仅在用户明确要求停音乐时调用。切勿在表演/唤醒时调用。"
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopMusic();
@@ -138,7 +136,7 @@ void CuckooTools::RegisterAll() {
  // === 硬件控制 MCP 工具 ===
     // 舞蹈
     mcp.AddTool("cuckoo.dance",
-        "Dance routine: M1+M2 motors + violin servo.",
+        "舞蹈例行：M1+M2电机+小提琴舵机。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->Dance();
@@ -148,7 +146,7 @@ void CuckooTools::RegisterAll() {
 
     // 打开小鸟门
     mcp.AddTool("cuckoo.open_door",
-        "Open bird door motor.",
+        "打开小鸟门电机。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->OpenDoor();
@@ -157,7 +155,7 @@ void CuckooTools::RegisterAll() {
 
     // 关闭小鸟门
     mcp.AddTool("cuckoo.close_door",
-        "Close bird door motor.",
+        "关闭小鸟门电机。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->CloseDoor();
@@ -175,7 +173,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("repeat_daily", kPropertyTypeInteger, 0, 1));
     // 设置闹钟
         mcp.AddTool("cuckoo.set_alarm",
-            "Set alarm at hour:minute. Ask user if repeat_daily first (1=daily, 0=once). Max 5 alarms.",
+            "设置闹钟。先问用户是否每天重复(1=每天,0=一次)。最多5个。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int h = props["hour"].value<int>();
@@ -192,7 +190,7 @@ void CuckooTools::RegisterAll() {
 
     // 查询闹钟列表
     mcp.AddTool("cuckoo.get_alarms",
-        "List all alarms (index, hour, minute, repeat). Returns JSON array.",
+        "列出所有闹钟(索引,小时,分钟,重复)。返回JSON数组。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             return state_machine_->GetAlarmsJson();
@@ -203,7 +201,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("index", kPropertyTypeInteger, 1, 5));
     // 删除闹钟
         mcp.AddTool("cuckoo.delete_alarm",
-            "Delete alarm by index from get_alarms.",
+            "根据get_alarms索引删除闹钟。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int idx = props["index"].value<int>();
@@ -215,7 +213,7 @@ void CuckooTools::RegisterAll() {
 
     // 停止闹铃
     mcp.AddTool("cuckoo.stop_alarm",
-"Stop a ringing ALARM only. For 闹铃/停铃. NOT for stopping music/performance."
+"停止响铃中的闹钟。仅用于闹铃/停铃。不要用于停音乐/表演-用cuckoo.stop_all。"
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAlarm();
@@ -250,8 +248,7 @@ void CuckooTools::RegisterAll() {
 
     // 查询静音模式
     mcp.AddTool("cuckoo.get_quiet_mode",
-        "Get current chime quiet mode: mode(0~3), start_hour, end_hour. "
-        "Return JSON, AI must translate to user-friendly description.",
+        "获取当前报时静音模式:mode(0~3),start_hour,end_hour。返回JSON，AI必须翻译为用户友好描述。"Return JSON, AI must translate to user-friendly description.",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             int m = state_machine_->quiet_mode_.load();
@@ -320,7 +317,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
     mcp.AddTool("cuckoo.dog_show",
         "小狗秀。触发词: 小狗/狗狗/丽莎/丽莎来一个。"
 
-        "Dog show: call when user asks about dog/puppy/Lisa. Keep response very brief - one short sentence only.",
+        "小狗秀。用户提到小狗/狗狗/丽莎时调用。回应要短促。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -330,9 +327,9 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 
     // 琳达秀
     mcp.AddTool("cuckoo.linda_show",
-        "小狗秀。触发词: 小狗/狗狗/丽莎/丽莎来一个。"
+        "花园秀。触发词: 花园/小提琴/原子。"
 
-        "Linda show: call when user asks about Linda or dancing.",
+        "琳达秀。用户提到琳达/应援/跳舞时调用。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -358,7 +355,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
         pl.AddProperty(Property("enabled", kPropertyTypeBoolean, true));
     // 整点表演开关
         mcp.AddTool("cuckoo.set_hourly_performance",
-            "Enable/disable full performance after hourly bell. Default on. When disabled bell only.",
+            "开启/关闭整点完整表演。默认开启。关闭时仅报时铃声。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 bool en = props["enabled"].value<bool>();
@@ -371,7 +368,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
     
     // 查询整点表演状态
     mcp.AddTool("cuckoo.get_hourly_performance",
-        "Check if hourly chime performance is currently enabled.",
+        "查询整点报时完整表演是否开启。",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             bool en = state_machine_->hourly_perf_.load();
