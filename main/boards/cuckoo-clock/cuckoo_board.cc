@@ -223,10 +223,6 @@ public:
         return &audio_codec;
     }
 
-    // 覆盖默认 input_gain（30→42），提升麦克风灵敏度改善唤醒率
-    virtual AudioCodec* GetAudioCodec() override = delete;
-    }
-
     virtual Display* GetDisplay() override {
         return display_;
     }
