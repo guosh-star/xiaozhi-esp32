@@ -676,12 +676,15 @@ static bool IsValidMpegHeader(const uint8_t* p) {
 }
 
 /**
- * @brief HTTP 批量流式下载 MP3 异步任务
+ * @brief HTTP 批量流式下载 MP3 异步任务（FreeRTOS 线程）
  *
- * 建立 HTTP 连接，流式下载 MP3 数据，逐帧解码。
- * 支持 HTTP 302 重定向，提供下载进度回调。
+ * 建立 HTTP GET 连接（超时 15s，缓冲区 4KB），流式下载 MP3 数据，
+ * 通过 ID3 跳过 + MPEG 帧同步 + IsValidMpegHeader 校验后逐帧解码播放。
+ * 支持 HTTP 302 重定向。
+ * 三个错误退出路径：esp_http_client_init 失败 | open 失败 | HTTP status != 200。
+ * 失败时自动释放 HTTP 客户端资源并删除自身线程。
  *
- * @param arg 线程参数（包含 URL 和播放器指针）
+ * @param arg 堆分配的 PlayUrlCtx（包含 Mp3Player 实例指针和完整 URL）
  */
 void Mp3Player::PlayUrlTask(void* arg) {
     struct PlayUrlCtx { Mp3Player* self; char url[512]; };
@@ -3967,6 +3970,14 @@ int cooldown = 300 + (esp_random() % 401); // 300-700ms
     vTaskDelay(pdMS_TO_TICKS(cooldown));
 }
 
+/**
+ * @brief 音乐舞蹈 Tick（每 250ms 由 cuckoo_clock_task 调用）
+ *
+ * 状态机控制 M1 舞蹈电机 + 小提琴舵机 + 狗尾舵机。
+ * 音乐播放且小人活跃时执行：
+ * 1) 等待 dog_intro 完成后才接管 2) 8 相位循环(0-3 正/前拍, 4-7 反/后拍)，M1 正转70ms/反转85ms。
+ * 安全兜底：音乐中狗未出来时强制创建 dog_intro。
+ */
 void CuckooStateMachine::MusicDanceTick() {
     // Mp3Player 跟踪播放状态（AI 说话 ducking 期间保持 true），
     // 而 IsBgAudioActive() 在音频服务清理缓冲时可能短暂下降。
