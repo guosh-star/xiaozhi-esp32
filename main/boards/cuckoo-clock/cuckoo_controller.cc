@@ -107,15 +107,12 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
 
 // ============================================
 // LEDC PWM 通道分配（共7路）
-// ============================================
 // TB6612 电机驱动：4路 PWM 驱动 (频率 ~10-100KHz)
 // 舵机：2路 PWM 驱动 (频率 50Hz)
 // 单向控制 L9110S: 1路 PWM 驱动 (频率 ~1-10KHz)
 // 共7路通道
 
-// ============================================
 // 四路主电机 (TB6612 / DRV8833)
-// ============================================
 
 // 通用 GPIO 初始化（支持直驱和 PWM 双模式）
 static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
@@ -135,7 +132,6 @@ static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
  */
 Motor::Motor(gpio_num_t in1, gpio_num_t in2)
     : in1_pin_(in1), in2_pin_(in2), use_pwm_(false), max_duty_(0) { motor_gpio_init(in1, in2); Stop(); }
-// ============================================
 /**
  * @brief 电机构造函数 - PWM 模式（共享定时器，10-bit/1kHz）
  *
@@ -302,7 +298,6 @@ void Servo::Sweep(int from, int to, int duration_ms) {
 
 // ============================================
 
-// ============================================
 
 
 
@@ -892,7 +887,6 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // /
                             int32_t sum = (int32_t)pcm[2*i] + (int32_t)pcm[2*i+1];
                             resample_buf1[i] = (int16_t)(sum / 2);
                         }
-// Ducking：AI 说话时自动降低音乐音量
                         float g = self->ducking_gain_;
                         for (size_t i = 0; i < mono_ns; i++) {
                             int32_t s = (int32_t)(resample_buf1[i] * g);
@@ -924,7 +918,6 @@ else { rem = 0; break; } // carry
                     if (raw.consumed >= rem) { rem = 0; }
                     else { ptr += raw.consumed; rem -= raw.consumed; }
                 } else {
-// MPEG 音频帧
                     size_t scan = 1;
                     while (scan + 3 < rem && !IsValidMpegHeader(ptr + scan)) scan++;
                     if (scan + 3 >= rem) { rem = 0; break; }
@@ -1175,7 +1168,6 @@ void Mp3Player::PlayOpusTask(void* arg) {
 
  // URL 地址处理
 
- // URL 地址处理
     char host[128] = {};
     char path[384] = {};
     int port = 80;
@@ -1265,7 +1257,6 @@ void Mp3Player::PlayOpusTask(void* arg) {
 serial_fallback:
  // === 串口回退 ===
         
- // === 串口回退 ===
         printf("\x01MUSIC_REQ\x02%s\x03\n", url);
         fflush(stdout);
         
@@ -2182,9 +2173,7 @@ void CuckooStateMachine::MotorPowerOff() {
 
 // ============================================
 // 创建 PerformanceTask 或 ShowTask 异步演出任务
-// ============================================
 
-// 创建 PerformanceTask 或 ShowTask 异步演出任务
 struct DoorOpenCtx {
     CuckooStateMachine* sm;
 };
@@ -2284,7 +2273,6 @@ void CuckooStateMachine::RunDanceIntro() {
         m3_->Stop();
     }
     PlayDogBark();
-// 先平滑回到 30，再归位
     if (dog_servo_) {
         dog_servo_->Sweep(20, 0, 20 * 15);
     }
@@ -2835,7 +2823,6 @@ void CuckooStateMachine::LoadKidsActive() {
 
 // ============================================
 
-// ============================================
 /**
  * @brief 设置闹钟
  * @param hour 小时
@@ -3014,7 +3001,6 @@ volume = 0.15f + 0.85f * (float)i / 9.0f; // 15% 100% (10)
 
 
 
-// ============================================
 
 
 
@@ -3039,7 +3025,6 @@ void CuckooStateMachine::DogShowTask() {
 
 // 设置 is_running_ 变量
 
-// 设置 is_running_ 变量
     is_running_ = true;
     current_performance_ = kPerformanceManual;
     ESP_LOGI(TAG, "DogShow: start");
@@ -4269,13 +4254,14 @@ void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
 }
 
 /**
-* @brief
-* @param url_or_path URL "/pcm?q="
-* @return 0=, <0=
-* - AICPU
-* - URL
-* - http
-* -
+ * @brief ç²¤è¯­åé³æ¥è¯¢ï¼éè¿ QQ é³ä¹ä»£çæå¡å¨ï¼
+ *
+ * åä»£çåé HTTP GET /cantonese?word=XXXï¼è·åç²¤è¯­åé³ JSONã
+ * æå¨å¯¹ä¸­æå URL ç¼ç  (esp_http_client ä¸æ¯æä¸­æ URL)ã
+ * è¶æ¶ 10sï¼ä¸ä¸ªéè¯¯éåºç¹ã
+ *
+ * @param word è¦æ¥è¯¢çä¸­æè¯
+ * @return JSON å­ç¬¦ä¸²ï¼å«ç²¤è¯­åé³å­æ®µï¼ï¼å¤±è´¥è¿åç©ºå­ç¬¦ä¸²
  */
 std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     if (music_proxy_host_.empty()) {
@@ -4945,7 +4931,6 @@ void CuckooTools::RegisterAll() {
 
 
 
-// ============================================
 void cuckoo_clock_task(void* params) {
 // + RTC 实时时钟
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
@@ -4969,7 +4954,6 @@ void cuckoo_clock_task(void* params) {
 
 // 检测设备是否空闲，通知 AI 状态变更
 
-// 检测设备是否空闲，通知 AI 状态变更
     {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
@@ -5024,7 +5008,6 @@ uint32_t tick_sec = 0;
 // idle 状态下阈值 37.5dB
                 // NOTE(2026-07-19)：唤醒阈值恢复已移到下方安全兜底检查
 
-// idle 状态下阈值 37.5dB
                 Application::GetInstance().GetAudioService().SetInputGain(37.5f);
             }
             sm->prev_device_state_ = dev_state;
@@ -5047,7 +5030,6 @@ uint32_t tick_sec = 0;
 
 // 音频服务调用
             if (dev_state == (int)kDeviceStateSpeaking) {
-// 音频服务调用
                 int64_t ms_since_output = Application::GetInstance().GetAudioService().MsSinceLastOutput();
                 if (ms_since_output < 300) {
 // 50-200ms 范围
@@ -5082,7 +5064,6 @@ uint32_t tick_sec = 0;
 
 // 30 秒 RTC 计数 / 阈值 RTC
 
-// 30 秒 RTC 计数 / 阈值 RTC
         if (tick_sec % 30 == 0) {
             auto& app = Application::GetInstance();
             rtc_crash_log.tick_sec = tick_sec;
