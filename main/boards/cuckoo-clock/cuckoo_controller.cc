@@ -2333,7 +2333,8 @@ call_count_ = 3; // 3
 * - N+0013.mp3N+赸LED++赸++
 * - 3赸
 * -
-// 报时/演出异步任务入口（运行在 Core 1 上）void CuckooStateMachine::PerformanceTask(void* arg) {
+// 报时/演出异步任务入口（运行在 Core 1 上）
+void CuckooStateMachine::PerformanceTask(void* arg) {
  auto* sm = static_cast<CuckooStateMachine*>(arg);
  sm->violin_state_.Reset();
  sm->dog_state_.Reset();
@@ -3423,7 +3424,8 @@ if (m1_) m1_->Forward(100); // GPIO
 /**
 * @brief MCP cuckoo.start_show
  * Core 1cuckoo_show StartShowTask
-// 开始综合演出：开门 + 舞蹈 + 关门void CuckooStateMachine::StartShow() {
+// 开始综合演出：开门 + 舞蹈 + 关门
+void CuckooStateMachine::StartShow() {
 // 演出/显示 AI 交互
  if (is_running_ && current_performance_ != kPerformanceNone) {
   ESP_LOGW(TAG, "Performance already running (type=%d), ignoring show request",
@@ -3700,7 +3702,8 @@ gpio_set_level(MOTOR_WATER_BIRD_IN2, 0); // 磬
 int cooldown = 300 + (esp_random() % 401); // 300-700ms
  vTaskDelay(pdMS_TO_TICKS(cooldown));
 }
-// 音乐舞蹈节奏更新：舞蹈电机脉冲 + 吉他/狗尾舵机摇摆void CuckooStateMachine::MusicDanceTick() {
+// 音乐舞蹈节奏更新：舞蹈电机脉冲 + 吉他/狗尾舵机摇摆
+void CuckooStateMachine::MusicDanceTick() {
  // Mp3Player 跟踪播放状态（AI 说话 ducking 期间保持 true），
  // 而 IsBgAudioActive() 在音频服务清理缓冲时可能短暂下降。
  // 同时使用两者确保音乐舞蹈在 AI 对话期间不中断。
@@ -3884,7 +3887,8 @@ void CuckooStateMachine::MusicDogOutro() {
  dog_intro_done_ = false;
  dog_outro_running_ = false;
 }
-// 乐队小人出场void CuckooStateMachine::KidsComeOut() {
+// 乐队小人出场
+void CuckooStateMachine::KidsComeOut() {
  kids_active_ = true;
  SaveKidsActive();
  ESP_LOGI(TAG, "KidsComeOut: kids active, will dance with music");
@@ -3904,7 +3908,8 @@ void CuckooStateMachine::MusicDogOutro() {
   MusicDogIntro();
  }
 }
-// 乐队小人归位void CuckooStateMachine::KidsRest() {
+// 乐队小人归位
+void CuckooStateMachine::KidsRest() {
  kids_active_ = false;
  SaveKidsActive();
  // M1 电机平衡：停止前反转功率匹配正转
