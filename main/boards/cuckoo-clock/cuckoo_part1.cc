@@ -310,10 +310,10 @@ void Servo::Sweep(int from, int to, int duration_ms) {
 }
 
 // ============================================
-// 水车 + 鸟跳双向电机（DRV8833 单向控制 IN1/IN2）
+// 水车 + 鸟跳双向电机（DRV8833 IN1/IN2 独立通道）
 // config.h 配置: MOTOR_WATER_BIRD_IN1/IN2 + LEDC_CH_WATER/JUMP
-// 水车旋转: SetSpeed(WATER_WHEEL_SPEED) 沿 IN1 正转
-// 水车反转(制动): SetSpeed(-100) 沿 IN2 反转
+// 正速→IN1通道: SetSpeed(WATER_WHEEL_SPEED) 水车旋转
+// 负速→IN2通道: SetSpeed(-100) 鸟跳一次
 // ============================================
 
 // ============================================
