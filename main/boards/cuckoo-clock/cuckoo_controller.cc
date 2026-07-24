@@ -538,13 +538,14 @@ static bool IsValidMpegHeader(const uint8_t* p) {
 
 
 /**
- * @brief ��������������ֹͣ���ȴ����������˳���5������ڣ�������������
+ * @brief Mp3Player 析构函数
+ * 请求停止播放，等待最多 5 秒退出，释放解码器资源。
  */
 Mp3Player::~Mp3Player() {
     stop_requested_ = true;
-    // ����������5��������˳������recv�������ر�socket��
+    // 最多等待 5 秒让播放任务退出
     for (int i = 0; i < 100 && is_playing_; i++) {
-        vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
     if (play_task_) {
         vTaskDelete(play_task_);
@@ -2812,12 +2813,12 @@ volume = 0.15f + 0.85f * (float)i / 9.0f; // 15% 100% (10)
  // 贪睡：等待 2 分钟，每秒检查 stopped_ 状态
 
 void CuckooStateMachine::DogShow() {
-    if (is_running_) return;  // ���б��������У��ܾ��ظ�����
-    // ������̨����ִ�б��ݣ��̶��� Core 1���ӿغ��ģ�
+    if (is_running_) return;  // 已有表演运行中，拒绝重复触发
+    // 在 Core 1 后台异步执行表演
     xTaskCreatePinnedToCore([](void* arg) {
         auto* sm = static_cast<CuckooStateMachine*>(arg);
         sm->DogShowTask();
-        vTaskDelete(nullptr);  // ������ɺ���ɾ������
+        vTaskDelete(nullptr);  // 任务完成后删除自身
     }, "dog_show", 4096, this, 5, nullptr, 1);
 }
 
