@@ -116,7 +116,7 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
 
 
 // ============================================
-// TB6612 电机驱动：4路 PWM 驱动 (频率 ~10-100KHz)
+// 四路主电机 (TB6612 / DRV8833)：控制大门(M2)、小狗(M3)、小鸟门(M4)
 // ============================================
 
 // 通用 GPIO 初始化（支持直驱和 PWM 双模式）
@@ -271,9 +271,6 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
 }
 
 /**
-
-
- // 舵机：2路 PWM 驱动 (频率 50Hz)
 /**
  * @brief 设置舵机角度 (0°~180°)
  *
@@ -312,21 +309,20 @@ void Servo::Sweep(int from, int to, int duration_ms) {
     }
 }
 
-// 四路主电机 (TB6612 / DRV8833)
-
-
-// 水车停止: water_bird_->SetSpeed(-100) 沿 IN2 开启
-
+// ============================================
+// 水车 + 鸟跳双向电机（DRV8833 单向控制 IN1/IN2）
+// config.h 配置: MOTOR_WATER_BIRD_IN1/IN2 + LEDC_CH_WATER/JUMP
+// 水车旋转: SetSpeed(WATER_WHEEL_SPEED) 沿 IN1 正转
+// 水车反转(制动): SetSpeed(-100) 沿 IN2 反转
 // ============================================
 
+// ============================================
+// MP3 播放器
 // ============================================
 // 支持: DecodeSingleFile(本地MP3) / PlayUrl(HTTP流MP3) / PlayPcm(原始PCM) / PlayOpus(OGG/Opus)
-
-// Ducking: AI 说话时自动将音乐音量从 100% 降至 20%（约 400ms）
-// 狗叫混音: LoadDogBark 将预编译 PCM 加载到混音缓冲
+// Ducking: AI 说话时自动将音乐音量从 100% 降至 20%（约 400ms），停止说话后渐恢复至 100%
+// 狗叫混音: LoadDogBark 将预编译 PCM 加载到混音缓冲，在输出循环中叠加
 // ============================================
-
-/**
 
 /**
  * @brief 析构函数，停止播放并等待异步下载任务退出（5秒超时）
@@ -335,7 +331,7 @@ Mp3Player::~Mp3Player() {
     stop_requested_ = true;
     // 等待最多5秒让下载线程退出（recv 返回 error 后关 socket）
     for (int i = 0; i < 100 && is_playing_; i++) {
-        vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
+        vTaskDelay(pdMS_TO_TICKS(50));  // 总共5秒超时
     }
     if (play_task_) {
         vTaskDelete(play_task_);
