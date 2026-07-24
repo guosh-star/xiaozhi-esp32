@@ -315,9 +315,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 
     // 小狗秀
     mcp.AddTool("cuckoo.dog_show",
-        "小狗秀。触发词: 丽莎在哪里？/丽莎，丽莎出来/小狗在哪里？。"
-
-        "小狗秀。用户提到丽莎在哪里？/丽莎出来/小狗在哪里？时调用。回应要短促。",
+        "小狗秀。触发词: 丽莎在哪里？/丽莎，丽莎出来/小狗在哪里？。回应要短促。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -327,9 +325,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 
     // 琳达秀
     mcp.AddTool("cuckoo.linda_show",
-        "琳达秀。触发词: 琳达在哪里？/琳达来段舞蹈/琳达，琳达。"
-
-        "琳达秀。用户提到琳达在哪里？/琳达来段舞蹈/琳达，琳达时调用。",
+        "琳达秀。触发词: 琳达在哪里？/琳达来段舞蹈/琳达，琳达。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
@@ -339,9 +335,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 
     // 花园秀
     mcp.AddTool("cuckoo.garden_show",
-        "花园秀。触发词: 园子，园子在哪里？/吉他手园子，来一个/园子，园子。"
-
-"花园秀。触发词: 园子，园子在哪里？/吉他手园子，来一个/园子，园子。"
+        "花园秀。触发词: 园子，园子在哪里？/吉他手园子，来一个/园子，园子。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             if (state_machine_->IsRunning()) return std::string("{\"status\": \"busy\", \"message\": \"Another show is still running. Tell the user to wait for it to finish.\"}");
