@@ -4859,5 +4859,3 @@ uint32_t tick_sec = 0;
 // NTP tick_sec 取模 86400（一天秒数）
 }
 }
-}
-}
