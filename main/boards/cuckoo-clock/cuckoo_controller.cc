@@ -372,7 +372,13 @@ void Mp3Player::UpdateDuckingState() {
 }
 
 /**
- * @brief void Mp3Player::LoadDogBark
+ * @brief 加载狗叫 PCM 数据到播放缓冲区
+ *
+ * 等待上一段狗叫播放完毕后，将新的 PCM 数据拷贝到 bark_pcm_，
+ * 由混音器在后续 tick 中叠加到后台音频上。
+ *
+ * @param pcm PCM 数据指针（16-bit 单声道）
+ * @param num_samples 采样数
  */
 void Mp3Player::LoadDogBark(const int16_t* pcm, size_t num_samples) {
     while (bark_active_) {
@@ -385,6 +391,15 @@ void Mp3Player::LoadDogBark(const int16_t* pcm, size_t num_samples) {
     ESP_LOGI(TAG, "DogBark: loaded %u samples, mixing into music output", (unsigned)num_samples);
 }
 
+/**
+ * @brief 对 PCM 数据应用 Ducking 增益衰减
+ *
+ * AI 说话时将音乐音量降低到 ducking_gain_（默认 0.20）。
+ * 增益 ≥ 1.0 时不处理，避免浪费 CPU。
+ *
+ * @param pcm PCM 数据缓冲区（原地修改）
+ * @param num_samples 采样数
+ */
 void Mp3Player::ApplyDuckingGain(int16_t* pcm, size_t num_samples) {
     float g = ducking_gain_;
     if (g >= 1.0f) return;
