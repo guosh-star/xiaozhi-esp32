@@ -2331,6 +2331,3 @@ void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
 // ============================================
 
 // ============================================
-CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
-
-void CuckooTools::RegisterAll() {

@@ -1,4 +1,7 @@
-// ===== Part: MCP注册、clock_task (4413-4991) =====
+// ===== Part 5: MCP注册、clock_task (L4413-4991) =====
+CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
+
+void CuckooTools::RegisterAll() {
     auto& mcp = McpServer::GetInstance();
 
  // === Time / Chime ===
