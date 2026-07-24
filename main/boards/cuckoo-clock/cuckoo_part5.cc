@@ -11,7 +11,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
     // 整点报时
         mcp.AddTool("cuckoo.performance",
-"整点报时：铃声+音乐。仅在用户明确说报时/整点报时/几点时调用。切勿自动触发。"
+"整点报时：铃声+音乐。仅在用户明确说报时/整点报时/几点时调用。切勿自动触发。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();

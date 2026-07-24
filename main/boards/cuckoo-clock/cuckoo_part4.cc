@@ -48,7 +48,6 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
     is_running_ = true;
     current_performance_ = type;
     switch (type) {
-                case kPerformanceHour:  // === 整点报时 ===
         case kPerformanceHour:
             if (hour > 12) hour -= 12;
             if (hour <= 0) hour = 12;
@@ -56,13 +55,11 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
             call_count_ = 3;
             break;
             // ====== 半点报时：3声钟鸣 + 舞蹈 ======
-                case kPerformanceHalf:  // === 半点报时 ===
         case kPerformanceHalf:
             total_calls_ = 0;
             call_count_ = 3;
             break;
             // ====== 手动表演（AI唤醒触发）：播放音乐 + 舞蹈 ======
-                case kPerformanceManual:  // === 手动触发 ===
         case kPerformanceManual:
             total_calls_ = call_count_ = 3;
             break;
