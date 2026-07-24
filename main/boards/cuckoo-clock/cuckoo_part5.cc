@@ -25,9 +25,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("word", kPropertyTypeString));
     // 粤语查询
         mcp.AddTool("cuckoo.cantonese_lookup",
-            "粤语查询工具。必须在回答粤语/拼音问题前调用本工具。返回拼音+释义。"Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
-            "Returns Jyutping romanization + definitions. Includes tone numbers (1-6). "
-            "Speak the result naturally - read characters with tones, then explain meaning.",
+            "粤语查询工具。必须在回答粤语/拼音问题前调用本工具。返回拼音+释义（含声调1-6），用自然语音朗读结果。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 std::string word = props["word"].value<std::string>();
@@ -72,7 +70,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
     // 本地 MP3 播放
         mcp.AddTool("cuckoo.play_music",
-            "播放本地MP3(0001-0012.mp3)。track:1-12仅。在线歌曲请用cuckoo.play_url。"NOT for online songs - use cuckoo.play_url for internet streaming.",
+            "播放本地MP3(0001-0012.mp3)。track仅1-12。在线歌曲请用cuckoo.play_url。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int track = props["track"].value<int>();
@@ -228,8 +226,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
     // 设置静音模式
         mcp.AddTool("cuckoo.set_quiet_mode",
-"Set chime quiet mode. 0=全天静音(永不报时), 1=全天报时, 2=光线静音(LDR光照), 3=指定时间段静音(start_hour~end_hour间静音)."
-            "Default start_hour=22 end_hour=6.",
+"设置报时静音模式。0=全天静音(永不报时), 1=全天报时, 2=光线静音(LDR光照), 3=指定时间段静音(start_hour~end_hour间静音)。默认start_hour=22 end_hour=6。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int m = props["mode"].value<int>();
@@ -248,7 +245,7 @@ void CuckooTools::RegisterAll() {
 
     // 查询静音模式
     mcp.AddTool("cuckoo.get_quiet_mode",
-        "获取当前报时静音模式:mode(0~3),start_hour,end_hour。返回JSON，AI必须翻译为用户友好描述。"Return JSON, AI must translate to user-friendly description.",
+        "获取当前报时静音模式: mode(0~3), start_hour, end_hour。返回JSON，AI必须翻译为用户友好描述。",
         PropertyList(),
         [this](const PropertyList&) -> ReturnValue {
             int m = state_machine_->quiet_mode_.load();
