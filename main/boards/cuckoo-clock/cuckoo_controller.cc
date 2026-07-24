@@ -148,10 +148,14 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
   .intr_type=LEDC_INTR_DISABLE, .timer_sel=LEDC_TIMER_MOTOR, .duty=0 };
  ledc_channel_config(&c2);
  Stop();
-}\n\n// ============================================\n// Motor 构造函数 - PWM 模式（自定义定时器）
+}
+
+// ============================================
+// Motor 构造函数 - PWM 模式（自定义定时器）
 // 独立定时器，8-bit/10kHz 分辨率
 // 用途：小提琴升降电机、水车电机
-// ============================================\nMotor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_timer_t timer, ledc_mode_t sm)
+// ============================================
+Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t ch2, ledc_timer_t timer, ledc_mode_t sm)
  : in1_pin_(in1), in2_pin_(in2), use_pwm_(true), ledc_channel_(ch1), ledc_channel2_(ch2),
   ledc_timer_(timer), speed_mode_(sm), max_duty_(255) {
  static bool custom_done[4] = {false};
