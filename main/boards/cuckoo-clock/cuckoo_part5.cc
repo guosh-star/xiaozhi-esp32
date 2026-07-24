@@ -9,7 +9,7 @@ void CuckooTools::RegisterAll() {
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
-    // æ´ç¹æ¥æ¶
+    // 整点报时
         mcp.AddTool("cuckoo.performance",
 "Hourly chime: bell rings + music. ONLY call when user explicitly says 报时/整点报时/几点/what time. DO NOT auto-trigger."
             pl,
@@ -23,6 +23,7 @@ void CuckooTools::RegisterAll() {
     {
         PropertyList pl;
         pl.AddProperty(Property("word", kPropertyTypeString));
+    // 粤语查询
         mcp.AddTool("cuckoo.cantonese_lookup",
             "MUST CALL THIS TOOL. NEVER answer Cantonese/Jyutping from memory. Look up Jyutping pronunciation for a Chinese word or phrase. "
             "Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
@@ -40,7 +41,7 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
-    // è®¾ç½®æ¶é´
+    // 设置时间
         mcp.AddTool("cuckoo.set_time",
             "Set internal clock (hour, minute). Required for auto chimes.",
             pl,
@@ -54,6 +55,7 @@ void CuckooTools::RegisterAll() {
             });
     }
 
+    // 获取时间
     mcp.AddTool("cuckoo.get_time",
         "Get current internal clock time (hour, minute).",
         PropertyList(),
@@ -69,7 +71,7 @@ void CuckooTools::RegisterAll() {
     {
         PropertyList pl;
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
-    // æ¬å° MP3
+    // 本地 MP3 播放
         mcp.AddTool("cuckoo.play_music",
             "Play offline MP3 from TF card (0001-0012.mp3). track: 1-12 ONLY. "
             "NOT for online songs - use cuckoo.play_url for internet streaming.",
@@ -86,6 +88,7 @@ void CuckooTools::RegisterAll() {
             });
     }
 
+    // 综合表演秀
     mcp.AddTool("cuckoo.start_show",
         "综合表演。触发词: 表演/节目/出来表演/演出。"
         "角色工具优先: 花园→cuckoo.garden_show, 琳达→cuckoo.linda_show, 小狗→cuckoo.dog_show。"
@@ -95,7 +98,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"show_started\"}");
         });
 
-    // åæ­¢ææ
+    // 停止所有电机/报时
     mcp.AddTool("cuckoo.stop_all",
         "Stop motors, chime, performance. Does NOT stop music - use cuckoo.stop_music to stop music.",
         PropertyList(),
@@ -104,7 +107,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"stopped\"}");
         });
 
-    // åæ­¢é³ä¹
+    // 停止音乐
     mcp.AddTool("cuckoo.stop_music",
 "Stop music playback. Call ONLY when user explicitly asks to stop the music. Do NOT call for performance/waking."
         PropertyList(),
@@ -114,6 +117,7 @@ void CuckooTools::RegisterAll() {
         });
 
     // === 小朋友们控制 ===
+    // Kids出场
     mcp.AddTool("cuckoo.kids_come_out",
         "让小朋友们出来一起欣赏音乐：小狗舵机、舞蹈电机、吉他舵机随音乐节奏摆动。",
         PropertyList(),
@@ -122,6 +126,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"kids_come_out\"}");
         });
 
+    // Kids休息
     mcp.AddTool("cuckoo.kids_rest",
         "让小朋友们回去休息：停止所有动作（小狗舵机、舞蹈电机、吉他舵机不动），只保留音乐播放。",
         PropertyList(),
@@ -131,7 +136,7 @@ void CuckooTools::RegisterAll() {
         });
 
  // === 硬件控制 MCP 工具 ===
-    // èè¹
+    // 舞蹈
     mcp.AddTool("cuckoo.dance",
         "Dance routine: M1+M2 motors + violin servo.",
         PropertyList(),
@@ -141,7 +146,7 @@ void CuckooTools::RegisterAll() {
         });
 
 
-    // æå¼é¨
+    // 打开小鸟门
     mcp.AddTool("cuckoo.open_door",
         "Open bird door motor.",
         PropertyList(),
@@ -150,6 +155,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"door opened\"}");
         });
 
+    // 关闭小鸟门
     mcp.AddTool("cuckoo.close_door",
         "Close bird door motor.",
         PropertyList(),
@@ -167,7 +173,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("minute", kPropertyTypeInteger, 0, 59));
         pl.AddProperty(Property("repeat_daily", kPropertyTypeInteger, 0, 1));
-    // è®¾ç½®é¹é
+    // 设置闹钟
         mcp.AddTool("cuckoo.set_alarm",
             "Set alarm at hour:minute. Ask user if repeat_daily first (1=daily, 0=once). Max 5 alarms.",
             pl,
@@ -184,6 +190,7 @@ void CuckooTools::RegisterAll() {
             });
     }
 
+    // 查询闹钟列表
     mcp.AddTool("cuckoo.get_alarms",
         "List all alarms (index, hour, minute, repeat). Returns JSON array.",
         PropertyList(),
@@ -194,6 +201,7 @@ void CuckooTools::RegisterAll() {
     {
         PropertyList pl;
         pl.AddProperty(Property("index", kPropertyTypeInteger, 1, 5));
+    // 删除闹钟
         mcp.AddTool("cuckoo.delete_alarm",
             "Delete alarm by index from get_alarms.",
             pl,
@@ -205,6 +213,7 @@ void CuckooTools::RegisterAll() {
             });
     }
 
+    // 停止闹铃
     mcp.AddTool("cuckoo.stop_alarm",
 "Stop a ringing ALARM only. For 闹铃/停铃. NOT for stopping music/performance."
         PropertyList(),
@@ -219,7 +228,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("mode", kPropertyTypeInteger, 0, 3));
         pl.AddProperty(Property("start_hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
-    // éé³æ¨¡å¼
+    // 设置静音模式
         mcp.AddTool("cuckoo.set_quiet_mode",
 "Set chime quiet mode. 0=全天静音(永不报时), 1=全天报时, 2=光线静音(LDR光照), 3=指定时间段静音(start_hour~end_hour间静音)."
             "Default start_hour=22 end_hour=6.",
@@ -239,6 +248,7 @@ void CuckooTools::RegisterAll() {
             });
     }
 
+    // 查询静音模式
     mcp.AddTool("cuckoo.get_quiet_mode",
         "Get current chime quiet mode: mode(0~3), start_hour, end_hour. "
         "Return JSON, AI must translate to user-friendly description.",
@@ -258,7 +268,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
         });
 
     // === 状态查询 ===
-    // ç¶ææ¥è¯¢
+    // 状态查询【强制规则】
     mcp.AddTool("cuckoo.get_status",
         "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放）。\n"
         "【强制规则】回复用户任何关于演出/表演/音乐/歌舞的问题前，必须先调用本工具。不得凭记忆或上下文猜测状态。\n"
@@ -283,7 +293,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
     {
         PropertyList pl;
         pl.AddProperty(Property("url", kPropertyTypeString));
-    // å¨çº¿é³ä¹
+    // 在线音乐
         mcp.AddTool("cuckoo.play_url",
             "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【最重要规则】只传歌名本身，绝不要自作主张加歌手名！系统会自动检测多版本并询问用户。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：用户说'放酒干倘卖无'→调用play_url(\'/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0\')。\n""本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
             pl,
@@ -305,8 +315,8 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
                 }
             });
     }
-    // å°çç§
 
+    // 小狗秀
     mcp.AddTool("cuckoo.dog_show",
         "小狗秀。触发词: 小狗/狗狗/丽莎/丽莎来一个。"
 
@@ -318,6 +328,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string("{\"status\": \"dog_show_started\"}");
         });
 
+    // 琳达秀
     mcp.AddTool("cuckoo.linda_show",
         "小狗秀。触发词: 小狗/狗狗/丽莎/丽莎来一个。"
 
@@ -329,7 +340,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
             return std::string("{\"status\": \"linda_show_started\"}");
         });
 
-    // è±å­ç§
+    // 花园秀
     mcp.AddTool("cuckoo.garden_show",
         "琳达秀。触发词: 琳达/应援/跳舞。"
 
@@ -345,6 +356,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
     {
         PropertyList pl;
         pl.AddProperty(Property("enabled", kPropertyTypeBoolean, true));
+    // 整点表演开关
         mcp.AddTool("cuckoo.set_hourly_performance",
             "Enable/disable full performance after hourly bell. Default on. When disabled bell only.",
             pl,
@@ -357,6 +369,7 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
             });
     }
     
+    // 查询整点表演状态
     mcp.AddTool("cuckoo.get_hourly_performance",
         "Check if hourly chime performance is currently enabled.",
         PropertyList(),
@@ -382,13 +395,13 @@ m ==m == 2 ? "光线静音(LDR)" : "时间段静音");
 
 
 // ============================================
-// 250mså®æ¶å¾ªç¯ (Core 1)
+// 250ms定时循环 (Core 1)——入口
 void cuckoo_clock_task(void* params) {
 
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
  * 时间同步 + 整点/半点检查 + 黑暗检测 + 闹钟触发 + 音乐舞蹈 tick
              esp_reset_reason(), esp_reset_reason());
-    // è¯»åä¸æ¬¡å´©æºæ¥å¿
+    // 读取上次崩溃日志 (RTC_NOINIT_ATTR)
     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
         ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
@@ -413,7 +426,7 @@ void cuckoo_clock_task(void* params) {
             // ---- NTP 时间同步 ----
         struct timeval tv;
             // 获取系统时间 (已通过NTP同步)
-    // ---- NTP ----
+    // ---- NTP时间同步 ----
         gettimeofday(&tv, nullptr);
             // 2001年之后 = 已同步NTP，可进行正常报时
         if (tv.tv_sec > 1000000000) {
@@ -431,9 +444,11 @@ void cuckoo_clock_task(void* params) {
     }
 
 
+    // 配置QQ音乐代理
     sm->SetMusicProxy(DEFAULT_MUSIC_PROXY_HOST, DEFAULT_MUSIC_PROXY_PORT);
 
 
+    // 加载NVS闹钟
     sm->LoadAlarmsFromNvs();
     sm->LoadQuietMode();
     sm->LoadKidsActive();
@@ -456,6 +471,7 @@ uint32_t tick_sec = 0;
             if (sm->prev_device_state_ == (int)kDeviceStateIdle && dev_state != (int)kDeviceStateIdle) {
                 sm->last_idle_exit_us_ = esp_timer_get_time();
                     // 设备唤醒 → 开门
+    // 设备唤醒→开小鸟门
             ESP_LOGI(TAG, "Device woke up - opening bird door");
                 sm->OpenBirdDoor();
 
@@ -467,6 +483,7 @@ uint32_t tick_sec = 0;
                 Application::GetInstance().GetAudioService().SetInputGain(30.0f);
             } else if (sm->prev_device_state_ != (int)kDeviceStateIdle && dev_state == (int)kDeviceStateIdle) {
                     // 设备休眠 → 关门
+    // 设备休眠→关小鸟门
             ESP_LOGI(TAG, "Device sleeping - closing bird door");
                 sm->CloseBirdDoor();
 
@@ -505,20 +522,22 @@ uint32_t tick_sec = 0;
 
             }
                  // 在线音乐播放期间的舞蹈tick (狗/小提琴)
-    // èè¹ tick
+    // 在线音乐舞蹈 tick
              sm->MusicDanceTick();
         }
 
 // 时钟任务 (250ms tick)
+    // 每1s执行一次
         if (sub_tick % 4 == 0) {
             tick_sec = sub_tick / 4;
 
 // 从 NTP 获取当前时间
+    // 每60s输出心跳日志
         if (!sm->time_set_ ? (tick_sec % 60 == 0) : (tick_sec % 300 == 0)) {
                 // ---- NTP 时间同步 ----
             struct timeval tv;
                 // 获取系统时间 (已通过NTP同步)
-    // ---- NTP ----
+    // ---- NTP时间同步 ----
             gettimeofday(&tv, nullptr);
                 // 2001年之后 = 已同步NTP，可进行正常报时
             if (tv.tv_sec > 1000000000) {
@@ -539,6 +558,7 @@ uint32_t tick_sec = 0;
 
 
 
+    // 每30s更新崩溃日志
         if (tick_sec % 30 == 0) {
             auto& app = Application::GetInstance();
             rtc_crash_log.tick_sec = tick_sec;
@@ -548,6 +568,7 @@ uint32_t tick_sec = 0;
         }
 
 
+    // 每60s输出心跳日志
         if (tick_sec % 60 == 0) {
             ESP_LOGI(TAG, "Heartbeat t=%ds stack_hwm=%d free_heap=%d",
                      (int)tick_sec, (int)uxTaskGetStackHighWaterMark(NULL),
@@ -560,6 +581,7 @@ uint32_t tick_sec = 0;
             as.RefreshOutputTimestamp();
             as.RefreshInputTimestamp();
 
+    // ---- LDR光线检测 (12bit ADC) ----
             sm->is_dark_ = sm->CheckDark();
         }
 
@@ -569,7 +591,7 @@ uint32_t tick_sec = 0;
 // 从 NTP 获取当前时间
             struct timeval tv;
                 // 获取系统时间 (已通过NTP同步)
-    // ---- NTP ----
+    // ---- NTP时间同步 ----
             gettimeofday(&tv, nullptr);
                 // 2001年之后 = 已同步NTP，可进行正常报时
             if (tv.tv_sec > 1000000000) {
@@ -599,21 +621,21 @@ uint32_t tick_sec = 0;
             if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
                 ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
                     // 检查整点/半点报时触发
-    // æ´ç¹/åç¹
+    // 整点/半点报时
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
             else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
                 ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
                     // 检查整点/半点报时触发
-    // æ´ç¹/åç¹
+    // 整点/半点报时
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
 
                 // 检查闹钟触发
-    // é¹é
 
+    // 闹钟触发
             sm->CheckAlarms(h, m, sm->current_sec_);
         }
         }  // sub_tick >= 4 guard
