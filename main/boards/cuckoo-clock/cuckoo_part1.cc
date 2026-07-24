@@ -271,7 +271,6 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
 }
 
 /**
-/**
  * @brief 设置舵机角度 (0°~180°)
  *
  * @param angle 目标角度，自动钳位到 [0, 180]
@@ -285,11 +284,6 @@ void Servo::SetAngle(int angle) {
     ledc_set_duty(speed_mode_, ledc_channel_, duty);
     ledc_update_duty(speed_mode_, ledc_channel_);
 }
-
-/**
-
-
-
 
 /**
  * @brief 舵机平滑扫描
