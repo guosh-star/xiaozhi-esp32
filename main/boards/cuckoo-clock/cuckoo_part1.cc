@@ -195,6 +195,7 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
         .intr_type=LEDC_INTR_DISABLE, .timer_sel=timer, .duty=0 };
     ledc_channel_config(&c2);
     Stop();
+}
 /**
  * @brief 设置电机速度
  *
@@ -214,6 +215,7 @@ void Motor::SetSpeed(int speed) {
         if (speed > 0) { gpio_set_level(in1_pin_, 1); gpio_set_level(in2_pin_, 0); }
         else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 1); }
     }
+}
 /**
  * @brief 停止电机（制动）
  *
@@ -223,6 +225,7 @@ void Motor::Stop() {
     if (use_pwm_) { ledc_set_duty(speed_mode_, ledc_channel_, 0); ledc_set_duty(speed_mode_, ledc_channel2_, 0);
         ledc_update_duty(speed_mode_, ledc_channel_); ledc_update_duty(speed_mode_, ledc_channel2_); }
     else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 0); }
+}
 /**
  * @brief 电机正转
  *
