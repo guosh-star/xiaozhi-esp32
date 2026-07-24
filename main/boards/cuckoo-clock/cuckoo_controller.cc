@@ -49,11 +49,11 @@
 
 // RTC 崩溃日志（RTC_NOINIT_ATTR，上电不丢失，用于诊断重启原因）
 RTC_NOINIT_ATTR struct {
-    uint32_t magic;        // ħ�� 0xCAFEBABE ��ʾ������Ч
-    uint32_t tick_sec;     // ����ǰ����������
-    uint8_t  dev_state;    // �豸״̬
-    uint8_t  music_active; // �����Ƿ����ڲ���
-    uint32_t free_heap;    // ʣ����ڴ�
+    uint32_t magic;        // 魔数: 0xCAFEBABE = 数据有效
+    uint32_t tick_sec;     // 重启前累计运行秒数
+    uint8_t  dev_state;    // 重启前设备状态
+    uint8_t  music_active; // 重启前音乐是否在播放
+    uint32_t free_heap;    // 重启前剩余堆内存
 } rtc_crash_log;
 
 
