@@ -326,14 +326,14 @@ void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     if (min == 0) {
         ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
         if (hourly_perf_.load()) { StartPerformance(kPerformanceHour, hour); } else { ESP_LOGI(TAG, "Hourly chime: performance disabled"); }
-        MarkHourlyChime(hour);  // dedup after successful trigger
+        MarkHourlyChime(hour);  // 触发成功后去重，防止重复整点报时
     }
 
     else if (min == 30) {
         ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
             // ====== 半点报时：3声钟鸣 + 舞蹈 ======
         StartPerformance(kPerformanceHalf, hour);
-        MarkHalfHourlyChime(hour);  // dedup after successful trigger
+        MarkHalfHourlyChime(hour);  // 触发成功后去重，防止重复半点报时
     }
 }
 
@@ -540,8 +540,8 @@ void CuckooStateMachine::StopAlarm() {
 
  */
 void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
-    if (alarm_ringing_) return;  // already ringing
-    if (!time_set_) return;      // clock not set yet
+    if (alarm_ringing_) return;  // 已有闹钟在响，跳过
+    if (!time_set_) return;      // 时间尚未设置，无法触发闹钟
 
     {
             // 加锁保护闹钟数组的并发访问
@@ -562,7 +562,7 @@ void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
                     3,
                     nullptr
                 );
-                break;  // only trigger one alarm at a time
+                break;  // 同一时间只触发一个闹钟
             }
         }
     }
@@ -878,7 +878,7 @@ bool CuckooStateMachine::PlayShowMusicBg(int index) {
     audio.SetBackgroundAudioGain(1.0f);
 
     const int DST_SR = 16000;
-    const size_t CHUNK_SRC = 2048;  // push in small chunks
+    const size_t CHUNK_SRC = 2048;  // 分小块推送
     size_t offset = 0;
 
     while (offset < total_samples && is_running_) {
@@ -887,7 +887,7 @@ bool CuckooStateMachine::PlayShowMusicBg(int index) {
 
         if (src_sr != DST_SR) {
             float ratio = (float)src_sr / DST_SR;
-            std::vector<int16_t> dst(chunk * 2 / 3 + 2);  // ~30% smaller after resample
+            std::vector<int16_t> dst(chunk * 2 / 3 + 2);  // 重采样后体积缩小约30%
             size_t d = 0;
             float pos = 0;
             while (pos < (float)chunk - 1.0f && d < dst.size() - 1) {
@@ -1009,7 +1009,7 @@ void CuckooStateMachine::LindaShow() {
     m1_stage_start_ = music_start_ms;
 
     while (is_running_ && Application::GetInstance().GetAudioService().IsBgAudioActive()
-           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s safety timeout
+           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s 安全超时ty timeout
         unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         unsigned long elapsed = now - music_start_ms;
 
@@ -1177,13 +1177,13 @@ void CuckooStateMachine::GardenShow() {
 
     unsigned long music_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
     int violin_angle = SERVO_CENTER_ANGLE;
-    int violin_dir = 0;  // 0: decreasing, 1: increasing
+    int violin_dir = 0;  // 0=小提琴角度递减, 1=递增
     int led_toggle = 0;
     int led_state = 0;
     bool led_final = false;
 
     while (is_running_ && Application::GetInstance().GetAudioService().IsBgAudioActive()
-           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s safety timeout
+           && (xTaskGetTickCount() * portTICK_PERIOD_MS - music_start_ms) < 120000UL) {  // 120s 安全超时ty timeout
         unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
         unsigned long elapsed = now - music_start_ms;
 
@@ -1773,7 +1773,7 @@ void CuckooStateMachine::MusicDanceTick() {
             static int dog_angle = 35;
             bool forward_beat = (phase <= 3);
             int guitar_target = forward_beat ? 110 : 70;   // +/-20
-            int dog_target = forward_beat ? 35 : 10;         // dog wags 10-35
+            int dog_target = forward_beat ? 35 : 10;         // 小狗摇尾范围 10~35 度
 
             if (violin_servo_) {
                 if (guitar_angle < guitar_target) {
@@ -1920,7 +1920,7 @@ void CuckooStateMachine::KidsRest() {
         // 停止所有电机
     if (m1_) m1_->Stop();
     if (violin_servo_) violin_servo_->SetAngle(90);
-    if (dog_servo_) dog_servo_->SetAngle(dog_state_.angle);  // hold current position
+    if (dog_servo_) dog_servo_->SetAngle(dog_state_.angle);  // 保持当前角度
     ESP_LOGI(TAG, "KidsRest: kids resting, no movement");
 }
 
@@ -2287,7 +2287,7 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     }
     *dst = '\0';
     
-    char full_url[1280];  // http:// + host + :port + encoded_path
+    char full_url[1280];  // URL 完整路径: http:// + host + :port + 编码后路径
 
     if (encoded_path[0] != '/') {
         snprintf(full_url, sizeof(full_url), "http://%s:%d/%s",
