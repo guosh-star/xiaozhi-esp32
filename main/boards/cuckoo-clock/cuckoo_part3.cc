@@ -500,15 +500,3 @@ void CuckooStateMachine::LoadAlarmsFromNvs() {
     ESP_LOGI(TAG, "Alarms loaded from NVS (%d active)", count);
 }
 
-
-/**
- * @brief 启动表演（整点/半点/手动触发）
- *
- * @param type 表演类型：kPerformanceHour(整点)/kPerformanceHalf(半点)/kPerformanceManual(手动)
- * @param hour 小时（半点和手动报时不需此参数）
- *
- * - AI 触发后 5 秒内忽略重复触发
- * - 先用 AbortSpeaking 终止 TTS，防止冲突
- * - 在 Core 1 上创建 PerformanceTask 执行
- */
-void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
