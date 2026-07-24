@@ -117,7 +117,8 @@ static void ConvertToPcmUrl(char* url, size_t url_sz) {
 // 电机驱动封装 (TB6612 / DRV8833)
 // ============================================
 
-// 通用 GPIO 初始化（支持直驱和 PWM 双模式）static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
+// 通用 GPIO 初始化（支持直驱和 PWM 双模式）
+static void motor_gpio_init(gpio_num_t in1, gpio_num_t in2) {
  gpio_config_t c = { .pin_bit_mask = (1ULL<<in1)|(1ULL<<in2),
   .mode = GPIO_MODE_OUTPUT, .pull_up_en = GPIO_PULLUP_DISABLE,
   .pull_down_en = GPIO_PULLDOWN_DISABLE, .intr_type = GPIO_INTR_DISABLE };
@@ -2492,11 +2493,13 @@ sm->CloseBirdDoor(); //
  vTaskDelete(NULL);
 }
 /**
-* @brief 鲢/
-* - (22:00-6:00)
- * - AI
- * - (min==0): StartPerformance(kPerformanceHour)
- * - (min==30): StartPerformance(kPerformanceHalf)
+ * @brief 时间检查与报时调度
+ *
+ * 每个 tick 调用，根据当前时间决定是否触发整点/半点报时。
+ * - 静音时段 (22:00-6:00) 跳过报时
+ * - AI 对话中推迟报时
+ * - 分钟为 0：触发整点报时 (kPerformanceHour)
+ * - 分钟为 30：触发半点报时 (kPerformanceHalf)
  */
 void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
  is_dark_ = dark;
@@ -3457,8 +3460,9 @@ if (m1_) m1_->Forward(100); // GPIO
 }
 
 /**
-* @brief
- * AILED++()赸LED
+ * @brief 启动综合演出异步任务
+ *
+ * 创建 ShowTask 在 Core 1 运行，后台播放音乐 + 控制 LED 灯效。
  */
 void CuckooStateMachine::StartShowTask() {
  auto& app0 = Application::GetInstance();
