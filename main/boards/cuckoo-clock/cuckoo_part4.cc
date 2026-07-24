@@ -81,21 +81,20 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
 
 
 
-
  */
+
 /**
-void CuckooStateMachine::PerformanceTask(void* arg) {
  * @brief 表演任务（在Core 1执行）——整点/半点/手动统一入口
-    auto* sm = static_cast<CuckooStateMachine*>(arg);
  *
-    sm->violin_state_.Reset();
  * 整点：报时N声 + 0013.mp3循环N次 + 舞蹈(LED+水车+跳舞电机+小提琴+小狗)
-    sm->dog_state_.Reset();
  * 半点：报时3声，无音乐仅舞蹈
-    ESP_LOGI(TAG, "Performance task started");
  * 手动：指定唤醒词触发后播放音乐 + 舞蹈
-
  */
+void CuckooStateMachine::PerformanceTask(void* arg) {
+    auto* sm = static_cast<CuckooStateMachine*>(arg);
+    sm->violin_state_.Reset();
+    sm->dog_state_.Reset();
+    ESP_LOGI(TAG, "Performance task started");
 
     auto& app = Application::GetInstance();
     app.GetAudioService().SetOutputMuted(true);
@@ -1832,28 +1831,6 @@ void CuckooStateMachine::MusicDanceTick() {
 /**
  * @brief 在线音乐播放时小狗出场动作
  */
-
-struct DoorOpenCtx {
-    CuckooStateMachine* sm;
-};
-
-void CuckooStateMachine::DoorOpenTask(void* arg) {
-    auto* ctx = static_cast<DoorOpenCtx*>(arg);
-    auto* sm = ctx->sm;
-    delete ctx;
-
-    sm->MotorPowerOn();
-    if (sm->m2_) {
-        sm->m2_->Forward(MAIN_DOOR_OPEN_SPEED);
-        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
-        sm->m2_->Stop();
-    }
-    ESP_LOGI(TAG, "Door open done (async)");
-    vTaskDelete(NULL);
-}
-
-void CuckooStateMachine::PlayDogBark() {
-    // 触发小狗出场动作
 void CuckooStateMachine::MusicDogIntro() {
     MotorPowerOn();
         // ---- 防误触发：AI唤醒后5秒内忽略表演请求（可能是语音误判）----
