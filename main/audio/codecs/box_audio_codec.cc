@@ -208,7 +208,7 @@ void BoxAudioCodec::EnableInput(bool enable) {
         }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
         ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
-            input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), input_gain_));
+            input_dev_, 0xF, input_gain_));  // 0xF = 全部 4 个麦克风
         if (input_reference_ && reference_gain_channel_ >= 0) {
             // ES7210 增益掩码使用物理 MIC 编号，不同于 TDM 时隙顺序 (MIC1, MIC3, MIC2, MIC4)
             ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(
