@@ -356,6 +356,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
     auto& app = Application::GetInstance();
 
 
+        // === 策略：HTTP GET 下载 MP3 → 分批解码 → 重采样至24000Hz单声道 → Ducking → 输出 ===
     esp_http_client_config_t config = {};
     config.url = url;
     config.method = HTTP_METHOD_GET;
@@ -397,6 +398,7 @@ void Mp3Player::PlayUrlTask(void* arg) {
     if (content_length > 0 && content_length < 8 * 1024 * 1024) {
 batch_size = content_length; // 内容长度可靠，全部一次下载
 if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // 限制4MB
+    // 内存分配降级策略：SPIRAM 4MB → SPIRAM 256KB → 系统堆 64KB → 失败退出
         ESP_LOGI(TAG, "PlayUrl: batch=%dKB (content=%dKB)", (int)(batch_size/1024), content_length/1024);
     }
     uint8_t* buf = (uint8_t*)heap_caps_malloc(batch_size, MALLOC_CAP_SPIRAM);
@@ -450,6 +452,7 @@ if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // 限制4MB
     ESP_LOGI(TAG, "PlayUrl: batch#1 dl=%dKB", (int)(batch_len/1024));
 
     // 跳过 ID3v2 标签
+        // MP3 文件可能带有 ID3v2 元数据标签（10字节头 + 内容），需要跳过才能正确解码
     mp3_start = 0;
     if (batch_len > 10 && memcmp(buf, "ID3", 3) == 0) {
         uint32_t id3_size = ((buf[6] & 0x7F) << 21) | ((buf[7] & 0x7F) << 14)
@@ -477,9 +480,14 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
 
     ptr = buf + mp3_start;
     rem = batch_len - mp3_start;
+    // ====================================================================
+    // 主解码循环：持续下载 → 分批解码 → 重采样 → Ducking → 推送到音频输出
+    // ====================================================================
     batch_seq = 1;
 
     while (1) {
+        // ---- 内层：从已下载的 batch 缓冲区逐块喂入 MP3 解码器 ----
+                // 内层：从 batch 缓冲区逐块喂入 MP3 解码器，每次最多 kInputBufSize 字节
         while (rem > 0 && !self->stop_requested_) {
             size_t feed = (rem < self->kInputBufSize) ? rem : self->kInputBufSize;
             memcpy(self->input_buf_, ptr, feed);
@@ -497,7 +505,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
 
             if (dec_ret == ESP_AUDIO_ERR_OK) {
                 if (frame.decoded_size > 0 && !self->stop_requested_) {
- // ---- Ducking: AI 说话时平滑淡出音乐 ----
+                    // ---- Ducking: AI 说话时平滑淡出音乐（400ms 内从 100% 降至 20%）----
                     auto dev_state = app.GetDeviceState();
                     if (dev_state == kDeviceStateSpeaking && self->ducking_gain_ >= 1.0f) {
                         self->ducking_gain_ = 1.0f;
@@ -516,6 +524,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
                         }
                     }
 
+                    // ---- 解码后处理：立体声→单声道 + 升采样至 24000Hz + Ducking 增益 ----
                     int16_t* pcm = (int16_t*)frame.buffer;
                     size_t ns = frame.decoded_size / sizeof(int16_t);  // stereo sample count
                     size_t mono_ns = ns / 2;
@@ -523,12 +532,13 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
 
 
                     if (sample_rate != kOutRate && mono_ns > 0) {
-                    // 第1步: 立体声→单声道 (左右声道平均)
+                        // 步骤1: 立体声→单声道（左右声道取平均）
                         for (size_t i = 0; i < mono_ns; i++) {
                             int32_t sum = (int32_t)pcm[2*i] + (int32_t)pcm[2*i+1];
                             resample_buf1[i] = (int16_t)(sum / 2);
                         }
 
+                        // 步骤2: 线性插值升采样至目标采样率
                         float ratio = (float)kOutRate / (float)sample_rate;
                         size_t out_ns = (size_t)(mono_ns * ratio);
                         for (size_t i = 0; i < out_ns; i++) {
@@ -541,6 +551,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
                                 resample_buf2[i] = resample_buf1[idx];
                         }
 
+                        // 步骤3: 应用 Ducking 增益 + 限幅
                         float g = self->ducking_gain_;
                         for (size_t i = 0; i < out_ns; i++) {
                             int32_t s = (int32_t)(resample_buf2[i] * g);
@@ -548,6 +559,7 @@ if (mp3_start > batch_len - 1024) mp3_start = 0; // ID3标签太大，从头开�
                             if (s < -30000) s = -30000;
                             resample_buf2[i] = (int16_t)s;
                         }
+                        // 步骤4: 推送 PCM 到音频输出流水线
                         app.GetAudioService().OutputRawPcm(resample_buf2, out_ns, kOutRate);
                     } else {
                         for (size_t i = 0; i < mono_ns; i++) {
