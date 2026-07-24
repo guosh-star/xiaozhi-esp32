@@ -4225,6 +4225,15 @@ std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     return result;
 }
 
+/**
+ * @brief 检查是否为多歌手歌曲（向代理发送 HTTP 查询）
+ *
+ * 向 QQ 音乐代理发送请求，通过第一个字节判断返回 JSON 还是音频流，
+ * 若为 JSON 则返回给 AI 解析多歌手信息。
+ *
+ * @param url_or_path 歌曲 URL 或路径
+ * @return JSON 字符串（含 multi_artist 字段），或空字符串（音频流）
+ */
 std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
     if (music_proxy_host_.empty()) return "";
 
