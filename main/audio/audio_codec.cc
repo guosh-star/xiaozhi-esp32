@@ -27,14 +27,9 @@ bool AudioCodec::InputData(std::vector<int16_t>& data) {
 }
 
 void AudioCodec::Start() {
-    Settings settings("audio", false);
-    output_volume_ = settings.GetInt("output_volume", output_volume_);
-    if (output_volume_ <= 0) {
-        ESP_LOGW(TAG, "Output volume value (%d) is too small, setting to default (10)", output_volume_);
-        output_volume_ = 10;
-    }
-
-    ESP_LOGI(TAG, "Audio codec started");
+    // Always reset to 80 on startup to avoid inconsistent volume from NVS
+    output_volume_ = 80;
+    ESP_LOGI(TAG, "Audio codec started, volume set to %d", output_volume_);
 }
 
 void AudioCodec::SetOutputVolume(int volume) {

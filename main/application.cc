@@ -560,7 +560,7 @@ void Application::InitializeProtocol() {
         if (!audio_service_.IsBgAudioActive()) {
             board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         }
-        // Always transition to Idle â€?the Idle handler protects music
+        // Always transition to Idle éˆ¥?the Idle handler protects music
         // (keeps VoiceProcessing on if IsBgAudioActive).
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
@@ -861,12 +861,9 @@ void Application::HandleWakeWordDetectedEvent() {
     }
 
     if (state == kDeviceStateIdle) {
-        // Start encoding wake word data first so it runs in parallel with wake sound
-        audio_service_.EncodeWakeWord();
-
         bool music_playing = audio_service_.IsBgAudioActive();
 #ifdef CONFIG_BOARD_TYPE_CUCKOO_CLOCK
-        // Skip cuckoo sound if music is playing â€?sound would overlap music
+        // Skip cuckoo sound if music is playing éˆ¥?sound would overlap music
         // and re-enabling output could reset the I2S channel mid-stream
         if (!music_playing) {
             auto* codec = Board::GetInstance().GetAudioCodec();
@@ -888,20 +885,8 @@ void Application::HandleWakeWordDetectedEvent() {
             ESP_LOGI(TAG, "Wake word while music playing, skipping cuckoo sound");
         }
 #endif
-        auto wake_word = std::string("xiao niao xiao niao");
-
-        if (!protocol_->IsAudioChannelOpened()) {
-            SetDeviceState(kDeviceStateConnecting);
-            // Schedule to let the state change be processed first (UI update),
-            // then continue with OpenAudioChannel which may block for ~1 second
-            Schedule([this, wake_word]() {
-                ContinueWakeWordInvoke(wake_word);
-            });
-            return;
-        }
-        // Channel already opened, set state and continue directly
-        SetDeviceState(kDeviceStateConnecting);
-        ContinueWakeWordInvoke(wake_word);
+        // Use BeginWakeWordInvoke for proper state transition handling
+        BeginWakeWordInvoke(wake_word);
     } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
         // Clear send queue to avoid sending residues to server
@@ -922,6 +907,30 @@ void Application::HandleWakeWordDetectedEvent() {
         // Restart the activation check if the wake word is detected during activation
         SetDeviceState(kDeviceStateIdle);
     }
+}
+
+void Application::BeginWakeWordInvoke(const std::string& wake_word) {
+    // Must run in the main task with the device in idle state
+    audio_service_.EncodeWakeWord();
+
+    // Always pass through the connecting state, even if the audio channel is
+    // already opened. ContinueWakeWordInvoke() rejects any other state, so
+    // skipping this transition would silently drop the wake word invocation.
+    if (!SetDeviceState(kDeviceStateConnecting)) {
+        // Wake word detection was stopped by the detection itself; restore it
+        // so the device does not become unresponsive to wake words.
+        audio_service_.EnableWakeWordDetection(true);
+        return;
+    }
+
+    if (!protocol_->IsAudioChannelOpened()) {
+        // Schedule to let the state change be processed first (UI update),
+        // then continue with OpenAudioChannel which may block for ~1 second
+        Schedule([this, wake_word]() { ContinueWakeWordInvoke(wake_word); });
+        return;
+    }
+    // Channel already opened, continue directly
+    ContinueWakeWordInvoke(wake_word);
 }
 
 void Application::ContinueWakeWordInvoke(const std::string& wake_word) {

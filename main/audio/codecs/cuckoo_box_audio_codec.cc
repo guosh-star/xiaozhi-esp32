@@ -19,7 +19,7 @@ CuckooBoxAudioCodec::CuckooBoxAudioCodec(void* i2c_master_handle, int input_samp
     input_channels_ = input_reference_ ? 2 : 1;
     input_sample_rate_ = input_sample_rate;
     output_sample_rate_ = output_sample_rate;
-    input_gain_ = 37.5;  // 最高增益补偿麦克风安装位置受限
+    input_gain_ = 45;  // wake word sensitivity boost (was 37.5)
 
     // EN pin: module power enable
     if (en_pin_ != GPIO_NUM_NC) {
@@ -88,8 +88,8 @@ CuckooBoxAudioCodec::CuckooBoxAudioCodec(void* i2c_master_handle, int input_samp
     assert(in_codec_if_ != NULL);
 
     // 麦克风安装位置受限，拉满 ADC 增益补偿收音不足
-    in_codec_if_->set_mic_gain(in_codec_if_, 37.5f);
-    ESP_LOGI(TAG, "ES7210 mic gain set to 37.5 dB");
+    in_codec_if_->set_mic_gain(in_codec_if_, 45.0f);
+    ESP_LOGI(TAG, "ES7210 mic gain set to 45.0 dB");
 
     dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
     dev_cfg.codec_if = in_codec_if_;

@@ -35,12 +35,12 @@
 // ============================================
 
 /**
- * 电机驱动封装 (支持 TB6612 / DRV8833)
+ * @brief 电机驱动封装（支持 GPIO 直驱 / PWM 双模式）
  *
- * TB6612: 3线控制 (PWMA + AIN1 + AIN2)
- *   - 构造函数: Motor(pwm, in1, in2, channel)
- * DRV8833: 2线控制 (AIN1 + AIN2, PWM打在IN脚上)
- *   - 构造函数: Motor(in1, in2, ch1, ch2)
+ * 三个构造函数对应不同硬件场景：
+ * - Motor(in1, in2): GPIO 直驱 → L9110S 等简单 H 桥芯片
+ * - Motor(in1, in2, ch1, ch2, speed_mode): PWM 共享定时器 → TB6612 四路主电机（Timer 0, 1kHz）
+ * - Motor(in1, in2, ch1, ch2, timer, speed_mode): PWM 自定义定时器 → DRV8833 独立调速（8-bit, 10kHz）
  */
 class Motor {
 private:
@@ -89,10 +89,14 @@ public:
 };
 
 /**
- * 板C：水车+鸟跳电机 (DRV8833 单向独立控制)
+ * @brief 水车+鸟跳：两个独立单向设备，通过 DRV8833 双通道独立控制
+ *
+ * 水车电机（一脚接 GPIO8，一脚接地）→ 单向旋转
+ * 鸟跳电磁铁（一脚接 GPIO39，一脚接地）→ 单向脉冲
+ * 使用 Motor 构造函数 #3（自定义定时器 Timer 3，8-bit，10kHz）：
+ * - SetSpeed(WATER_WHEEL_SPEED) → 水车旋转
+ * - SetSpeed(-100) → 鸟跳一次（短脉冲）
  */
-// 水车：water_bird_->SetSpeed(WATER_WHEEL_SPEED) 正向旋转
-// 鸟跳：water_bird_->SetSpeed(-100) 反向驱动
 
 /**
  * 钟声合成播放器
@@ -116,16 +120,14 @@ public:
     bool IsInitialized() { return true; }
 };
 
-/**
- * PCF8563 RTC 驱动 (I2C)
- * 当前未使用（时间通过 NTP 同步），保留接口备用
- */
+// RTC (已废弃，时间通过 NTP 同步)
 
 /**
- * MP3 软件解码播放器
+ * @brief MP3 软件解码播放器
+ *
  * 从 assets 分区读取 MP3 文件，用 esp_mp3_dec 软解码，
- * 通过 AudioService::OutputRawPcm 输出到 I2S 扬声器。
- * 内部使用 FreeRTOS 任务异步播放，MCP 调用不会阻塞。
+ * 通过 AudioService 输出到 I2S。支持 HTTP 流式下载（PlayUrl/PlayOpus/PlayPcm）。
+ * 各播放方法内部 spawn 独立 FreeRTOS task，MCP 调用不阻塞。
  */
 class Mp3Player {
 private:
@@ -223,8 +225,11 @@ public:
 };
 
 /**
- * 布谷鸟钟状态机
- * 管理整套表演动作序列
+ * @brief 布谷鸟钟状态机 — 管理所有硬件动作和表演序列
+ *
+ * 负责：报时（整点/半点）、闹钟、三场角色秀（狗/琳达/花园）、
+ * 综合表演（start_show）、在线音乐播放、粤语查询等。
+ * 所有耗时操作通过 spawn 独立 FreeRTOS task 避免阻塞。
  */
 class CuckooStateMachine {
 public:
@@ -250,7 +255,7 @@ public:
         kPhaseDone,                                // 完成
     };
 
-    // 整点/半点报时检测
+    // 整点/半点去重检测（防止同一小时内重复触发）
     bool NeedHourlyChime(int hour) const { return hour != last_hour_; }
     bool NeedHalfHourlyChime(int hour) const { return hour != last_half_hour_; }
     void MarkHourlyChime(int hour) { last_hour_ = hour; }
@@ -279,16 +284,16 @@ private:
     std::atomic<bool> is_running_{false};
     int last_hour_;                            // 上次整点报时的小时
     int last_half_hour_;                       // 上次半点报时的小时
-    int show_music_index_;
-    int music_dance_phase_ = 0;
-    int music_dance_enabled_ = -1;
+    int show_music_index_;                   // 当前播放曲目编号
+    int music_dance_phase_ = 0;              // 音乐舞蹈相位 (0-7)
+    int music_dance_enabled_ = -1;           // 音乐舞蹈状态: -1=未初始化, 0=已停止, 1=激活中
     int m1_music_fwd_count_ = 0;               // 音乐中 M1 正转脉冲计数
     int m1_music_rev_count_ = 0;               // 音乐中 M1 反转脉冲计数
     bool dog_outro_done_ = false;
     std::atomic<bool> dog_outro_running_{false};  // 小狗回家动画进行中
     std::atomic<bool> dog_intro_running_{false};  // 小狗出场动画进行中（防重复创建）
     std::atomic<bool> dog_intro_done_{false};     // 小狗出场完成
-    std::atomic<bool> kids_active_{true};         // 小人是否活跃
+    std::atomic<bool> kids_active_{true};         // Kids 模式是否激活（默认true，启动即活跃）
 
     // 小提琴循环状态
     struct ViolinLoopState {
@@ -349,15 +354,17 @@ public:
     std::atomic<int> garden_song_counter_{0};  // 花园歌曲计数
 
     // 静音模式配置
-    std::atomic<int> quiet_mode_{2};           // 0=静音 1=全天报时 2=仅光敏 3=时间段
+    std::atomic<int> quiet_mode_{2};           // 0=全天静音 1=全天报时 2=光线静音(LDR) 3=时间段静音
     std::atomic<int> quiet_start_{22};         // 静音开始小时
     std::atomic<int> quiet_end_{6};            // 静音结束小时
-    std::atomic<bool> hourly_perf_{true};      // 是否启用整点报时
+    std::atomic<bool> hourly_perf_{true};      // 整点报时后是否附加演出（音乐+舞蹈）
 
     void SaveQuietMode();
     void LoadQuietMode();
     void SaveKidsActive();
     void LoadKidsActive();
+    void SaveHourlyPerf();
+    void LoadHourlyPerf();
 
     void SetAlarm(int hour, int minute, bool repeat_daily);
     std::string GetAlarmsJson();
