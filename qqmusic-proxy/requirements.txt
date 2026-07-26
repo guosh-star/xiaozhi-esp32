@@ -1,0 +1,3 @@
+# QQ音乐中转服务 - 依赖
+# Python 3.7+ 内置模块即可，无需额外安装
+# 如果遇到SSL问题，可安装: pip install pyOpenSSL certifi
