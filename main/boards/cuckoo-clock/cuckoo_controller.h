@@ -294,6 +294,8 @@ private:
     std::atomic<bool> dog_intro_running_{false};  // 小狗出场动画进行中（防重复创建）
     std::atomic<bool> dog_intro_done_{false};     // 小狗出场完成
     std::atomic<bool> kids_active_{true};         // Kids 模式是否激活（默认true，启动即活跃）
+    std::atomic<bool> kids_dancing_{false};       // 小朋友跳舞模式（false=安静欣赏, true=电机舞蹈）
+    std::atomic<bool> kids_appreciating_{true};    // 轻摆欣赏模式（M1 MusicDanceTick 相位脉冲）默认true
 
     // 小提琴循环状态
     struct ViolinLoopState {
@@ -316,6 +318,9 @@ private:
         void Reset() { angle = 0; dir = 1; target = 50; pause = 0; }
     };
     DogTailState dog_state_;
+    std::atomic<bool> door_open_{false};   // 大门状态
+    std::atomic<bool> dog_out_{false};    // 小狗状态
+    std::atomic<bool> kids_dance_{false}; // KidsDanceShow 触发标志
 
     // M1 舞蹈电机时序
     unsigned long m1_fwd_time_ = 0;
@@ -431,6 +436,7 @@ public:
     void MusicDogOutro();                      // 音乐结束时小狗回家
     void KidsComeOut();
     void KidsRest();
+    void KidsDanceShow();
     static void AutoCloseTimerCallback(TimerHandle_t timer);
     void SetServoAngle(int servo_id, int angle);
     void SetMotorSpeed(int motor_id, int speed);

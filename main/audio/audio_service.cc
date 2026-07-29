@@ -949,13 +949,13 @@ void AudioService::SetBackgroundAudioGain(float gain) {
     bg_audio_active_ = (gain > 0.0f);
     if (bg_audio_active_) {
         RefreshOutputTimestamp();
+        std::lock_guard<std::mutex> lock(bg_audio_mutex_);
         if (!was_active) {
             // Reset ring buffer only on inactive→active transition.
             // Changing gain while already active (e.g. ducking 1.0→0.3
             // or restoring 0.3→1.0) must NOT discard buffered data.
-            std::lock_guard<std::mutex> lock(bg_audio_mutex_);
             bg_audio_read_pos_ = bg_audio_write_pos_;
-            bg_audio_gain_ = gain;  // 同步初始增益，确保后续淡入生效
+            bg_audio_gain_ = gain;
         }
     }
 }
