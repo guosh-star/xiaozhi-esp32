@@ -1,0 +1,15 @@
+Fixed: 10
+Line 4454: found garbled
+Line 4528: found garbled
+Line 4529: found garbled
+Line 4545: found garbled
+Line 4665: found garbled
+Line 4679: found garbled
+Line 4710: found garbled
+Line 4711: found garbled
+Line 4870: found garbled
+Line 4878: found garbled
+Garbled: 10
+Empty: 74
+English: 79
+Lines: 4991

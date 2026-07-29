@@ -39,5 +39,4 @@ if !RESTORE! equ 1 (
   echo One or more config files were restored from backup.
   echo Delete managed_components and retry build.
 )
-endlocal
-exit /b 0
+endlocal & exit /b %RESTORE%

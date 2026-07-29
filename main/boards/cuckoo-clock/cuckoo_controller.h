@@ -296,6 +296,7 @@ private:
     std::atomic<bool> kids_active_{true};         // Kids 模式是否激活（默认true，启动即活跃）
     std::atomic<bool> kids_dancing_{false};       // 小朋友跳舞模式（false=安静欣赏, true=电机舞蹈）
     std::atomic<bool> kids_appreciating_{true};    // 轻摆欣赏模式（M1 MusicDanceTick 相位脉冲）默认true
+    std::atomic<bool> flash_leds_active_{false};   // LED 闪烁模式是否激活
 
     // 小提琴循环状态
     struct ViolinLoopState {
@@ -428,6 +429,8 @@ public:
     void BirdJumpOnce();
     void OpenBirdDoor();
     void CloseBirdDoor();
+    void StartFlashLeds();
+    void StopFlashLeds();
     void PlayCuckooSound();
     void BirdJumpPulse();
     void BirdJumpShort();

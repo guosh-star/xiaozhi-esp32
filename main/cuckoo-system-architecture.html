@@ -1,0 +1,371 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>布谷鸟钟系统架构图</title>
+<style>
+  @page { size: A3 landscape; margin: 8mm; }
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a2e;
+    --muted: #555;
+    --line: #888;
+    --neutral: #f1f5f9;
+    --input: #dbeafe;
+    --process: #e0e7ff;
+    --storage: #ccfbf1;
+    --external: #fef3c7;
+    --risk: #fee2e2;
+    --hw: #fce7f3;
+    --cloud: #dbeafe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a;
+      --fg: #e5e7eb;
+      --muted: #a3adbd;
+      --line: #64748b;
+      --neutral: #334155;
+      --input: #1e3a5f;
+      --process: #312e81;
+      --storage: #115e59;
+      --external: #78350f;
+      --risk: #7f1d1d;
+      --hw: #831843;
+      --cloud: #1e3a5f;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  svg { width: 100%; height: auto; display: block; }
+  .title { font-size: 22px; font-weight: 700; fill: var(--fg); }
+  .section { font-size: 14px; font-weight: 650; fill: var(--fg); }
+  .label { font-size: 12px; font-weight: 600; fill: var(--fg); }
+  .small { font-size: 10.5px; fill: var(--muted); }
+  .tiny { font-size: 9.5px; fill: var(--muted); }
+  .code { font-size: 10px; fill: #6366f1; font-family: ui-monospace, monospace; }
+  .node { stroke: var(--line); stroke-width: 1.2; rx: 6; ry: 6; }
+  .edge { stroke: var(--line); stroke-width: 1.4; fill: none; }
+  .dash { stroke-dasharray: 5 4; }
+  .zone { fill: none; stroke: var(--line); stroke-dasharray: 6 5; opacity: 0.6; rx: 10; ry: 10; }
+  .arrow { fill: var(--line); }
+</style>
+
+<svg viewBox="0 0 1280 1050" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- ===== Defs ===== -->
+  <defs>
+    <marker id="arr" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" class="arrow"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#3b82f6"/>
+    </marker>
+    <marker id="arr-grn" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="7" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#10b981"/>
+    </marker>
+  </defs>
+
+  <!-- ===== Title ===== -->
+  <text x="640" y="30" text-anchor="middle" class="title">🕐 布谷鸟钟系统架构图</text>
+  <text x="640" y="52" text-anchor="middle" class="tiny">ESP32-S3 · 双核语音+钟控 · 云端音乐代理 · 2026-07-20</text>
+
+
+  <!-- =========================================== -->
+  <!--  ZONE: Cloud Services  -->
+  <!-- =========================================== -->
+  <rect x="18" y="65" width="1244" height="155" class="zone"/>
+  <text x="30" y="82" class="section">☁️ 云端服务</text>
+
+  <!-- LLM -->
+  <rect x="40" y="92" width="260" height="115" class="node cloud" fill="var(--cloud)"/>
+  <text x="170" y="114" text-anchor="middle" class="label">LLM 对话引擎</text>
+  <text x="170" y="132" text-anchor="middle" class="small">自然语言理解 &amp; 生成</text>
+  <text x="170" y="150" text-anchor="middle" class="small">工具调用 (MCP)</text>
+  <text x="170" y="168" text-anchor="middle" class="small">上下文管理</text>
+  <text x="170" y="186" text-anchor="middle" class="code">WebSocket + JSON</text>
+
+  <!-- TTS -->
+  <rect x="330" y="92" width="240" height="115" class="node cloud" fill="var(--cloud)"/>
+  <text x="450" y="114" text-anchor="middle" class="label">TTS 语音合成</text>
+  <text x="450" y="132" text-anchor="middle" class="small">文字 → 音频流</text>
+  <text x="450" y="150" text-anchor="middle" class="small">24kHz Opus 编码</text>
+  <text x="450" y="168" text-anchor="middle" class="small">流式传输</text>
+  <text x="450" y="186" text-anchor="middle" class="code">Opus → PCM 24kHz</text>
+
+  <!-- QQ Music -->
+  <rect x="600" y="92" width="380" height="115" class="node external" fill="var(--external)"/>
+  <text x="790" y="114" text-anchor="middle" class="label">🎵 QQ音乐代理</text>
+  <text x="790" y="132" text-anchor="middle" class="small">多源搜索：网易云 / QQ / 咪咕</text>
+  <text x="790" y="150" text-anchor="middle" class="small">多版本歌手检测 + 选项返回</text>
+  <text x="790" y="168" text-anchor="middle" class="small">VIP 回退 · aliases.json 别名映射</text>
+  <text x="790" y="186" text-anchor="middle" class="code">120.55.47.160:8765 · HTTP API</text>
+
+  <!-- ---- Cloud Arrows ---- -->
+
+  <!-- LLM ← → TTS -->
+  <line x1="300" y1="125" x2="328" y2="125" class="edge" marker-end="url(#arr)"/>
+  <line x1="300" y1="180" x2="328" y2="180" class="edge dash" marker-end="url(#arr)"/>
+
+  <!-- LLM → QQ -->
+  <line x1="300" y1="155" x2="598" y2="140" class="edge" marker-end="url(#arr)" stroke="#3b82f6"/>
+  <text x="410" y="136" class="tiny" fill="#3b82f6">音乐搜索</text>
+
+  <!-- =========================================== -->
+  <!--  ZONE: Audio Pipeline (detailed flow)  -->
+  <!-- =========================================== -->
+  <rect x="18" y="235" width="1244" height="145" class="zone"/>
+  <text x="30" y="252" class="section">🔊 音频流水线</text>
+
+  <!-- Input chain -->
+  <rect x="40" y="262" width="160" height="55" class="node hw" fill="var(--hw)"/>
+  <text x="120" y="284" text-anchor="middle" class="label">🎤 麦克风</text>
+  <text x="120" y="302" text-anchor="middle" class="tiny">模拟音频输入</text>
+
+  <line x1="200" y1="289" x2="254" y2="289" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="256" y="262" width="150" height="55" class="node" fill="var(--process)"/>
+  <text x="331" y="284" text-anchor="middle" class="label">ES7210 ADC</text>
+  <text x="331" y="302" text-anchor="middle" class="tiny">4通道 → I2S 16kHz</text>
+
+  <line x1="406" y1="289" x2="460" y2="289" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="462" y="262" width="120" height="55" class="node" fill="var(--process)"/>
+  <text x="522" y="284" text-anchor="middle" class="label">AEC</text>
+  <text x="522" y="302" text-anchor="middle" class="tiny">HIGH_PERF</text>
+
+  <line x1="582" y1="289" x2="636" y2="289" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="638" y="262" width="145" height="55" class="node" fill="var(--process)"/>
+  <text x="710" y="280" text-anchor="middle" class="label">AFE 唤醒检测</text>
+  <text x="710" y="296" text-anchor="middle" class="tiny">DET_MODE_2CH_95</text>
+  <text x="710" y="312" text-anchor="middle" class="code">gain 2.0x  th 0.02/0.30</text>
+
+  <line x1="783" y1="289" x2="837" y2="289" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="839" y="262" width="155" height="55" class="node" fill="var(--process)"/>
+  <text x="916" y="284" text-anchor="middle" class="label">Opus 编码</text>
+  <text x="916" y="302" text-anchor="middle" class="tiny">16kHz 音频压缩</text>
+
+  <line x1="994" y1="289" x2="1044" y2="289" class="edge" marker-end="url(#arr)" stroke="#3b82f6"/>
+
+  <!-- Cloud arrow -->
+  <rect x="1046" y="262" width="200" height="55" class="node cloud" fill="var(--cloud)"/>
+  <text x="1146" y="284" text-anchor="middle" class="label">→ 云端 LLM/TTS</text>
+  <text x="1146" y="302" text-anchor="middle" class="tiny">WebSocket 双向音频流</text>
+
+  <!-- Output chain (reverse) -->
+  <rect x="1046" y="325" width="200" height="45" class="node cloud" fill="var(--cloud)"/>
+  <text x="1146" y="342" text-anchor="middle" class="label">← 云端返回音频</text>
+  <text x="1146" y="358" text-anchor="middle" class="tiny">24kHz Opus 流</text>
+
+  <line x1="1046" y1="347" x2="994" y2="347" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="839" y="325" width="155" height="45" class="node" fill="var(--process)"/>
+  <text x="916" y="342" text-anchor="middle" class="label">Opus 解码</text>
+  <text x="916" y="358" text-anchor="middle" class="tiny">→ PCM 24kHz</text>
+
+  <line x1="839" y1="347" x2="783" y2="347" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="638" y="325" width="145" height="45" class="node" fill="var(--process)"/>
+  <text x="710" y="342" text-anchor="middle" class="label">采样率转换</text>
+  <text x="710" y="358" text-anchor="middle" class="tiny">24kHz → 16kHz</text>
+
+  <line x1="638" y1="347" x2="582" y2="347" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="462" y="325" width="120" height="45" class="node" fill="var(--process)"/>
+  <text x="522" y="342" text-anchor="middle" class="label">Ducking 混音</text>
+  <text x="522" y="358" text-anchor="middle" class="code">说话→50% 空闲→100%</text>
+
+  <line x1="462" y1="347" x2="406" y2="347" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="256" y="325" width="150" height="45" class="node" fill="var(--process)"/>
+  <text x="331" y="342" text-anchor="middle" class="label">ES8311 DAC</text>
+  <text x="331" y="358" text-anchor="middle" class="tiny">I2S → 模拟输出</text>
+
+  <line x1="256" y1="347" x2="200" y2="347" class="edge" marker-end="url(#arr)"/>
+
+  <rect x="40" y="325" width="160" height="45" class="node hw" fill="var(--hw)"/>
+  <text x="120" y="342" text-anchor="middle" class="label">🔊 扬声器</text>
+  <text x="120" y="358" text-anchor="middle" class="tiny">ES8311 驱动</text>
+
+  <!-- =========================================== -->
+  <!--  ZONE: ESP32-S3 Dual-Core Firmware  -->
+  <!-- =========================================== -->
+  <rect x="18" y="400" width="1244" height="360" class="zone"/>
+  <text x="30" y="417" class="section">🧠 ESP32-S3 固件（双核架构）</text>
+
+  <!-- === Core 0: Voice === -->
+  <rect x="40" y="428" width="570" height="282" class="neutral node"/>
+  <text x="325" y="450" text-anchor="middle" class="label">Core 0 — 语音处理</text>
+
+  <!-- Audio I2S -->
+  <rect x="58" y="462" width="160" height="55" class="node" fill="var(--process)"/>
+  <text x="138" y="484" text-anchor="middle" class="small">I2S 音频驱动</text>
+  <text x="138" y="500" text-anchor="middle" class="code">DMA 8×512 (256ms)</text>
+  <text x="138" y="514" text-anchor="middle" class="tiny">GPIO1 SDA / GPIO2 SCL</text>
+
+  <rect x="238" y="462" width="160" height="55" class="node" fill="var(--process)"/>
+  <text x="318" y="484" text-anchor="middle" class="small">音频编解码</text>
+  <text x="318" y="500" text-anchor="middle" class="code">ES7210+ES8311</text>
+  <text x="318" y="514" text-anchor="middle" class="tiny">esp_codec_dev</text>
+
+  <rect x="418" y="462" width="174" height="55" class="node" fill="var(--process)"/>
+  <text x="505" y="484" text-anchor="middle" class="small">唤醒词 &amp; VAD</text>
+  <text x="505" y="500" text-anchor="middle" class="code">AFE DET_MODE_2CH_95</text>
+  <text x="505" y="514" text-anchor="middle" class="tiny">灵敏度 0.02 (待机) / 0.30 (活跃)</text>
+
+  <!-- Core 0 bottom -->
+  <rect x="58" y="535" width="174" height="55" class="node" fill="var(--process)"/>
+  <text x="145" y="557" text-anchor="middle" class="small">AEC 回声消除</text>
+  <text x="145" y="573" text-anchor="middle" class="tiny">HIGH_PERF · 双通道</text>
+  <text x="145" y="587" text-anchor="middle" class="tiny">消除扬声器回声</text>
+
+  <rect x="250" y="535" width="174" height="55" class="node" fill="var(--process)"/>
+  <text x="337" y="557" text-anchor="middle" class="small">Opus 编解码</text>
+  <text x="337" y="573" text-anchor="middle" class="tiny">16kHz 编码 + 24kHz 解码</text>
+  <text x="337" y="587" text-anchor="middle" class="tiny">低延迟流式传输</text>
+
+  <rect x="442" y="535" width="160" height="55" class="node" fill="var(--process)"/>
+  <text x="522" y="557" text-anchor="middle" class="small">WebSocket 客户端</text>
+  <text x="522" y="573" text-anchor="middle" class="code">UDP 发送缓冲 32KB</text>
+  <text x="522" y="587" text-anchor="middle" class="tiny">WiFi 双工</text>
+
+  <!-- Core 0 State flow -->
+  <rect x="58" y="610" width="544" height="42" class="node" fill="var(--process)"/>
+  <text x="330" y="630" text-anchor="middle" class="small">状态流转: idle → connecting → listening → speaking → idle</text>
+  <text x="330" y="646" text-anchor="middle" class="tiny">放歌 ducking: 说话 50% / 空闲 100%  ·  唤醒阈值: 待机 0.02 / 活跃 0.30</text>
+
+  <!-- === Core 1: Clock & Music === -->
+  <rect x="635" y="428" width="610" height="322" class="neutral node"/>
+  <text x="940" y="450" text-anchor="middle" class="label">Core 1 — 钟控、音乐与执行机构</text>
+
+  <rect x="653" y="462" width="170" height="60" class="node" fill="var(--process)"/>
+  <text x="738" y="484" text-anchor="middle" class="small">⏰ 时钟任务</text>
+  <text x="738" y="500" text-anchor="middle" class="tiny">整点/半点检测</text>
+  <text x="738" y="514" text-anchor="middle" class="tiny">LDR 光线轮询 (阈值600)</text>
+
+  <rect x="841" y="462" width="190" height="60" class="node" fill="var(--process)"/>
+  <text x="936" y="484" text-anchor="middle" class="small">🎭 表演序列</text>
+  <text x="936" y="500" text-anchor="middle" class="tiny">鸣钟 · 报时 · Linda/Garden</text>
+  <text x="936" y="514" text-anchor="middle" class="tiny">感谢语音 2001~2005.wav</text>
+
+  <rect x="1049" y="462" width="178" height="60" class="node" fill="var(--process)"/>
+  <text x="1138" y="484" text-anchor="middle" class="small">⚙️ LED 灯光控制</text>
+  <text x="1138" y="500" text-anchor="middle" class="tiny">LED 灯串 × 2</text>
+  <text x="1138" y="514" text-anchor="middle" class="tiny">白光 LED (并联水车)</text>
+
+  <rect x="653" y="538" width="295" height="75" class="node" fill="var(--process)"/>
+  <text x="800" y="558" text-anchor="middle" class="small">🔧 电机/舵机控制 (PWM LEDC 1kHz 10-bit)</text>
+  <text x="800" y="574" text-anchor="middle" class="tiny">水车电机  ·  舞蹈者电机  ·  吉他手 (电机+舵机)</text>
+  <text x="800" y="590" text-anchor="middle" class="tiny">小狗 (电机+舵机)  ·  啄木鸟电磁铁 (GPIO 直驱)</text>
+  <text x="800" y="606" text-anchor="middle" class="code">舵机: 0°→180° · 15ms/步 · 续流二极管保护 · max_duty_</text>
+
+  <rect x="965" y="538" width="262" height="75" class="node" fill="var(--process)"/>
+  <text x="1096" y="558" text-anchor="middle" class="small">📥 PCM 下载线程</text>
+  <text x="1096" y="574" text-anchor="middle" class="tiny">HTTP Range 分片下载</text>
+  <text x="1096" y="590" text-anchor="middle" class="code">限速 40KB/s</text>
+  <text x="1096" y="606" text-anchor="middle" class="tiny">Watchdog 监控子进程</text>
+
+  <rect x="653" y="629" width="295" height="70" class="node" fill="var(--storage)"/>
+  <text x="800" y="649" text-anchor="middle" class="small">💾 背景音频缓冲</text>
+  <text x="800" y="665" text-anchor="middle" class="code">环缓冲区 96000 采样 (≈6s @16kHz)</text>
+  <text x="800" y="681" text-anchor="middle" class="tiny">预缓冲 64000 采样 (≈4s)  ·  PlayShowMusicBg</text>
+  <text x="800" y="695" text-anchor="middle" class="tiny">解码→重采样→bg audio 不抢 I2S</text>
+
+  <rect x="965" y="629" width="262" height="70" class="node" fill="var(--process)"/>
+  <text x="1096" y="649" text-anchor="middle" class="small">🔀 Ducking 混音器</text>
+  <text x="1096" y="665" text-anchor="middle" class="tiny">TTS + 背景音乐 混音</text>
+  <text x="1096" y="681" text-anchor="middle" class="tiny">说话→50% / 空闲→100%</text>
+  <text x="1096" y="695" text-anchor="middle" class="tiny">bg_audio_gain 淡入 · 不抢 I2S</text>
+
+  <!-- Core 1 extras -->
+  <rect x="653" y="712" width="575" height="32" class="node" fill="var(--process)"/>
+  <text x="940" y="732" text-anchor="middle" class="small">assets MP3 播放 (0001~0013 舞曲/铃声)  ·  Linda=3001.mp3  ·  Garden=4001.mp3  ·  解码: esp_mp3_dec → 16kHz mono</text>
+
+  <!-- === Shared Components (between cores) === -->
+  <rect x="40" y="750" width="1205" height="32" class="node" fill="var(--neutral)"/>
+  <text x="640" y="770" text-anchor="middle" class="small">共享: MCP 控制工具 (cuckoo.play_url / start_show / set_muted / device_status)  ·  状态机 (idle/speaking/listening/connecting)  ·  CheckMultiArtist 多版本检测</text>
+
+  <!-- =========================================== -->
+  <!--  ZONE: Hardware / Peripherals  -->
+  <!-- =========================================== -->
+  <rect x="18" y="798" width="1244" height="235" class="zone"/>
+  <text x="30" y="815" class="section">🔌 硬件外设</text>
+
+  <!-- Row 1: Audio + Lighting -->
+  <!-- Mic -->
+  <rect x="40" y="825" width="220" height="52" class="node hw" fill="var(--hw)"/>
+  <text x="150" y="845" text-anchor="middle" class="label">🎤 麦克风阵列</text>
+  <text x="150" y="862" text-anchor="middle" class="tiny">ES7210 · 4通道 ADC · I2S</text>
+
+  <!-- Speaker -->
+  <rect x="278" y="825" width="220" height="52" class="node hw" fill="var(--hw)"/>
+  <text x="388" y="845" text-anchor="middle" class="label">🔊 扬声器</text>
+  <text x="388" y="862" text-anchor="middle" class="tiny">ES8311 DAC · I2S · 16kHz</text>
+
+  <!-- LED strings -->
+  <rect x="516" y="825" width="250" height="52" class="node hw" fill="var(--hw)"/>
+  <text x="641" y="845" text-anchor="middle" class="label">💡 LED 灯串 × 2</text>
+  <text x="641" y="862" text-anchor="middle" class="tiny">两串装饰 LED 灯串</text>
+
+  <!-- White LED + Water wheel parallel -->
+  <rect x="784" y="825" width="270" height="52" class="node hw" fill="var(--hw)"/>
+  <text x="919" y="845" text-anchor="middle" class="label">💡 白光 LED (并联水车)</text>
+
+  <!-- RTC -->
+  <rect x="1072" y="825" width="173" height="52" class="node hw" fill="var(--hw)"/>
+  <text x="1158" y="845" text-anchor="middle" class="label">🕐 RTC 时钟</text>
+  <text x="1158" y="862" text-anchor="middle" class="tiny">WiFi NTP 校时</text>
+
+  <!-- Row 2: Actuators -->
+  <!-- Water wheel motor -->
+  <rect x="40" y="892" width="148" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="114" y="913" text-anchor="middle" class="small">💧 水车电机</text>
+  <text x="114" y="930" text-anchor="middle" class="tiny">Water Wheel</text>
+  <text x="114" y="947" text-anchor="middle" class="code">PWM LEDC 1kHz</text>
+
+  <!-- Dancer motor -->
+  <rect x="204" y="892" width="148" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="278" y="913" text-anchor="middle" class="small">💃 舞蹈者电机</text>
+  <text x="278" y="930" text-anchor="middle" class="tiny">Dancer Motor</text>
+  <text x="278" y="947" text-anchor="middle" class="code">PWM LEDC 1kHz</text>
+
+  <!-- Guitarist motor + servo -->
+  <rect x="368" y="892" width="190" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="463" y="913" text-anchor="middle" class="small">🎸 吉他手</text>
+  <text x="463" y="930" text-anchor="middle" class="tiny">电机 + 舵机 0°→180°</text>
+  <text x="463" y="947" text-anchor="middle" class="code">PWM + LEDC Servo</text>
+
+  <!-- Dog motor + servo -->
+  <rect x="574" y="892" width="190" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="669" y="913" text-anchor="middle" class="small">🐕 小狗</text>
+  <text x="669" y="930" text-anchor="middle" class="tiny">电机 (往返) + 舵机 0°→180°</text>
+  <text x="669" y="947" text-anchor="middle" class="code">PWM 1kHz 10-bit + Servo</text>
+
+  <!-- Bird motor -->
+  <rect x="780" y="892" width="150" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="855" y="913" text-anchor="middle" class="small">🐦 啄木鸟电机</text>
+  <text x="855" y="930" text-anchor="middle" class="tiny">Bird Motor</text>
+  <text x="855" y="947" text-anchor="middle" class="code">PWM LEDC 1kHz</text>
+
+  <!-- Bird electromagnet -->
+  <rect x="946" y="892" width="155" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="1023" y="913" text-anchor="middle" class="small">🐦 啄木鸟电磁铁</text>
+  <text x="1023" y="930" text-anchor="middle" class="tiny">GPIO 直驱</text>
+  <text x="1023" y="947" text-anchor="middle" class="code">1N4007 续流二极管</text>
+
+  <!-- LDR -->
+  <rect x="1117" y="892" width="128" height="70" class="node hw" fill="var(--hw)"/>
+  <text x="1181" y="913" text-anchor="middle" class="small">🌞 光敏电阻</text>
+  <text x="1181" y="930" text-anchor="middle" class="tiny">LDR · ADC</text>
+  <text x="1181" y="947" text-anchor="middle" class="code">暗阈值 600</text>
+
+
+
+</svg>
+</html>

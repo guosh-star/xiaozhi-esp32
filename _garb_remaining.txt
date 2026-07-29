@@ -1,0 +1,81 @@
+Total garbled lines: 87
+Unique phrases: 78
+
+- /㱨ʱ
+- DogShow: 小狗ݣšܳ小狗ҡͷ˻ءţ
+- GardenShow: ԰Lindaݣ0016 + 小狗ٶ + LED˸
+- LindaShow: մ赸ݣ0015 + 赸 + LED˸
+- Ƶʱˢ£ÿ10sֹI2SԴرգ
+- 设备状态监控(idle→自动放音乐, AI说话时小鸟弹跳)
+/㱨ʱ  Show AI
+15% ǿ 100% (ǰ10)
+2 ַ
+300-700msȴʱ
+5. 结束阶段: 小提琴平复 → 大门切换 → LED熄灭
+5. 结束阶段: 舞蹈停止 → 大门切换 → LED熄灭
+===  AI ˵ݺͬʱ ===
+=== ÿ（sub_tick % 4 == 0）===
+=== ͬʱ AIֵӿȻ ===
+====== 㱨ʱ+小狗+һ ======
+====== 㱨ʱ򻯰棨ްװֻƵ̣======
+AI æʱ򱳾Ƶвʱ
+AI ˵ TTS ͬʱУPlayOpus Զ duck  30%
+AI ˵/ȴ
+AI ˵ݺͬʱУֵӿ
+AI ղŶзֹ Opus
+AIݺͬʱ
+AI不说话时不变小狗滰Ծģʽ
+AI不说话时不变小狗滰Ծڱޱʱ
+AI󴥷豸մidle5 performanceAIڻʱԶcuckoo.performance
+M1舞蹈: 正转1-3秒 → 停20ms → 反转1-3秒 → 停20ms → 循环8次
+Mid-music transition: kids became active → bring dog out
+Mid-music transition: kids became resting → stop & put dog away
+Phase 1: 鸟门打开 → 小鸟+鸟叫 → 鸟门关闭
+Phase 3: ָAIƵ
+drain ݣֹ ring buffer
+ôַƴ
+ģʽ NVS 洢
+Ŵ
+Źر
+ȡԭ + RTC
+ɫݣ MCP ߵʵ֣
+ɺɾ
+ʵʱ DogShowTask() ִУ Core 1 ̨
+ͣˮͷGPIO39ͻ
+ͣ赸
+ͨ磬小狗񵯳
+ϵ磬小狗
+ѡ?
+һԽ뵽PSRAMOutputRawPcmظţMP3򿪵Ķ
+һٹ
+԰ŵ Core 1 ̨
+ո HTTP request line Ƿָ
+ռãֹظ
+ֱ AbortSpeaking TTS Ȼ
+ֱӻָᵼ»Ѵ listening ״̬ AbortSpeaking  audio_input
+ֲ
+ֲʱLOW_POWER
+ֻ idle ״̬Żָ listening ״̬󴥷Ѵ
+ָֽѴʺ
+עNTPͬʱÿtick_sec%86400У׼
+ע⣺StartShow  AbortSpeaking ״̬ listening idle
+ڽǶȲ279/s
+ڽǶȲ279/s40s31Ȧʵ⣩ֻ360ڵĲ
+㱨ʱ
+㱨ʱ3ν
+㱨ʱÿ == 0 ʱ NeedHourlyChime ظ
+㱨ʱÿ == 30 ʱ NeedHalfHourlyChime ظ
+反转<正转时，补偿×1.3
+壨ͬʱڲ
+壩ͣٿʼ
+小提琴: 每50ms帧步进9°, 0~140°左右摆动
+小提琴动作: 90°→0°→180°→90° 循环摆动
+恢复标志AIƵ
+恢复标志Ѵʼ⣨ EnableVoiceProcessing   ResetDecoder  TTS
+恢复标志Ѵֵ豸idleӿزת
+赸У㱨ʱ PerformanceTask + ۺϱ ShowTask ã
+输出到控制台ִбݣ̶ Core 1ӿغģ
+重试循环ȴ AbortSpeaking/TTS-STOP
+重采样 22050→16000
+飨ÿһΣ
+첽ִУMCP ߵѭ߳ϣapp.Schedule

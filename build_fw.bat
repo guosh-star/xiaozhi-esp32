@@ -5,6 +5,7 @@ REM ============================================================
 setlocal enabledelayedexpansion
 
 set PYTHONIOENCODING=utf-8
+set CCACHE_DISABLE=1
 set PATH=C:\Espressif\python_env\idf5.5_py3.11_env\Scripts;C:\Espressif\python_env\idf5.5_py3.11_env\Lib\site-packages\bin;%PATH%
 set IDF_PATH=C:\Espressif\frameworks\esp-idf-v5.5.4
 set IDF_PYTHON_ENV_PATH=C:\Espressif\python_env\idf5.5_py3.11_env
@@ -17,11 +18,12 @@ if !errorlevel! equ 1 (
     echo Config files CHANGED - fullclean required
     echo ============================================================
     rmdir /s /q "%~dp0managed_components"
-    idf.py fullclean build flash
+    rmdir /s /q "%~dp0build"
+    idf.py build flash
 ) else (
     echo.
-    echo Config files OK - incremental build
-    idf.py build flash
+    echo Config files OK - building (fullclean to avoid stale cache)
+    idf.py fullclean build flash
 )
 
 endlocal

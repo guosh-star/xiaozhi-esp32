@@ -139,9 +139,6 @@ void CuckooStateMachine::MusicDanceTick() {
         }
         dog_intro_done_ = false;
         music_dance_enabled_ = 0;
-        // Turn off LEDs when music ends
-        gpio_set_level(LED_A_GPIO, 0);
-        gpio_set_level(LED_B_GPIO, 0);
     }
 }
 
@@ -265,6 +262,8 @@ void CuckooStateMachine::KidsDanceShow() {
             } else {
                 // Music still playing: smooth transition to light swinging
                 sm->kids_appreciating_ = true;
+                gpio_set_level(LED_A_GPIO, 0);
+                gpio_set_level(LED_B_GPIO, 0);
             }
             sm->kids_dance_ = false;
         }
@@ -346,6 +345,26 @@ void CuckooStateMachine::CloseBirdDoor() {
         m4_->Stop();
     }
     MotorPowerOff();
+}
+
+void CuckooStateMachine::StartFlashLeds() {
+    if (flash_leds_active_) return;
+    flash_leds_active_ = true;
+    xTaskCreate([](void* arg) {
+        auto* sm = static_cast<CuckooStateMachine*>(arg);
+        int state = 0;
+        while (sm->flash_leds_active_) {
+            state = !state;
+            gpio_set_level(LED_A_GPIO, state ? 1 : 0);
+            gpio_set_level(LED_B_GPIO, state ? 0 : 1);
+            vTaskDelay(pdMS_TO_TICKS(300));
+        }
+        vTaskDelete(NULL);
+    }, "flash_leds", 2048, this, 4, NULL);
+}
+
+void CuckooStateMachine::StopFlashLeds() {
+    flash_leds_active_ = false;
 }
 
 void CuckooStateMachine::PlayCuckooSound() {
@@ -704,22 +723,15 @@ void CuckooTools::RegisterAll() {
                 return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
             });
     }
-    // === Cantonese lookup (2026-07-19) ===
-    {
-        PropertyList pl;
-        pl.AddProperty(Property("word", kPropertyTypeString));
-        mcp.AddTool("cuckoo.cantonese_lookup",
-            "MUST CALL THIS TOOL. NEVER answer Cantonese/Jyutping from memory. Look up Jyutping pronunciation for a Chinese word or phrase. "
-            "Call when user asks about Cantonese pronunciation, how to say something in Cantonese, or wants Jyutping. "
-            "Returns Jyutping romanization + definitions. Includes tone numbers (1-6). "
-            "Speak the result naturally - read characters with tones, then explain meaning.",
-            pl,
-            [this](const PropertyList& props) -> ReturnValue {
-                std::string word = props["word"].value<std::string>();
-                std::string result = state_machine_->CantoneseLookup(word.c_str());
-                return result.empty() ? std::string("{\"status\": \"error\", \"message\": \"Lookup failed. Ask user to try a different word.\"}") : result;
-            });
-    }
+    // === LED Flash (2026-07-29) ===
+    mcp.AddTool("cuckoo.flash_leds",
+        "让两串LED灯串交替闪烁（300ms间隔）。触发词: 闪灯/灯闪起来/灯光闪烁。"
+        "关灯用 cuckoo.set_led state=0。",
+        PropertyList(),
+        [this](const PropertyList& props) -> ReturnValue {
+            state_machine_->StartFlashLeds();
+            return std::string("{\"status\": \"leds_flashing\"}");
+        });
 
     {
         PropertyList pl;
@@ -857,6 +869,7 @@ void CuckooTools::RegisterAll() {
             [this](const PropertyList& props) -> ReturnValue {
                 int state = props["state"].value<int>();
                 int v = (state != 0) ? 1 : 0;
+                state_machine_->StopFlashLeds();  // stop flashing
                 gpio_set_level(LED_A_GPIO, v);
                 gpio_set_level(LED_B_GPIO, v);
                 char buf[32];

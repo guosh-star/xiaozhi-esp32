@@ -1,0 +1,98 @@
+[INLINE]  L53:     uint32_t magic;        // ħ�� 0xCAFEBABE ��ʾ������Ч
+[INLINE]  L54:     uint32_t tick_sec;     // ����ǰ����������
+[INLINE]  L55:     uint8_t  dev_state;    // �豸״̬
+[INLINE]  L56:     uint8_t  music_active; // �����Ƿ����ڲ���
+[INLINE]  L57:     uint32_t free_heap;    // ʣ����ڴ�
+[INLINE]  L270:         vTaskDelay(pdMS_TO_TICKS(50));  // �ܹ�5�������
+[INLINE]  L379:         if (skip < mp3_size - 1024) {  // ȷ�����������㹻����
+[INLINE]  L541:         consecutive_errors = 0;  // ����ɹ������ô������
+[INLINE]  L600:         return 0;  // ������������
+[INLINE]  L675:         batch_size = content_length; // ȫ��һ������
+[INLINE]  L676:         if (batch_size > 4 * 1024 * 1024) batch_size = 4 * 1024 * 1024; // ����4MB
+[INLINE]  L735:         if (mp3_start > batch_len - 1024) mp3_start = 0; // ��ǩ̫��/���ݲ��㣬��ͷ��ʼ
+[INLINE]  L848:                 if (c == 0) c = raw.consumed;  // �˻����
+[INLINE]  L858:                     else { rem = 0; break; }  // δ�ҵ�ͬ��֡ͷ������carryʣ��
+[INLINE]  L906:                 rem = 0; // ��Ч֡ͷ������
+[INLINE]  L1002:     const size_t CHUNK = sizeof(self->output_buf_);  // ��������������С
+[INLINE]  L1011:         size_t samples = read / 2;  // 16λ������
+[INLINE]  L1080:     stop_requested_ = false;  // ��� Stop() ���õı�־
+[INLINE]  L1260:             if (app.GetDeviceState() == kDeviceStateConnecting) break;  // ���Ѵʴ��� stop
+[INLINE]  L1954:     return raw;  // 0-4095 (12-bit), ��=��ֵ, ��=��ֵ
+[INLINE]  L2014:       violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // С���ٵ�� (��B M2, GPIO18/45)
+[INLINE]  L2045:     MotorPowerOff();  // Ĭ�϶ϵ磬100K �������� 5V
+[INLINE]  L2197:                     m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+[INLINE]  L2212:                     m1_rand_time = 1000 + (esp_random() % 2001);  // �����1~3��
+[INLINE]  L2411:         if ((now_us - last_idle_exit_us_) < 5000000) {  // 5�봰��
+[INLINE]  L2423:         vTaskDelay(pdMS_TO_TICKS(200));  // ��״̬�ص� idle
+[INLINE]  L2436:             total_calls_ = hour;       // ��¼�ܱ�ʱ��������㣩
+[INLINE]  L2437:             call_count_ = 3;           // ���㱨ʱ��3�ν���
+[INLINE]  L2441:             call_count_ = 3;           // ��㱨ʱ��3�ν���
+[INLINE]  L2486:         sm->OpenBirdDoor();  // ���� (m4_)
+[INLINE]  L2492:             vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
+[INLINE]  L2493:             sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���
+[INLINE]  L2495:                 vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
+[INLINE]  L2500:         sm->CloseBirdDoor();  // ���Źر�
+[INLINE]  L2544:         app.GetAudioService().SetOutputMuted(false);  // �ָ�AI��Ƶ
+[INLINE]  L2548:         if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
+[INLINE]  L2599:         sm->OpenBirdDoor();  // ���Ŵ�
+[INLINE]  L2605:             vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
+[INLINE]  L2606:             sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���
+[INLINE]  L2608:                 vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
+[INLINE]  L2613:         sm->CloseBirdDoor();  // ���Źر�
+[INLINE]  L2662:         return;  // ȫ�쾲��
+[INLINE]  L2667:         return;  // ��ھ���
+[INLINE]  L2680:                 return;  // ��ҹ: 22~6
+[INLINE]  L2927:                     volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% ��ǿ�� 100% (ǰ10��)
+[INLINE]  L2968:     if (is_running_) return;  // ���б��������У��ܾ��ظ�����
+[INLINE]  L2973:         vTaskDelete(nullptr);  // ������ɺ���ɾ������
+[INLINE]  L3243:     if (is_running_) return;  // ���б��������У��ܾ�
+[INLINE]  L3256:     if (is_running_) return;  // ���б��������У��ܾ�
+[INLINE]  L3281:     gpio_set_level(LED_A_GPIO, 1);  // LED_A ��
+[INLINE]  L3282:     gpio_set_level(LED_B_GPIO, 1);  // LED_B ��
+[INLINE]  L3283:     vTaskDelay(pdMS_TO_TICKS(500));  // ��0.5��
+[INLINE]  L3306:     m1_fwd_time_ = 0;  // ��ת�ۼ�ʱ��
+[INLINE]  L3307:     m1_rev_time_ = 0;  // ��ת�ۼ�ʱ��
+[INLINE]  L3376:     if (m1_) m1_->Stop();  // ͣ�赸���
+[INLINE]  L3409:     gpio_set_level(LED_A_GPIO, 0);  // LED_A ��
+[INLINE]  L3410:     gpio_set_level(LED_B_GPIO, 0);  // LED_B ��
+[INLINE]  L3413:     Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+[INLINE]  L3414:     Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+[INLINE]  L3420:     if (mp3_) mp3_->SetDisableDucking(false);  // �ָ� duck
+[INLINE]  L3443:     gpio_set_level(LED_A_GPIO, 1);  // LED_A ��
+[INLINE]  L3444:     gpio_set_level(LED_B_GPIO, 1);  // LED_B ��
+[INLINE]  L3445:     vTaskDelay(pdMS_TO_TICKS(500));  // ��0.5��
+[INLINE]  L3502:         violin_servo_->Sweep(violin_angle, SERVO_CENTER_ANGLE, 1000);  // �ӵ�ǰ�Ƕ�ƽ���ص�90��
+[INLINE]  L3512:     gpio_set_level(LED_A_GPIO, 0);  // LED_A ��
+[INLINE]  L3513:     gpio_set_level(LED_B_GPIO, 0);  // LED_B ��
+[INLINE]  L3516:     Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+[INLINE]  L3517:     Application::GetInstance().GetAudioService().EnableBgAudioDrain(false);  // ��bg audio
+[INLINE]  L3523:     if (mp3_) mp3_->SetDisableDucking(false);  // �ָ� duck
+[INLINE]  L3606:     if (m1_) m1_->Forward(100);  // GPIOֱ��ȫ��ѹ
+[INLINE]  L3686:     if (sm->mp3_) sm->mp3_->SetDisableDucking(true);  // �������ֲ�����
+[INLINE]  L3691:         if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
+[INLINE]  L3738:     if (sm->mp3_) sm->mp3_->SetDisableDucking(false);  // �ָ� duck
+[INLINE]  L3794:     if (m1_) m1_->Stop();  // �赸
+[INLINE]  L3795:     if (m2_) m2_->Stop();  // ����
+[INLINE]  L3796:     if (m3_) m3_->Stop();  // С��
+[INLINE]  L3797:     if (m4_) m4_->Stop();  // ����
+[INLINE]  L3798:     if (violin_motor_) violin_motor_->Stop();  // С����
+[INLINE]  L3903:     if (water_bird_) water_bird_->Stop();  // ��ͣˮ�����ͷ�GPIO39�����ͻ
+[INLINE]  L3904:     gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);  // �����ͨ�磬С�񵯳�
+[INLINE]  L3905:     int pulse = 50 + (esp_random() % 151);  // ���50-200ms�������
+[INLINE]  L3907:     gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // ������ϵ磬С�����
+[INLINE]  L3908:     int cooldown = 300 + (esp_random() % 401);  // ���300-700ms��ȴʱ��
+[INLINE]  L4251:     MotorPowerOn();  // ȷ����Դ�ȶ�
+[INLINE]  L4265:         case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;  // С���ٵ�� (��B M2, GPIO18/45)
+[CODE]    L4585:             "Hourly chime: bell rings + music. ONLY call when user explicitly says ��ʱ/���㱨ʱ/����/what time. DO NOT auto
+[CODE]    L4659:         "�ۺϱ��ݣ��赸+С��+ˮ��+����һ������ '����' '��Ŀ' '��������' '����' '�ݳ�' ���ۺϱ�������"
+[CODE]    L4660:         "ע�⣺����û�ֻ�ᵽĳ����ɫ��԰��/�մ�/С��������Ҫ�ô˹��ߣ����ö�Ӧ�Ľ�ɫ���ߡ�ʶ���ı������ӽ���ɫ��ʱ����'Ӧ��''�յ�''�ִ�'���մ'ԭַ'��԰�
+[CODE]    L4676:         "Stop music playback. Call ONLY when user explicitly asks to stop the music (ͣ��/��ͣ����/��Ҫ����/�ص�). Do NOT ca
+[CODE]    L4799:         "Stop a ringing ALARM only. For ������/ͣ����. NOT for stopping music/performance - use cuckoo.stop_all for that.
+[CODE]    L4813:             "Set chime quiet mode. 0=ȫ�쾲��(������ʱ), 1=ȫ�챨ʱ, 2=��ھ���(LDR����), 3=ָ��ʱ��ξ���(start_hour~end_hour����). "
+[CODE]    L4844:                 m == 0 ? "ȫ�쾲��" : m == 1 ? "ȫ�챨ʱ" :
+[CODE]    L4845:                 m == 2 ? "��ھ���(LDR)" : "ʱ��ξ���");
+[INLINE]  L4992:         if (tv.tv_sec > 1000000000) {  // 2001���Ժ�˵�� NTP ��ͬ��
+[CODE]    L5030:                 ESP_LOGI(TAG, "Device woke up �� opening bird door");
+[CODE]    L5040:                 ESP_LOGI(TAG, "Device sleeping �� closing bird door");
+
+Total remaining: 0 pure comment, 86 inline, 10 code

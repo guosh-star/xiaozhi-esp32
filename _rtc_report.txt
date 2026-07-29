@@ -1,0 +1,81 @@
+L55:     uint8_t  dev_state;    // 豸״̬
+L56:     uint8_t  music_active; // Ƿڲ
+L57:     uint32_t free_heap;    // ʣڴ
+L58: } rtc_crash_log;
+L59: 
+L60: 
+L61: //  /stream  /opus ʽURLתΪ /pcm ʽESP32Ƶʹ
+L62: static void ConvertToPcmUrl(char* url, size_t url_sz) {
+---
+L4966:     // ȡԭ + RTC
+L4967:     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
+L4968:              esp_reset_reason(), esp_reset_reason());
+L4969:     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
+L4970:         ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
+L4971:                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
+L4972:                  (int)rtc_crash_log.music_active, (int)rtc_crash_log.free_heap);
+L4973:     }
+---
+L4968:              esp_reset_reason(), esp_reset_reason());
+L4969:     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
+L4970:         ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
+L4971:                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
+L4972:                  (int)rtc_crash_log.music_active, (int)rtc_crash_log.free_heap);
+L4973:     }
+L4974:     rtc_crash_log.magic = 0xCAFEBABE;
+L4975: 
+---
+L4969:     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
+L4970:         ESP_LOGW(TAG, "Last heartbeat before crash/reset: t=%ds state=%d music=%d heap=%d",
+L4971:                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
+L4972:                  (int)rtc_crash_log.music_active, (int)rtc_crash_log.free_heap);
+L4973:     }
+L4974:     rtc_crash_log.magic = 0xCAFEBABE;
+L4975: 
+L4976:     ESP_LOGI(TAG, "Cuckoo clock task started on core %d, stack=%d",
+---
+L4971:                  (int)rtc_crash_log.tick_sec, (int)rtc_crash_log.dev_state,
+L4972:                  (int)rtc_crash_log.music_active, (int)rtc_crash_log.free_heap);
+L4973:     }
+L4974:     rtc_crash_log.magic = 0xCAFEBABE;
+L4975: 
+L4976:     ESP_LOGI(TAG, "Cuckoo clock task started on core %d, stack=%d",
+L4977:              xPortGetCoreID(), (int)uxTaskGetStackHighWaterMark(NULL));
+L4978: 
+---
+L5104:  // ÿ30뱣־RTCڴ棨RTCڿŹλԱ
+L5105:         if (tick_sec % 30 == 0) {
+L5106:             auto& app = Application::GetInstance();
+L5107:             rtc_crash_log.tick_sec = tick_sec;
+L5108:             rtc_crash_log.dev_state = (uint8_t)app.GetDeviceState();
+L5109:             rtc_crash_log.music_active = (uint8_t)app.GetAudioService().IsBgAudioActive();
+L5110:             rtc_crash_log.free_heap = esp_get_free_heap_size();
+L5111:         }
+---
+L5105:         if (tick_sec % 30 == 0) {
+L5106:             auto& app = Application::GetInstance();
+L5107:             rtc_crash_log.tick_sec = tick_sec;
+L5108:             rtc_crash_log.dev_state = (uint8_t)app.GetDeviceState();
+L5109:             rtc_crash_log.music_active = (uint8_t)app.GetAudioService().IsBgAudioActive();
+L5110:             rtc_crash_log.free_heap = esp_get_free_heap_size();
+L5111:         }
+L5112: 
+---
+L5106:             auto& app = Application::GetInstance();
+L5107:             rtc_crash_log.tick_sec = tick_sec;
+L5108:             rtc_crash_log.dev_state = (uint8_t)app.GetDeviceState();
+L5109:             rtc_crash_log.music_active = (uint8_t)app.GetAudioService().IsBgAudioActive();
+L5110:             rtc_crash_log.free_heap = esp_get_free_heap_size();
+L5111:         }
+L5112: 
+L5113:  // ÿ60+ջˮλڱ
+---
+L5107:             rtc_crash_log.tick_sec = tick_sec;
+L5108:             rtc_crash_log.dev_state = (uint8_t)app.GetDeviceState();
+L5109:             rtc_crash_log.music_active = (uint8_t)app.GetAudioService().IsBgAudioActive();
+L5110:             rtc_crash_log.free_heap = esp_get_free_heap_size();
+L5111:         }
+L5112: 
+L5113:  // ÿ60+ջˮλڱ
+L5114:         if (tick_sec % 60 == 0) {
+---

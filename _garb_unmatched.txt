@@ -1,0 +1,69 @@
+Mid-music transition: kids became resting → stop & put dog away
+Mid-music transition: kids became active → bring dog out
+恢复标志Ѵʼ⣨ EnableVoiceProcessing   ResetDecoder  TTS
+ֱӻָᵼ»Ѵ listening ״̬ AbortSpeaking  audio_input
+AI󴥷豸մidle5 performanceAIڻʱԶcuckoo.performance
+ע⣺StartShow  AbortSpeaking ״̬ listening idle
+- GardenShow: ԰Lindaݣ0016 + Сٶ + LED˸
+赸У㱨ʱ PerformanceTask + ۺϱ ShowTask ã
+㱨ʱÿ == 30 ʱ NeedHalfHourlyChime ظ
+AI ˵ TTS ͬʱУPlayOpus Զ duck  30%
+- LindaShow: մ赸ݣ0015 + 赸 + LED˸
+ʵʱ DogShowTask() ִУ Core 1 ̨
+㱨ʱÿ == 0 ʱ NeedHourlyChime ظ
+重试循环ȴ AbortSpeaking/TTS-STOP
+=== ÿ（sub_tick % 4 == 0）===
+һԽ뵽PSRAMOutputRawPcmظţMP3򿪵Ķ
+ֻ idle ״̬Żָ listening ״̬󴥷Ѵ
+עNTPͬʱÿtick_sec%86400У׼
+첽ִУMCP ߵѭ߳ϣapp.Schedule
+====== 㱨ʱ򻯰棨ްװֻƵ̣======
+ո HTTP request line Ƿָ
+ڽǶȲ279/s40s31Ȧʵ⣩ֻ360ڵĲ
+- DogShow: СݣšܳСҡͷ˻ءţ
+ֱ AbortSpeaking TTS Ȼ
+====== 㱨ʱ+С+һ ======
+drain ݣֹ ring buffer
+输出到控制台ִбݣ̶ Core 1ӿغģ
+- Ƶʱˢ£ÿ10sֹI2SԴرգ
+15% ǿ 100% (ǰ10)
+===  AI ˵ݺͬʱ ===
+=== ͬʱ AIֵӿȻ ===
+恢复标志Ѵֵ豸idleӿزת
+Phase 3: ָAIƵ
+反转<正转时，补偿×1.3
+/㱨ʱ  Show AI
+AI ղŶзֹ Opus
+԰ŵ Core 1 ̨
+300-700msȴʱ
+ֲʱLOW_POWER
+AI ˵ݺͬʱУֵӿ
+AI˵ʱС滰Ծڱޱʱ
+ɫݣ MCP ߵʵ֣
+ͣˮͷGPIO39ͻ
+AI æʱ򱳾Ƶвʱ
+AI˵ʱС滰Ծģʽ
+ģʽ NVS 洢
+ȡԭ + RTC
+ڽǶȲ279/s
+恢复标志AIƵ
+AI ˵/ȴ
+AIݺͬʱ
+ͨ磬С񵯳
+ռãֹظ
+ָֽѴʺ
+㱨ʱ3ν
+壨ͬʱڲ
+壩ͣٿʼ
+飨ÿһΣ
+2 ַ
+ôַƴ
+ϵ磬С
+Źر
+ɺɾ
+ͣ赸
+ѡ?
+һٹ
+㱨ʱ
+Ŵ
+ֲ

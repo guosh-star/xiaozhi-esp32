@@ -1,0 +1,496 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-07-20T10:50:00.000Z" agent="OpenClaw" version="21.0.0">
+  <diagram id="cuckoo-flow" name="布谷鸟钟软件流程">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="2000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ====== TITLE ====== -->
+        <mxCell id="title" value="&lt;b&gt;布谷鸟钟 软件流程图&lt;/b&gt;&lt;br&gt;ESP32-S3 | 双核 | 函数调用链 | 2026-07-20" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=16;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="300" y="20" width="600" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 1: STARTUP -->
+        <!-- ===================================================================== -->
+        <mxCell id="s1-hdr" value="&lt;b&gt;① 启动初始化&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#dbeafe;strokeColor=#3b82f6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="1120" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-1" value="&lt;b&gt;app_main()&lt;/b&gt;&lt;br&gt;ESP-IDF 入口" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="140" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="a1-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-1" target="s1-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-2" value="&lt;b&gt;CuckooBoard::Initialize()&lt;/b&gt;&lt;br&gt;GPIO/电机/舵机/LDR/I2C 初始化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="240" y="130" width="210" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="a1-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-2" target="s1-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-3" value="&lt;b&gt;AudioCodec::Start()&lt;/b&gt;&lt;br&gt;ES7210+ES8311 初始化&lt;br&gt;I2S 双工通道" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="490" y="124" width="170" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="a1-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-3" target="s1-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-4" value="&lt;b&gt;CuckooCtrl::LoadAssets()&lt;/b&gt;&lt;br&gt;校验 assets 分区哈希" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="700" y="130" width="180" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="a1-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-4" target="s1-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-5" value="&lt;b&gt;MCP::RegisterTools()&lt;/b&gt;&lt;br&gt;注册 21 个 MCP 工具" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="920" y="130" width="180" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1-4b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#10b981;" edge="1" parent="1" source="s1-4" target="s1-5b">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="890" y="184"/><mxPoint x="890" y="200"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s1-5b" value="&lt;b&gt;CuckooCtrl::StartClockTask()&lt;/b&gt;&lt;br&gt;Core 1 启动时钟任务" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#10b981;strokeColor=#0d9488;fontSize=10;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="800" y="192" width="180" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-5" target="s1-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-6" value="&lt;b&gt;WifiBoard::Connect()&lt;/b&gt;&lt;br&gt;WiFi 扫描+连接 (≤15次重试)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="200" width="220" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1-5-reverse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-6" target="s1-6b">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="960" y="222"/><mxPoint x="960" y="222"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="s1-6b" value="&lt;b&gt;NTP 校时&lt;/b&gt;&lt;br&gt;Core 1 等待时钟同步" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="800" y="200" width="160" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-6" target="s1-7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-7" value="&lt;b&gt;MqttProtocol::Connect()&lt;/b&gt;&lt;br&gt;MQTT 连接云端服务器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="320" y="200" width="180" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a1-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s1-7" target="s1-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s1-8" value="&lt;b&gt;StateMachine::TransitionTo(idle)&lt;/b&gt;&lt;br&gt;进入待机，等待唤醒" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="200" width="200" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 2: VOICE DIALOGUE -->
+        <!-- ===================================================================== -->
+        <mxCell id="s2-hdr" value="&lt;b&gt;② 语音对话主循环 Core 0&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#e0e7ff;strokeColor=#6366f1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="270" width="1120" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2-1" value="&lt;b&gt;AFE::Detect()&lt;/b&gt;&lt;br&gt;待机 &amp; 唤醒检测&lt;br&gt;阈值 0.02 · gain 37.5dB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="310" width="170" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s2-1" target="s2-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2-1-label" value=""小鸟小鸟"" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" connectable="0" parent="a2-1">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s2-2" value="&lt;b&gt;Application::OnWakeWordDetected()&lt;/b&gt;&lt;br&gt;处理唤醒事件&lt;br&gt;设置阈值→0.30 · gain→30dB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="390" width="220" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s2-2" target="s2-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2-3" value="&lt;b&gt;Application::StartListening()&lt;/b&gt;&lt;br&gt;State→listening, 开启录音&lt;br&gt;AFE AEC + Opus 编码 → WebSocket" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="470" width="260" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s2-3" target="s2-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2-4" value="&lt;b&gt;Application::OnSttResult()&lt;/b&gt;&lt;br&gt;云端 STT → 文字 → LLM 处理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="550" width="220" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s2-4" target="s2-d1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2-d1" value="调用 MCP 工具?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="75" y="620" width="140" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-d1y" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#10b981;" edge="1" parent="1" source="s2-d1" target="s2-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2-d1y-label" value="是 → 见 ⑤" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" connectable="0" parent="a2-d1y">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="20" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="a2-d1n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#ef4444;" edge="1" parent="1" source="s2-d1" target="s2-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2-d1n-label" value="否" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" connectable="0" parent="a2-d1n">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="-5" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s2-5" value="&lt;b&gt;Application::OnTtsAudio()&lt;/b&gt;&lt;br&gt;接收 TTS 音频流&lt;br&gt;Opus 解码 → 24k→16k → I2S 播放" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="710" width="250" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s2-5" target="s2-d2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s2-d2" value="说完?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="105" y="790" width="90" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-d2n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#ef4444;" edge="1" parent="1" source="s2-d2" target="s2-5">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="20" y="815"/><mxPoint x="20" y="736"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="s2-6" value="&lt;b&gt;Application::OnTtsStop()&lt;/b&gt;&lt;br&gt;TTS 结束 → State→idle&lt;br&gt;阈值→0.02 · gain→37.5dB&lt;br&gt;WiFi→LOW_POWER" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0e7ff;strokeColor=#6366f1;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="40" y="870" width="220" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a2-6-loop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#6366f1;dashed=1;" edge="1" parent="1" source="s2-6" target="s2-1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="20" y="902"/><mxPoint x="20" y="336"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 3: MUSIC PLAYBACK  -->
+        <!-- ===================================================================== -->
+        <mxCell id="s3-hdr" value="&lt;b&gt;③ 音乐播放流程&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#ccfbf1;strokeColor=#0d9488;" vertex="1" parent="1">
+          <mxGeometry x="350" y="270" width="810" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-1" value="&lt;b&gt;CuckooCtrl::PlayUrl(params)&lt;/b&gt;&lt;br&gt;MCP 入口: cuckoo.play_url" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="310" width="220" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s3-1" target="s3-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-2" value="&lt;b&gt;CuckooCtrl::CheckMultiArtist(keyword)&lt;/b&gt;&lt;br&gt;HTTP GET /pcm → HTTP 200?&lt;br&gt;检查 Content-Length 判断 JSON/音频" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="382" width="250" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s3-2" target="s3-d1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-d1" value="多版本?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="425" y="465" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-d1y" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#10b981;" edge="1" parent="1" source="s3-d1" target="s3-3a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3-d1y-label" value="是 → 返回 JSON" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" connectable="0" parent="a3-d1y">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="-10" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s3-3a" value="&lt;b&gt;服务器: _json()&lt;/b&gt;&lt;br&gt;返回 {multi_artist, song, artists[]}&lt;br&gt;AI 朗读选项→用户选择→重调 PlayUrl(歌名+歌手)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#d97706;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="155" y="442" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a3-3a-loop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#10b981;dashed=1;" edge="1" parent="1" source="s3-3a" target="s3-1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="275" y="420"/><mxPoint x="480" y="420"/><mxPoint x="480" y="305"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="a3-d1n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#ef4444;" edge="1" parent="1" source="s3-d1" target="s3-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3-d1n-label" value="否 → 直接播" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" connectable="0" parent="a3-d1n">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="20" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s3-3" value="&lt;b&gt;CuckooCtrl::PlayOnlineMusic(keyword)&lt;/b&gt;&lt;br&gt;创建 PlayOpus 任务&lt;br&gt;HTTP GET /pcm?q=歌名+歌手 → 服务器空格跳过检测" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="370" y="542" width="280" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s3-3" target="s3-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-4" value="&lt;b&gt;CuckooCtrl::PlayOpus()&lt;/b&gt;&lt;br&gt;独立任务: 下载 PCM 流 → 环形缓冲&lt;br&gt;PushBackgroundAudio() 推入 BG ring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="370" y="626" width="280" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s3-4" target="s3-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-5" value="&lt;b&gt;CuckooCtrl::SetBackgroundAudioGain(1.0/0.5)&lt;/b&gt;&lt;br&gt;Ducking 混音: AI说话→50% · 空闲→100%&lt;br&gt;bg_audio_gain 淡入控制" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="370" y="710" width="280" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a3-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s3-5" target="s3-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-6" value="&lt;b&gt;CuckooCtrl::StopMusic()&lt;/b&gt;&lt;br&gt;播放完毕 / 用户停止 → 恢复空闲" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ccfbf1;strokeColor=#0d9488;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="370" y="794" width="240" height="44" as="geometry" />
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 4: HOURLY CHIME -->
+        <!-- ===================================================================== -->
+        <mxCell id="s4-hdr" value="&lt;b&gt;④ 整点报时 Core 1&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#f1f5f9;strokeColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="40" y="970" width="1120" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-1" value="&lt;b&gt;CuckooCtrl::ClockTask()&lt;/b&gt;&lt;br&gt;每 1 秒 Tick" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1010" width="160" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a4-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s4-1" target="s4-d1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-d1" value="整点/半点?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="245" y="1007" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="a4-d1n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#ef4444;" edge="1" parent="1" source="s4-d1" target="s4-1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="230" y="1032"/><mxPoint x="230" y="1032"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a4-d1n-label" value="否" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" connectable="0" parent="a4-d1n">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="-5" y="10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="a4-d1y" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#10b981;" edge="1" parent="1" source="s4-d1" target="s4-d2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4-d1y-label" value="是" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" connectable="0" parent="a4-d1y">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="5" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s4-d2" value="LDR &lt; 600?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#ef4444;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="375" y="1007" width="110" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="a4-d2n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#ef4444;" edge="1" parent="1" source="s4-d2" target="s4-1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="360" y="1032"/><mxPoint x="230" y="1032"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a4-d2n-label" value="太亮→静音" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" connectable="0" parent="a4-d2n">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="5" y="-15" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="a4-d2y" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#10b981;" edge="1" parent="1" source="s4-d2" target="s4-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-2" value="&lt;b&gt;CuckooCtrl::OpenDoor()&lt;/b&gt;&lt;br&gt;M2 电机 开门" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="355" y="1084" width="150" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a4-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s4-2" target="s4-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-3" value="&lt;b&gt;CuckooCtrl::PlayBell()&lt;/b&gt;&lt;br&gt;播放 0013.mp3 报时铃声" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="545" y="1084" width="180" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a4-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s4-3" target="s4-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-4" value="&lt;b&gt;CuckooCtrl::CloseDoor()&lt;/b&gt;&lt;br&gt;M2 电机 关门" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="765" y="1084" width="150" height="44" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a4-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s4-4" target="s4-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-5" value="&lt;b&gt;CuckooCtrl::StartShowTask()&lt;/b&gt;&lt;br&gt;异步启动表演任务&lt;br&gt;→ LindaShow() / GardenShow() / DogShow()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="765" y="1155" width="240" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Show details -->
+        <mxCell id="s4-5a" value="&lt;b&gt;LindaShow()&lt;/b&gt;&lt;br&gt;表演曲 3001.mp3&lt;br&gt;舞曲 0001~0012&lt;br&gt;PlayWavAsset(2001~2005)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="355" y="1155" width="175" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="a4-5a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s4-5" target="s4-5a">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="540" y="1183"/><mxPoint x="540" y="1183"/></Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="s4-5b" value="&lt;b&gt;GardenShow()&lt;/b&gt;&lt;br&gt;表演曲 4001.mp3&lt;br&gt;电机/舵机/灯光协奏" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="550" y="1155" width="175" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s4-6" value="&lt;b&gt;CuckooCtrl::SetWakeWordThreshold(0.02)&lt;/b&gt;&lt;br&gt;表演结束 → 恢复待机阈值" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1155" width="220" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 5: MCP TOOLS -->
+        <!-- ===================================================================== -->
+        <mxCell id="s5-hdr" value="&lt;b&gt;⑤ MCP 工具调用 (Core 1)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#fce7f3;strokeColor=#ec4899;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1240" width="1120" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s5-1" value="&lt;b&gt;MCP 分发&lt;/b&gt;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="400" y="1280" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Tool grid -->
+        <mxCell id="s5-t1" value="play_url" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t2" value="start_show" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="170" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t3" value="stop_music" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="280" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t4" value="dog_show" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t5" value="linda_show" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="500" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t6" value="garden_show" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="610" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t7" value="dance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="720" y="1355" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s5-t8" value="set_servo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t9" value="set_motor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="170" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t10" value="bird_jump" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="280" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t11" value="open_door" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t12" value="close_door" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="500" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t13" value="performance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="610" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t14" value="set_time" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="720" y="1395" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s5-t15" value="get_status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1435" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t16" value="set_alarm" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="170" y="1435" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t17" value="get_alarms" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="280" y="1435" width="100" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-t18" value="quiet_mode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1435" width="100" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s5-conn" value="共 21 个工具" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=9;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="550" y="1430" width="180" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- ===================================================================== -->
+        <!-- SECTION 6: STATE MACHINE -->
+        <!-- ===================================================================== -->
+        <mxCell id="s6-hdr" value="&lt;b&gt;⑥ 状态机 &amp; 阈值管理&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fillColor=#f1f5f9;strokeColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1490" width="1120" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s6-idle" value="&lt;b&gt;idle&lt;/b&gt;&lt;br&gt;待机&lt;br&gt;阈值 0.02" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1530" width="90" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a6-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s6-idle" target="s6-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6-1-label" value="唤醒" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" connectable="0" parent="a6-1">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="5" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s6-conn" value="&lt;b&gt;connecting&lt;/b&gt;&lt;br&gt;连接中&lt;br&gt;阈值 0.30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="180" y="1530" width="90" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a6-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s6-conn" target="s6-listen">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6-2-label" value="WS 建立" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" connectable="0" parent="a6-2">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="5" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s6-listen" value="&lt;b&gt;listening&lt;/b&gt;&lt;br&gt;聆听中&lt;br&gt;阈值 0.30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1530" width="90" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a6-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;" edge="1" parent="1" source="s6-listen" target="s6-speak">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a6-3-label" value="STT 完成" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" connectable="0" parent="a6-3">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="5" y="-10" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <mxCell id="s6-speak" value="&lt;b&gt;speaking&lt;/b&gt;&lt;br&gt;说话中&lt;br&gt;阈值 0.30" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="420" y="1530" width="90" height="52" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a6-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="s6-speak" target="s6-idle">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="465" y="1610"/><mxPoint x="105" y="1610"/></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a6-4-label" value="goodbye / 超时" style="edgeLabel;html=1;align=center;verticalAlign=middle;fontSize=9;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" connectable="0" parent="a6-4">
+          <mxGeometry x="-0.1" relative="1" as="geometry"><mxPoint x="-5" as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- Threshold detail -->
+        <mxCell id="s6-thresh" value="&lt;b&gt;SetWakeWordThreshold(0.02)&lt;/b&gt; → idle 时调用&lt;br&gt;&lt;b&gt;SetWakeWordThreshold(0.30)&lt;/b&gt; → connecting/speaking 时调用&lt;br&gt;&lt;b&gt;AudioCodec::SetInputGain(37.5)&lt;/b&gt; → 待机增益&lt;br&gt;&lt;b&gt;AudioCodec::SetInputGain(30.0)&lt;/b&gt; → 活跃降增益防回音" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="580" y="1525" width="320" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a6-thresh" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;dashed=1;" edge="1" parent="1" source="s6-speak" target="s6-thresh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

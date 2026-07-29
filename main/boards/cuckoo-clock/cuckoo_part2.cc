@@ -5,7 +5,7 @@ int Mp3Player::PlayOpus(const char* url) {
     }
     ESP_LOGI(TAG, "PlayOpus: launching for %s", url);
     is_playing_ = true;
-    stop_requested_ = false;  // ��� Stop() ���õı�־
+    stop_requested_ = false;  // 锟斤拷锟?Stop() 锟斤拷锟矫的憋拷志
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
     // Clear stale bg audio from previous session to prevent startup noise burst
@@ -38,9 +38,9 @@ void Mp3Player::PlayOpusTask(void* arg) {
 
     auto& app = Application::GetInstance();
 
- // ����ʹ�ñ�����Ƶ�㣬��Ducking����AI����
+ // 锟斤拷锟斤拷使锟矫憋拷锟斤拷锟斤拷频锟姐，锟斤拷Ducking锟斤拷锟斤拷AI锟斤拷锟斤拷
 
-    // ����URL
+    // 锟斤拷锟斤拷URL
     char host[128] = {};
     char path[384] = {};
     int port = 80;
@@ -68,7 +68,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     
-    // ԭʼBSD socket
+    // 原始BSD socket
     int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0) {
         ESP_LOGE(TAG, "PlayOpus: socket() failed errno=%d", errno);
@@ -84,7 +84,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
- // �ȳ��Ե��ʮ����IP���ٳ���DNS����
+ // 锟饺筹拷锟皆碉拷锟绞拷锟斤拷锟絀P锟斤拷锟劫筹拷锟斤拷DNS锟斤拷锟斤拷
     if (!inet_aton(host, &addr.sin_addr)) {
         struct addrinfo hints = {}, *res = nullptr;
         hints.ai_family = AF_INET;
@@ -102,8 +102,8 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     ESP_LOGI(TAG, "PlayOpus: connecting to %s:%d...", host, port);
     
- // ������connect+5�볬ʱ��SO_SNDTIMEO��lwip�ϲ���Ч��
- // ����������������ֹgoto serial_fallback����������ʼ��
+ // 锟斤拷锟斤拷锟斤拷connect+5锟诫超时锟斤拷SO_SNDTIMEO锟斤拷lwip锟较诧拷锟斤拷效锟斤拷
+ // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷止goto serial_fallback锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷始锟斤拷
     {
         int sock_flags = fcntl(sock, F_GETFL, 0);
         fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
@@ -129,13 +129,13 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     if (false) {  // gate for serial fallback
 serial_fallback:
- // ���ڻ���·����ͨ��goto���sock�ѹرգ�
+ // 锟斤拷锟节伙拷锟斤拷路锟斤拷锟斤拷通锟斤拷goto锟斤拷锟斤，sock锟窖关闭ｏ拷
         
  // === Serial fallback ===
         printf("\x01MUSIC_REQ\x02%s\x03\n", url);
         fflush(stdout);
         
- // ���ֹͣ��־����PlayOpus�е�Stop()���ã�����freadѭ������
+ // 锟斤拷锟酵Ｖ癸拷锟街撅拷锟斤拷锟絇layOpus锟叫碉拷Stop()锟斤拷锟矫ｏ拷锟斤拷锟斤拷fread循锟斤拷锟斤拷锟斤拷
         self->stop_requested_ = false;
         self->ducking_gain_ = 1.0f; self->ducking_start_us_ = 0;
         
@@ -150,7 +150,7 @@ serial_fallback:
             app.GetAudioService().PushPacketToDecodeQueue(std::move(packet), true);
         });
         
- // ��UART0 RX��ȡOpus���ݣ���ʼ�ӳ��ô���ת������ȡ����
+ // 锟斤拷UART0 RX锟斤拷取Opus锟斤拷锟捷ｏ拷锟斤拷始锟接筹拷锟矫达拷锟斤拷转锟斤拷锟斤拷锟斤拷取锟斤拷锟斤拷
         vTaskDelay(pdMS_TO_TICKS(3000));  // Wait 3s for serial_relay to fetch data
         
         uint8_t serial_buf[4096];
@@ -169,7 +169,7 @@ serial_fallback:
                 last_data_ms = esp_timer_get_time() / 1000;
                 total_dl += n;
                 demuxer->Process(serial_buf, n);
- // ��ֹAFE��Դ�����ر���˷�
+ // 锟斤拷止AFE锟斤拷源锟斤拷锟斤拷锟截憋拷锟斤拷朔锟?
                 uint64_t now_ms = esp_timer_get_time() / 1000;
                 if (now_ms - last_refresh_ms > 8000) {  // every 8s
  // HACK: Prevent audio watchdog timeout during long downloads
@@ -185,8 +185,8 @@ serial_fallback:
             if (stream_started && (now - last_data_ms > 5000)) break;  // 5s idle
             if (!stream_started && (now - serial_start > 15000)) break;  // 15s startup
             if (now - serial_start > 120000) break;  // 2min total
-            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // ���Ѵʴ��� stop
- // 500ms���˫�ؼ�⣬��ֹ�������ѵ��¼�ֹͣ
+            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // 锟斤拷锟窖词达拷锟斤拷 stop
+ // 500ms锟斤拷锟剿拷丶锟解，锟斤拷止锟斤拷锟斤拷锟斤拷锟窖碉拷锟铰硷拷停止
             auto serial_state = app.GetDeviceState();
             if (serial_state == kDeviceStateSpeaking) {
                 if (!ducked_serial) {
@@ -214,14 +214,14 @@ serial_fallback:
     }
     ESP_LOGI(TAG, "PlayOpus: connected to %s:%d", host, port);
     
-    // ����HTTP GET����
+    // 锟斤拷锟斤拷HTTP GET锟斤拷锟斤拷
     char req[1024];
     snprintf(req, sizeof(req),
         "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
         path, host, port);
     send(sock, req, strlen(req), 0);
     
-    // ��ȡHTTP��Ӧͷ
+    // 锟斤拷取HTTP锟斤拷应头
     char header_buf[1024] = {};
     int hdr_pos = 0;
     while (hdr_pos < 1023) {
@@ -250,7 +250,7 @@ serial_fallback:
     
     if (use_opus) {
         // ============ Opus path: OGG demux + PushPacketToDecodeQueue ============
- // ��AI����Opus����������ͬһ�����Ŷ��й���
+ // 锟斤拷AI锟斤拷锟斤拷Opus锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷同一锟斤拷锟斤拷锟脚讹拷锟叫癸拷锟斤拷
         ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
         
         auto* demuxer = new OggDemuxer();
@@ -268,7 +268,7 @@ serial_fallback:
         int64_t t0 = esp_timer_get_time(), last_refresh = t0;
         size_t total_dl = 0;
         
- // ���ֲ���ʱ����������65%������AEC�زɸ���
+ // 锟斤拷锟街诧拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷65%锟斤拷锟斤拷锟斤拷AEC锟截采革拷锟斤拷
         auto* codec = Board::GetInstance().GetAudioCodec();
         int old_vol = codec ? codec->output_volume() : 90;
         int music_vol = old_vol * 65 / 100;
@@ -286,10 +286,10 @@ serial_fallback:
             }
             total_dl += read;
 
- // Ducking: AI˵��ʱ�����������ݵ����Ƹ�������
- // ����speaking״̬ʱResetDecoder������˽������
- // �����������ݻ�ʹ������ǰ����һС�Σ�5-15���AI�ظ��м�������������
- // ��һ��3-5���ӵĸ���5-15���AI�ظ��м�������������
+ // Ducking: AI说锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟捷碉拷锟斤拷锟狡革拷锟斤拷锟斤拷锟斤拷
+ // 锟斤拷锟斤拷speaking状态时ResetDecoder锟斤拷锟斤拷锟斤拷私锟斤拷锟斤拷锟斤拷
+ // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟捷伙拷使锟斤拷锟斤拷锟斤拷前锟斤拷锟斤拷一小锟轿ｏ拷5-15锟斤拷锟紸I锟截革拷锟叫硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
+ // 锟斤拷一锟斤拷3-5锟斤拷锟接的革拷锟斤拷5-15锟斤拷锟紸I锟截革拷锟叫硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
             auto dev_state = app.GetDeviceState();
             if (dev_state == kDeviceStateConnecting) {
                 ESP_LOGI(TAG, "PlayOpus: auto-stop (wake word)");
@@ -317,11 +317,11 @@ serial_fallback:
             }
         }
         
-        // �ָ�����
+        // 锟街革拷锟斤拷锟斤拷
         if (codec) codec->SetOutputVolume(old_vol);
         ESP_LOGI(TAG, "PlayOpus: volume restored to %d", old_vol);
         
- // �ȴ���������ſ�
+ // 锟饺达拷锟斤拷锟斤拷锟斤拷锟斤拷趴锟?
         vTaskDelay(pdMS_TO_TICKS(1000));
         app.GetAudioService().WaitForPlaybackQueueEmpty();
         
@@ -340,16 +340,9 @@ serial_fallback:
     int64_t t0 = esp_timer_get_time(), last_refresh = t0;
     size_t total_dl = 0;
     bool ai_speaking = false;
+    int prev_ai_level = 0;   // 0=idle, 1=listening, 2=speaking/connecting
 
     ESP_LOGI(TAG, "PlayOpus: downloading raw PCM...");
-
-    // Push 100ms silence to absorb I2S startup transient
-    {
-        constexpr int kSilentSamples = 1600;  // 100ms @ 16kHz
-        int16_t silence[kSilentSamples] = {0};
-        app.GetAudioService().SetBackgroundAudioGain(0.1f);  // low gain for startup
-        app.GetAudioService().PushBackgroundAudio(silence, kSilentSamples, 16000);
-    }
 
  // === Pre-buffer phase: fill ring buffer before enabling drain ===
     int64_t prebuf_start = esp_timer_get_time();
@@ -357,23 +350,23 @@ serial_fallback:
         int read = recv(sock, buf, CHUNK, 0);
         if (read <= 0) break;
         total_dl += read;
-        // ԭʼs16le PCM: ÿ2�ֽ�=1������
         app.GetAudioService().PushBackgroundAudio(
             reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
 
         size_t fill = app.GetAudioService().GetBgAudioFillLevel();
         if (fill >= 64000) {
+            app.GetAudioService().SetBackgroundAudioGain(0.3f);  // activate at low volume
             app.GetAudioService().EnableBgAudioDrain(true);
-            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // fade-in 0.1→1.0 (~300ms)
+            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // fade-in via ~300ms ramp
             ESP_LOGI(TAG, "PlayOpus: drain enabled (buffered %d samples in %d ms)",
                      (int)fill, (int)((esp_timer_get_time() - prebuf_start) / 1000));
             break;
         }
         if (esp_timer_get_time() - prebuf_start > 10000000) {
- // Set gain even on timeout otherwise stays at 0.001f
             auto state = app.GetDeviceState();
             bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
             ai_speaking = ai_now;
+            prev_ai_level = ai_now ? 2 : 0;
             app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
             app.GetAudioService().EnableBgAudioDrain(true);
             ESP_LOGW(TAG, "PlayOpus: pre-buffer timeout after 10s (%d samples buffered)",
@@ -386,16 +379,28 @@ serial_fallback:
     int recv_errors = 0;
     while (self->is_playing_ && !self->stop_requested_) {
         auto state = app.GetDeviceState();
-        // Listening keeps music at 100%; duck to 50% only while AI speaks/connects
-        bool ai_now = (state == kDeviceStateSpeaking || state == kDeviceStateConnecting);
+        // 3-level ducking: idle=100%, listening=70%, speaking/connecting=50%
+        int ai_level = 0;
+        if (state == kDeviceStateSpeaking || state == kDeviceStateConnecting) {
+            ai_level = 2;
+        } else if (state == kDeviceStateListening) {
+            ai_level = 1;
+        }
+        // Track ai_speaking for WiFi throttle logic (level 2 only)
+        bool ai_now = (ai_level == 2);
         if (ai_now != ai_speaking) {
             ai_speaking = ai_now;
-            app.GetAudioService().SetBackgroundAudioGain(ai_now ? 0.5f : 1.0f);
+        }
+        if (ai_level != prev_ai_level) {
+            prev_ai_level = ai_level;
+            float gain = (ai_level == 2) ? 0.5f : (ai_level == 1) ? 0.6f : 1.0f;
+            app.GetAudioService().SetBackgroundAudioGain(gain);
             int heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
             int bg_fill = app.GetAudioService().GetBgAudioFillLevel();
             int task_hwm = uxTaskGetStackHighWaterMark(NULL);
             ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%, heap=%d sram=%d bg_buf=%d task_hwm=%d",
-                     ai_now ? "speaking" : "quiet", ai_now ? 50 : 100,
+                     ai_level == 2 ? "speaking" : (ai_level == 1 ? "listening" : "idle"),
+                     (int)(gain * 100),
                      heap_free / 1024, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                      bg_fill, task_hwm);
         }
@@ -460,8 +465,8 @@ serial_fallback:
     }
 
     if (total_dl > 0) {
-        // 直接清空，不等 ring buffer 排空
-        // 原来 while 等待排空会导致 MusicDanceTick 继续跑 ~5 秒（79K 样本 ÷ 16kHz）
+        // 鐩存帴娓呯┖锛屼笉绛?ring buffer 鎺掔┖
+        // 鍘熸潵 while 绛夊緟鎺掔┖浼氬鑷?MusicDanceTick 缁х画璺?~5 绉掞紙79K 鏍锋湰 梅 16kHz锛?
         app.GetAudioService().ClearBackgroundAudio();
     }
     close(sock);
@@ -469,10 +474,10 @@ serial_fallback:
     int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
     ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB", (int)total_ms, (int)(total_dl / 1024));
 
-    // �豸����ʱ�������Ѵʼ�⣬ȷ����˷�����ͨ�����
-    // ��ʱ�䱳����Ƶ���ź���Ƶ����·��������ֹͣ
-    // ��esp_codec_dev_read���ع���/�����ݵ���������������
-    // ���Ѵʼ����������"������"��ʵ������
+    // 锟借备锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟窖词硷拷猓凤拷锟斤拷锟剿凤拷锟斤拷锟斤拷通锟斤拷锟斤拷锟?
+    // 锟斤拷时锟戒背锟斤拷锟斤拷频锟斤拷锟脚猴拷锟斤拷频锟斤拷锟斤拷路锟斤拷锟斤拷锟斤拷锟斤拷停止
+    // 锟斤拷esp_codec_dev_read锟斤拷锟截癸拷锟斤拷/锟斤拷锟斤拷锟捷碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
+    // 锟斤拷锟窖词硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟?锟斤拷锟斤拷锟斤拷"锟斤拷实锟斤拷锟斤拷锟斤拷
     if (app.GetDeviceState() == kDeviceStateIdle) {
         ESP_LOGI(TAG, "PlayOpus: restarting wake word detection after music");
         app.GetAudioService().EnableWakeWordDetection(false);
@@ -487,9 +492,9 @@ serial_fallback:
 }
 
 /**
- * @brief ��������ringtone
- * @param volume ����ϵ�� 0.0~1.0�����忪ͷ��15%��ǿ��100%
- * ����A5(880Hz)/C#6(1100Hz)�����PCM��������ÿ��2��
+ * @brief 锟斤拷锟斤拷锟斤拷锟斤拷ringtone
+ * @param volume 锟斤拷锟斤拷系锟斤拷 0.0~1.0锟斤拷锟斤拷锟藉开头锟斤拷15%锟斤拷强锟斤拷100%
+ * 锟斤拷锟斤拷A5(880Hz)/C#6(1100Hz)锟斤拷锟斤拷锟絇CM锟斤拷锟斤拷锟斤拷锟斤拷每锟斤拷2锟斤拷
  */
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
@@ -506,7 +511,7 @@ void Mp3Player::PlayAlarmRing(float volume) {
     const int beep_off_ms = 80;
     const int cycle_ms = beep_on_ms + beep_off_ms;
 
- // ���ɲ���100ms�鲥�ţ�ÿ��֮����stop_requested_
+ // 锟斤拷锟缴诧拷锟斤拷100ms锟介播锟脚ｏ拷每锟斤拷之锟斤拷锟斤拷stop_requested_
     size_t buf_bytes = chunk_samples * sizeof(int16_t);
     int16_t* pcm = (int16_t*)malloc(buf_bytes);
     if (!pcm) {
@@ -542,11 +547,11 @@ void Mp3Player::PlayAlarmRing(float volume) {
 }
 
 /**
- * @brief ����������ѭ��
- * ��FreeRTOS��������ѯ pending_track_ / pending_bell_hour_��
- * ������ʱ����AI��������Ŷ�Ӧ��Ƶ�������ָ�AI���
+ * @brief 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷循锟斤拷
+ * 锟斤拷FreeRTOS锟斤拷锟斤拷锟斤拷锟斤拷询 pending_track_ / pending_bell_hour_锟斤拷
+ * 锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷AI锟斤拷锟斤拷锟斤拷锟斤拷哦锟接︼拷锟狡碉拷锟斤拷锟斤拷锟斤拷指锟紸I锟斤拷锟?
  */
-    // �����������
+    // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
 void Mp3Player::PlayTaskEntry(void* arg) {
     Mp3Player* self = (Mp3Player*)arg;
     while (1) {
@@ -596,10 +601,10 @@ void Mp3Player::PlayTaskEntry(void* arg) {
 
 void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
     if (folder == 1) {
-        // ����
+        // 锟斤拷锟斤拷
         PlayBell(track);
     } else if (folder == 2) {
-        // ����
+        // 锟斤拷锟斤拷
         if (track < 1) track = 1;
         if (track > 12) track = 12;
         PlayIndex(track);
@@ -614,15 +619,15 @@ void Mp3Player::PlayIndex(uint16_t index) {
         return;
     }
 
-    // ֹͣ��ǰ����
+    // 停止锟斤拷前锟斤拷锟斤拷
     Stop();
 
-    // ��� stop_requested_ ����������Ŀ
+    // 锟斤拷锟?stop_requested_ 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷目
     stop_requested_ = false;
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
     pending_track_ = index;
 
-    // ȷ�������Ѵ���
+    // 确锟斤拷锟斤拷锟斤拷锟窖达拷锟斤拷
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -641,8 +646,8 @@ void Mp3Player::PlayIndex(uint16_t index) {
 
 void Mp3Player::Stop() {
     stop_requested_ = true;
- // ��Ҫ�ڴ�����is_playing_=false �� ��PlayOpusTask�����Լ���
- // ����PlayOpus()���Կɿ��صȴ��������˳�
+ // 锟斤拷要锟节达拷锟斤拷锟斤拷is_playing_=false 锟斤拷 锟斤拷PlayOpusTask锟斤拷锟斤拷锟皆硷拷锟斤拷
+ // 锟斤拷锟斤拷PlayOpus()锟斤拷锟皆可匡拷锟截等达拷锟斤拷锟斤拷锟斤拷锟剿筹拷
     pending_track_ = 0;
     pending_bell_hour_ = 0;
 
@@ -650,7 +655,7 @@ void Mp3Player::Stop() {
         esp_mp3_dec_reset(mp3_dec_handle_);
     }
     
- // ������Ƶ���У��þ������WaitForPlaybackQueueEmpty()���ٷ���
+ // 锟斤拷锟斤拷锟斤拷频锟斤拷锟叫ｏ拷锟矫撅拷锟斤拷锟斤拷锟絎aitForPlaybackQueueEmpty()锟斤拷锟劫凤拷锟斤拷
     Application::GetInstance().GetAudioService().ResetDecoder();
 }
 
@@ -686,13 +691,13 @@ void Mp3Player::PlayBell(int hour) {
 
     if (!assets_) return;
 
-    // ֹͣ��ǰ����
+    // 停止锟斤拷前锟斤拷锟斤拷
     Stop();
 
-    // 设置����重复次数
+    // 璁剧疆锟斤拷锟斤拷閲嶅娆℃暟
     pending_bell_hour_ = hour;
 
-    // ȷ�������Ѵ���
+    // 确锟斤拷锟斤拷锟斤拷锟窖达拷锟斤拷
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -732,7 +737,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
- // ������䣺MP3����PCM����Լ2.75����4���ǳ���ȫ
+ // 锟斤拷锟斤拷锟斤拷洌篗P3锟筋坏锟斤拷锟絇CM锟斤拷锟斤拷约2.75锟斤拷锟斤拷4锟斤拷锟角筹拷锟斤拷全
     size_t max_samples = mp3_size * 4;
     if (max_samples < 8192) max_samples = 8192;
     if (max_samples > 2 * 1024 * 1024) max_samples = 2 * 1024 * 1024;  // cap at 2M samples (4MB)
@@ -742,7 +747,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
-    // �򿪽�����
+    // 锟津开斤拷锟斤拷锟斤拷
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -754,7 +759,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
-    // ���� ID3v2 ��ǩ
+    // 锟斤拷锟斤拷 ID3v2 锟斤拷签
     uint8_t* mp3_start = (uint8_t*)mp3_data;
     size_t mp3_data_size = mp3_size;
     if (mp3_size > 10 && memcmp(mp3_start, "ID3", 3) == 0) {
@@ -773,7 +778,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
     size_t remaining = mp3_data_size;
     size_t written = 0;
 
- // ���ν���ɨ��
+ // 锟斤拷锟轿斤拷锟斤拷扫锟斤拷
     while (remaining > 0 && written < max_samples) {
         size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
         memcpy(input_buf_, input_ptr, in_len);
@@ -825,7 +830,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         }
     }
 
-    // �رս�����
+    // 锟截闭斤拷锟斤拷锟斤拷
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -845,7 +850,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
 }
 
 // ============================================
-// LDR �������贫���� (ADC oneshotģʽ)
+// LDR 锟斤拷锟斤拷锟斤拷锟借传锟斤拷锟斤拷 (ADC oneshot模式)
 // ============================================
 LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold)
     : adc_pin_(adc_pin), adc_handle_(nullptr), adc_chan_(chan), threshold_(threshold) {
@@ -880,22 +885,22 @@ int LdrSensor::ReadRaw() {
     if (adc_handle_) {
         adc_oneshot_read(adc_handle_, adc_chan_, &raw);
     }
-    return raw;  // 0-4095 (12-bit), ��=��ֵ, ��=��ֵ
+    return raw;  // 0-4095 (12-bit), 锟斤拷=锟斤拷值, 锟斤拷=锟斤拷值
 }
 
 /**
- * @brief �жϵ�ǰ�Ƿ�Ϊ�ڰ������������������������ֵ��
- * @return true=�ڰ�, false=����
+ * @brief 锟叫断碉拷前锟角凤拷为锟节帮拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街碉拷锟?
+ * @return true=锟节帮拷, false=锟斤拷锟斤拷
  */
 bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
 void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
 
 
 // ============================================
-// BellSoundPlayer - �����������������ͨ��AI��Ƶϵͳ�����
+// BellSoundPlayer - 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟酵拷锟紸I锟斤拷频系统锟斤拷锟斤拷锟?
 // ============================================
 void BellSoundPlayer::PlayCuckooSoundSync() {
-    // ����Ҫ SetOutputMuted��Ҳ����Ҫ vTaskDelay
+    // 锟斤拷锟斤拷要 SetOutputMuted锟斤拷也锟斤拷锟斤拷要 vTaskDelay
     auto& app = Application::GetInstance();
     if (app.GetAudioService().IsBgAudioActive()) {
         // Music playing: mix cuckoo sound into bg audio (no interruption)
@@ -914,7 +919,7 @@ void BellSoundPlayer::PlayCuckooSoundSync() {
 }
 
 void BellSoundPlayer::PlayBellSoundSync() {
-    // ֱ��д I2S ����ֱ�����꣬ʹ�� data_if_mutex_ �� AudioOutputTask ����
+    // 直锟斤拷写 I2S 锟斤拷锟斤拷直锟斤拷锟斤拷锟疥，使锟斤拷 data_if_mutex_ 锟斤拷 AudioOutputTask 锟斤拷锟斤拷
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_bell_sound,
@@ -932,7 +937,7 @@ void BellSoundPlayer::PlayCuckooSoundAsync() {
 }
 
 // ============================================
-// CuckooStateMachine - ��������״̬��
+// CuckooStateMachine - 锟斤拷锟斤拷锟斤拷锟斤拷状态锟斤拷
 // ============================================
 CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
                                         Motor* violin_motor, Servo* violin, Servo* dog,
@@ -940,7 +945,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
                                         BellSoundPlayer* bell_player,
                                         LdrSensor* ldr)
     : m1_(m1), m2_(m2), m3_(m3), m4_(m4),
-      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // С���ٵ�� (��B M2, GPIO18/45)
+      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // 小锟斤拷锟劫碉拷锟?(锟斤拷B M2, GPIO18/45)
       water_bird_(water_bird),
       mp3_(mp3), bell_player_(bell_player), ldr_(ldr),
       motor_power_pin_(GPIO_NUM_NC),
@@ -952,7 +957,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
       is_dark_(false) {
     last_idle_exit_us_ = 0;
     prev_device_state_ = -1;
-    // �����Դ P-MOSFET ���� (GPIO LOW=ON, HIGH=OFF)
+    // 锟斤拷锟斤拷锟皆?P-MOSFET 锟斤拷锟斤拷 (GPIO LOW=ON, HIGH=OFF)
     motor_power_pin_ = (gpio_num_t)POWER_MOTOR_GPIO;
     gpio_config_t motor_pwr_cfg = {
         .pin_bit_mask = (1ULL << motor_power_pin_),
@@ -971,6 +976,6 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
     gpio_config(&led_cfg);
     gpio_set_level(LED_A_GPIO, 0);
     gpio_set_level(LED_B_GPIO, 0);
-    MotorPowerOff();  // Ĭ�϶ϵ磬100K �������� 5V
+    MotorPowerOff();  // 默锟较断电，100K 锟斤拷锟斤拷锟斤拷锟斤拷 5V
   }
 

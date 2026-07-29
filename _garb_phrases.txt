@@ -1,0 +1,206 @@
+* @brief ʱݣ//ֶ
+//    24LEDȫ赸ֱֽ
+//    ǰ24룺LED˸ + 赸
+//  2 ַ
+//  AI ˵ TTS ͬʱУPlayOpus Զ duck  30%
+//  AI ˵/ȴ
+//  AI ˵ݺͬʱУֵӿ
+//  AI ղŶзֹ Opus
+//  AIݺͬʱ
+//  NVS ѱ;ģʽ
+//  URL еĿոΪ %20
+//  WiFi  NTP gettimeofday ɻȡǰʱ
+//  assets ȡ dog_bark.wav (16kHz mono s16)
+//  drain ݣֹ ring buffer
+//  stop_all+play_url طŴ
+// - /㱨ʱ
+// - Core 1󲿷ʱʡ
+// - DogShow: СݣšܳСҡͷ˻ءţ
+// - GardenShow: ԰Lindaݣ0016 + Сٶ + LED˸
+// - LindaShow: մ赸ݣ0015 + 赸 + LED˸
+// - NTPʱͬ60s/300sУ׼
+// - RTC־ÿ30s浽ڴ棩
+// - Ƶʱˢ£ÿ10sֹI2SԴرգ
+// - ʱNTPͬtick_sec
+// - Ѵֵ̬Ի0.3ֹ󴥷idleʱ0.02
+// - Ӽ
+// - ע OnDeviceStateChanged ص idle/active ת
+// - 豸״̬أidle?ԶţAI˵ʱСԾ
+// /pcm 本身就能返回JSON或PCM，无需改路径
+// /㱨ʱ  Show AI
+// 1. LEDһʾݼʼ
+// 3. LED˸ + Сٶֱֽ
+// 3. LED˸ + 赸תֽ
+// 5. ֽ  Сƽ  Ÿл  LEDϨ
+// 5. ֽ  赸ͣ  Ÿл  LEDϨ
+// 50-200msģȻԾ
+// 50ms ֡ʿ
+// : ÿ50ms֡ƶ9, 0~140Ұڶ
+// ===  AI ˵ݺͬʱ ===
+// === 3ʼ ===
+// === ÿ（sub_tick % 4 == 0）===
+// === ɫ ===
+// === ͬʱ AIֵӿȻ ===
+// === 大门+小狗：只有大门关着才执行 ===
+// ====== 㱨ʱ+С+һ ======
+// ====== 㱨ʱ򻯰棨ްװֻƵ̣======
+// AI æʱ򱳾Ƶвʱ
+// AI˵ʱС滰Ծģʽ
+// AI˵ʱС滰Ծڱޱʱ
+// AI󴥷豸մidle5 performanceAIڻʱԶcuckoo.performance
+// ASCIIֱӸ
+// CuckooTools MCPע
+// DogShow()  MCP ڣز
+// LED ˸ÿ6֡ ~300ms
+// LED˸ǰ24룬ÿ6֡лһ = Լ300ms
+// M1 赸: ת/ת棨1~3룬>3
+// M1赸: ת1-3  ͣ20ms  ת1-3  ͣ20ms  ѭ8
+// MCP ڣءʵʱںִ̨С
+// Mid-music transition: kids became active → bring dog out
+// Mid-music transition: kids became resting → stop & put dog away
+// NTPͬʱϵͳʱ䣬ʱƯ
+// NTPͬδͬʱÿ60ԣͬÿ300У׼һ
+// NTPδͬMCPʱ䣩˵ʱӵ
+// NVS ӳ־û
+// OutputRawPcm ģŷ
+// Phase 1: Ŵ  С+  Źر
+// Phase 3: ָAIƵ
+// Schedule صŲ϶ӣTTS-STOP ״̬ת޷ִУ
+// Start immediately — ShowTask now uses PlayShowMusicBg (bg audio ring buffer)
+// TODO(#22): 1ѯΪ¼:
+// URLhttpͷֱʹ
+// User explicitly asked for kids — force create dog_intro regardless of stale state flags.
+// WiFiʡCuckooBoard::SetPowerSaveLevelش
+// idleʱ˷棨37.5dBװλ
+// idleʱֵָ0.02ڼ/Ÿڼ䲻
+// mode==1 ȫ챨ʱreturn
+// set_music_proxy 是空操作占位工具，永远瞬间成功，不做TCP连接检查。
+// so audio service mixes music with TTS via ducking — no I2S conflict.
+// ôַƴ
+// ÿ30뱣־RTCڴ棨RTCڿŹλԱ
+// ÿ60+ջˮλڱ
+// ģʽ NVS 洢
+// ģʽж
+// Ĭִַ config.h ʱ̶
+// ƵԴ/ 15 ر I2S »ʧЧ
+// ƵԾȣ300ms  = ˵
+// ƽСת
+// ȡҹģʽ
+// ȡԭ + RTC
+// ȴ300-700ms̫
+// ȷ豸ص idle ٻָ
+// ȾPlayOpusTask˳is_playing_false
+// ɫݣ MCP ߵʵ֣
+// ʱˢƵʱֹڼI2SŹʱ
+// ʱͨ NTP  MCP ãڲʱ
+// ʵʱ DogShowTask() ִУ Core 1 ̨
+// ʽѴʼ⣨ɰ汾 EnableVoiceProcessing ܲ߼
+// ˵50-200ms
+// ˵ʱ
+// ִ̨бݣ̶ Core 1ӿغģ
+// ֹͣǰԼ2루24ʱLEDȫֹͣ˸
+// Ͱ
+// ͳЧʱ
+// Сǰ  ͣ  Уͱͬʱ
+// С˻
+// Сѭÿ֡ 9 ƽڶ
+// Сҡβ
+// СӵǰǶȹλ180㣨䣩
+// Сٶ: 90018090 ѭڶ
+// лֻţ0~4ѭ
+// ѡ?
+// ѭȴ AbortSpeaking/TTS-STOP
+// ѹ PCM ص Mp3PlayerDecodeSingleFile ѭԶ
+// һԽ뵽PSRAMOutputRawPcmظţMP3򿪵Ķ
+// һٹ
+// ӿ FreeRTOS  (Core 1)
+// ԰ŵ Core 1 ̨
+// Իлָ׼˷棨30dB AEC Ŵ
+// Ի߻Ѵֵ0.3ֹ󴥷ڼ䲻裬ShowԼƣ
+// ձƵbufferֹǰ׻
+// ո HTTP request line Ƿָ
+// ռãֹظ
+// ְ:
+// ֱ AbortSpeaking TTS Ȼ
+// ֱӲŹУ PlayWavAsset
+// ֱӻָᵼ»Ѵ listening ״̬ AbortSpeaking  audio_input
+// ֲʱLOW_POWER
+// ָ AI
+// ָѴʼ⣨ EnableVoiceProcessing   ResetDecoder  TTS
+// ָѴֵ豸idleӿزת
+// ֻ idle ״̬Żָ listening ״̬󴥷Ѵ
+// ֽһֱŹرպ ShowTask ĩβϨ
+// ָֽѴʺ
+// עNTPͬʱÿtick_sec%86400У׼
+// ע⣺StartShow  AbortSpeaking ״̬ listening idle
+// ز 2205016000
+// ٶȲԣ赸תָ
+// ڲţͣɸٷ¸
+// ڼֹΪѴʻ AI
+// ڽǶȲ279/s
+// ڽǶȲ279/s40s31Ȧʵ⣩ֻ360ڵĲ
+// 㱨ʱ
+// 㱨ʱÿ == 0 ʱ NeedHourlyChime ظ
+// 㱨ʱÿ == 30 ʱ NeedHalfHourlyChime ظ
+// 先检查多版本：如果服务器返回歌手列表JSON，直接返回给AI念（不播歌）
+// 反转<正转时，补偿×1.3
+// 壩ͣٿʼ
+// 幦  ֧5ӣNVS־û
+// 第0步：统一路径格式，把 /opus 或 /stream 都转成 /pcm
+// 第2步：构造完整URL，直接用原始路径不转换
+// 第3步：没有 Content-Length = 流式传输 = 音频（不是JSON），跳过
+// 第4步：读第一个字节 —— JSON 以 { 开头，音频是二进制乱码
+// 第5步：读完整个 JSON 响应体
+// 第6步：确认包含 multi_artist 字段后，返回JSON给AI
+// 等待音乐开始播放（bg audio 缓冲就绪）
+// 豸idleûAI¼ʱڷ󴥷
+// 赸+С̿ʼͿ/СУ
+// 赸1~3룬Ȼ
+// 赸У㱨ʱ PerformanceTask + ۺϱ ShowTask ã
+// 这个工具只是为了满足 AI 在调用 play_url 之前先调 set_music_proxy 的习惯。
+// 音乐代理在启动时自动配置（config.h 里的 DEFAULT_MUSIC_PROXY_HOST/PORT）。
+// 飨ÿһΣ
+// 첽+С赸ѭ
+// 첽+С赸ѭ ShowTask һ£
+// 첽ţ赸/ֲУ
+// 첽ƽ+Ͷͬ
+// 첽ִУMCP ߵѭ߳ϣapp.Schedule
+MotorPowerOn();  // ȷԴȶ
+app.GetAudioService().SetOutputMuted(false);  // ָAIƵ
+call_count_ = 3;           // 㱨ʱ3ν
+case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;  // Сٵ (B M2, GPIO18/45)
+go_fwd = (net < 0);  // net为负=反转太多，补正转
+go_fwd = (net >= 0);  // net为正=正转太多，补反转绕一圈
+gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // ϵ磬С
+gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);  // ͨ磬С񵯳
+if ((now_us - last_idle_exit_us_) < 5000000) {  // 5봰
+if (is_running_) return;  // бУܾ
+if (is_running_) return;  // бУܾظ
+if (m1_) m1_->Forward(100);  // GPIOֱȫѹ
+if (m1_) m1_->Stop();  // ͣ赸
+if (m3_) m3_->Stop();  // С
+if (mp3_) mp3_->SetDisableDucking(false);  // ָ duck
+if (sm->mp3_) sm->mp3_->SetDisableDucking(false);  // ָ duck
+if (sm->mp3_) sm->mp3_->SetDisableDucking(true);  // ֲ
+if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ IN1=HIGH
+if (tv.tv_sec > 1000000000) {  // 2001Ժ˵ NTP ͬ
+if (violin_motor_) violin_motor_->Stop();  // С
+if (water_bird_) water_bird_->Stop();  // ͣˮͷGPIO39ͻ
+int cooldown = 300 + (esp_random() % 401);  // 300-700msȴʱ
+long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // 旋转角度：+正转,-反转
+m1_fwd_time_ = 0;  // תۼʱ
+m1_rev_time_ = 0;  // תۼʱ
+return multi;  // 歌手列表JSON返回给AI，AI自动念出来让用户选
+return;  // ȫ쾲
+return;  // ҹ: 22~6
+return;  // ھ
+sm->BirdJumpPulse();  // 壨ͬʱڲ
+sm->CloseBirdDoor();  // Źر
+sm->OpenBirdDoor();  // Ŵ
+total_calls_ = hour;       // ¼ܱʱ㣩
+vTaskDelay(pdMS_TO_TICKS(10));  // ý
+vTaskDelay(pdMS_TO_TICKS(1800));  // Ƚ(~1.76s)
+vTaskDelay(pdMS_TO_TICKS(200));  // ״̬ص idle
+vTaskDelete(nullptr);  // ɺɾ
+violin_servo_->Sweep(violin_angle, SERVO_CENTER_ANGLE, 1000);  // ӵǰǶƽص90
+volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% ǿ 100% (ǰ10)

@@ -1,0 +1,390 @@
+cuckoo_part1.cc:2: // ӿ (Cuckoo Controller)
+cuckoo_part1.cc:4: // ܸ
+cuckoo_part1.cc:5: // - 4·ֱ + 1·񶯵 + ˮ
+cuckoo_part1.cc:6: // - ƣСٶСβͶ
+cuckoo_part1.cc:7: // - LED ˸· LED /
+cuckoo_part1.cc:8: // - Ƶţ MP3/Opus/PCM 룬HTTP أDucking ܻ
+cuckoo_part1.cc:9: // - /㱨ʱſ + СԾ + Ƚ + ֣
+cuckoo_part1.cc:10: // - ۺϱݣ赸 + С + С + ˮ +  + LED
+cuckoo_part1.cc:11: // - ɫ MCP ߣDogShowСLindaShowմGardenShow԰ӣ
+cuckoo_part1.cc:12: // - 幦ܣNVS ־û5֧ÿظ
+cuckoo_part1.cc:13: // - ҹģʽ22:00-6:00
+cuckoo_part1.cc:14: // - ֲţQQִOpus/PCM ʽأ
+cuckoo_part1.cc:15: // - MCP עᣨ21ߣͨ MCP Э鹩 AI ģ͵ã
+cuckoo_part1.cc:17: // мܹ
+cuckoo_part1.cc:18: // - Core 0: ѴʡTTSOpus룩
+cuckoo_part1.cc:19: // - Core 1: ӿcuckoo_clock_task250ms tickʱͱʱ
+cuckoo_part1.cc:20: // - /ʱͨ xTaskCreatePinnedToCore  Core 1 ִ
+cuckoo_part1.cc:51: // RTC ڴ棺/λ״̬´οԶʱ
+cuckoo_part1.cc:53:     uint32_t magic;        // ħ 0xCAFEBABE ʾЧ
+cuckoo_part1.cc:54:     uint32_t tick_sec;     // ǰ
+cuckoo_part1.cc:55:     uint8_t  dev_state;    // 豸״̬
+cuckoo_part1.cc:56:     uint8_t  music_active; // Ƿڲ
+cuckoo_part1.cc:57:     uint32_t free_heap;    // ʣڴ
+cuckoo_part1.cc:61: //  /stream  /opus ʽURLתΪ /pcm ʽESP32Ƶʹ
+cuckoo_part1.cc:63:     // 滻ַ
+cuckoo_part1.cc:70:         // "/stream" = 7ַ, "/pcm" = 4ַ,  "?..."  pos+7
+cuckoo_part1.cc:80:         // "/opus" = 6ַ, "/pcm" = 4ַ,  "?..."  pos+5
+cuckoo_part1.cc:87:     // ҲǰбܵAIʱ "stream?q= "  "opus?q= "
+cuckoo_part1.cc:90:         // "stream" = 6ַ, "pcm" = 3ַ,  "?..."  pos+6
+cuckoo_part1.cc:99:         // "opus" = 4ַ, "pcm" = 3ַ,  "?..."  pos+4
+cuckoo_part1.cc:110: // LEDC PWM ͨ
+cuckoo_part1.cc:112: // TB6612 : 4· PWM ͨ (Ƶ ~10-100KHz)
+cuckoo_part1.cc:113: // : 2· PWM ͨ (Ƶ 50Hz)
+cuckoo_part1.cc:114: // ŵ L9110S: 1· PWM ͨ (Ƶ ~1-10KHz)
+cuckoo_part1.cc:115: // 7·ͨ
+cuckoo_part1.cc:121: // GPIOʼ֧GPIOֱPWM˫ģʽ
+cuckoo_part1.cc:128: // GPIOģʽ캯ֱPWM
+cuckoo_part1.cc:131: // PWMģʽ캯С (timer0, 1kHz/10-bit, dog-testһ)
+cuckoo_part1.cc:146: // PWMģʽ캯Զ嶨ʱŵtimerָ
+cuckoo_part1.cc:189:     // ʱȫֻʼһΣ50Hz, 14-bitֱʣ
+cuckoo_part1.cc:249: // С + ˮ (DRV8833  IN1/IN2)
+cuckoo_part1.cc:251: // ˮת: water_bird_->SetSpeed(WATER_WHEEL_SPEED)  IN1
+cuckoo_part1.cc:252: // ˮת: water_bird_->SetSpeed(-100)  IN2
+cuckoo_part1.cc:255: // MP3 (첽)
+cuckoo_part1.cc:257: // Mp3Player - 벥첽棩
+cuckoo_part1.cc:258: // ֧: DecodeSingleFile(MP3) / PlayUrl(HTTPMP3) / PlayPcm(ԭʼPCM) / PlayOpus(OGG/Opus)
+cuckoo_part1.cc:259: // Ducking: AI˵ʱԶ100%20%Ϊ˵𽥻ָ100%
+cuckoo_part1.cc:260: // л: LoadDogBarkPCMصڽѭе
+cuckoo_part1.cc:268:     // 5˳recvرsocket
+cuckoo_part1.cc:270:         vTaskDelay(pdMS_TO_TICKS(50));  // ܹ5
+cuckoo_part1.cc:288: // ܣDucking  Ƶ·
+cuckoo_part1.cc:290: // ܣDucking  Ƶ·
+cuckoo_part1.cc:357:     //  assets ȡ MP3 ļ
+cuckoo_part1.cc:372:     //  ID3v2 ǩMP3 ļ "ID3" ͷʱǰ10ֽں sync-safe int Ǳǩȣ
+cuckoo_part1.cc:379:         if (skip < mp3_size - 1024) {  // ȷ㹻
+cuckoo_part1.cc:386:     // رս
+cuckoo_part1.cc:398:         // Ϣ
+cuckoo_part1.cc:404:         // ѭ
+cuckoo_part1.cc:411:         // ׼֡
+cuckoo_part1.cc:421:         // ׼֡
+cuckoo_part1.cc:432:             // ״λȡϢ  esp_mp3_dec_decode ͨ dec_info
+cuckoo_part1.cc:441:             // н PCM ݣƸͨ
+cuckoo_part1.cc:455:                     // ģʽܣȫ
+cuckoo_part1.cc:458:                     // ʼ
+cuckoo_part1.cc:473:                      // AIڽڼֹͣ  ָ
+cuckoo_part1.cc:484:                     // 400msָ100%
+cuckoo_part1.cc:493:                      // AIڻָڼֿʼ˵  ½
+cuckoo_part1.cc:508:                 // йݴȥ
+cuckoo_part1.cc:529:             // ȴɣOutputRawPcm
+cuckoo_part1.cc:535:             // ƶָ
+cuckoo_part1.cc:541:         consecutive_errors = 0;  // ɹô
+cuckoo_part1.cc:552:         // ǰ֡
+cuckoo_part1.cc:566:     // رս
+cuckoo_part1.cc:572:     // ָСǵ Opus Ǳ϶ָ
+cuckoo_part1.cc:584:     //   3.  JSON Ӧ (ȡ url ֶκ)
+cuckoo_part1.cc:592:     // ̨
+cuckoo_part1.cc:610:     // ϸ MPEG ֡ͷУ鲻 FF Ex У bitrate/samplerate/layer
+cuckoo_part1.cc:635:     // HTTP ͻ
+cuckoo_part1.cc:672:     // 壺Content-Length֪Σ߽֡λᣩ
+cuckoo_part1.cc:675:         batch_size = content_length; // ȫһ
+cuckoo_part1.cc:681:         // PSRAMʧܡ˵256KB
+cuckoo_part1.cc:696:     // ز + תã
+cuckoo_part1.cc:699:  // =1152, ز=24000/8000=3.0, =3456
+cuckoo_part1.cc:700:  // 4096ȫϲ
+cuckoo_part1.cc:715:     // һ + ԤID3ǩ +
+cuckoo_part1.cc:729:     // ----  ID3v2 ǩ ----
+cuckoo_part1.cc:735:         if (mp3_start > batch_len - 1024) mp3_start = 0; // ǩ̫/ݲ㣬ͷʼ
+cuckoo_part1.cc:739:     // ---- ԭʼɨ MPEG ֡ͷȡ ----
+cuckoo_part1.cc:744:             if (lay != 1) continue; // ֻҪ Layer 3
+cuckoo_part1.cc:754:     // ---- ѭʽ----
+cuckoo_part1.cc:800:  //  + ز24000Hz
+cuckoo_part1.cc:801:  // OutputRawPcmڲزᵼң
+cuckoo_part1.cc:808:  // 2ԲֵزkOutRate
+cuckoo_part1.cc:820:  // ӦDucking
+cuckoo_part1.cc:834:  // ԻӦDucking
+cuckoo_part1.cc:846:         // ýص frame_size  raw.consumed ȷ߽֡羫ȷ
+cuckoo_part1.cc:848:                 if (c == 0) c = raw.consumed;  // ˻
+cuckoo_part1.cc:854:                     // ʼ֡ͷһ MPEG ֹͬ֡ѭ
+cuckoo_part1.cc:858:                     else { rem = 0; break; }  // δҵͬ֡ͷcarryʣ
+cuckoo_part1.cc:866:                     // ʧδѡϸһ MPEG ֡ͷ
+cuckoo_part1.cc:877:         // ----- ĩβδֽڣƴӵͷ -----
+cuckoo_part1.cc:885:         // ----- һ -----
+cuckoo_part1.cc:898:         // carry=0ҷ֡ͷɨmetadata/֡ݵһϸ֡ͷ
+cuckoo_part1.cc:906:                 rem = 0; // Ч֡ͷ
+cuckoo_part1.cc:929: // PlayPcm: HTTPԭʼPCM  PushRawPcmToPlaybackԭŹߣ֡⣩
+cuckoo_part1.cc:1001:  // ֿPCM벥Ŷ
+cuckoo_part1.cc:1002:     const size_t CHUNK = sizeof(self->output_buf_);  // С
+cuckoo_part1.cc:1011:         size_t samples = read / 2;  // 16λ
+cuckoo_part1.cc:1033:  // ԻӦDucking
+cuckoo_part1.cc:1044:  // ÿԼ4ƵóCPUֹWiFi
+cuckoo_part2.cc:9:     stop_requested_ = false;  //  Stop() õı־
+cuckoo_part2.cc:42:  // ʹñƵ㣬DuckingAI
+cuckoo_part2.cc:72:     // ԭʼBSD socket
+cuckoo_part2.cc:88:  // ȳԵʮIPٳDNS
+cuckoo_part2.cc:106:  // connect+5볬ʱSO_SNDTIMEOlwipϲЧ
+cuckoo_part2.cc:107:  // ֹgoto serial_fallbackʼ
+cuckoo_part2.cc:133:  // ڻ·ͨgotosockѹرգ
+cuckoo_part2.cc:139:  // ֹͣ־PlayOpusеStop()ãfreadѭ
+cuckoo_part2.cc:154:  // UART0 RXȡOpusݣʼӳôתȡ
+cuckoo_part2.cc:173:  // ֹAFEԴر˷
+cuckoo_part2.cc:189:             if (app.GetDeviceState() == kDeviceStateConnecting) break;  // Ѵʴ stop
+cuckoo_part2.cc:190:  // 500ms˫ؼ⣬ֹѵ¼ֹͣ
+cuckoo_part2.cc:225:     // ȡHTTPӦͷ
+cuckoo_part2.cc:254:  // AIOpusͬһŶй
+cuckoo_part2.cc:272:  // ֲʱ65%AECزɸ
+cuckoo_part2.cc:290:  // Ducking: AI˵ʱݵƸ
+cuckoo_part2.cc:291:  // speaking״̬ʱResetDecoder˽
+cuckoo_part2.cc:292:  // ݻʹǰһСΣ5-15AIظм
+cuckoo_part2.cc:293:  // һ3-5ӵĸ5-15AIظм
+cuckoo_part2.cc:321:         // ָ
+cuckoo_part2.cc:325:  // ȴſ
+cuckoo_part2.cc:354:         // ԭʼs16le PCM: ÿ2ֽ=1
+cuckoo_part2.cc:463:         // 直接清空，不等 ring buffer 排空
+cuckoo_part2.cc:464:         // 原来 while 等待排空会导致 MusicDanceTick 继续跑 ~5 秒（79K 样本 ÷ 16kHz）
+cuckoo_part2.cc:472:     // 豸ʱѴʼ⣬ȷ˷ͨ
+cuckoo_part2.cc:473:     // ʱ䱳ƵźƵ·ֹͣ
+cuckoo_part2.cc:474:     // esp_codec_dev_readع/ݵ
+cuckoo_part2.cc:475:     // Ѵʼ""ʵ
+cuckoo_part2.cc:509:  // ɲ100ms鲥ţÿ֮stop_requested_
+cuckoo_part2.cc:617:     // ֹͣǰ
+cuckoo_part2.cc:620:     //  stop_requested_ Ŀ
+cuckoo_part2.cc:625:     // ȷѴ
+cuckoo_part2.cc:644:  // Ҫڴis_playing_=false  PlayOpusTaskԼ
+cuckoo_part2.cc:645:  // PlayOpus()Կɿصȴ˳
+cuckoo_part2.cc:653:  // ƵУþWaitForPlaybackQueueEmpty()ٷ
+cuckoo_part2.cc:689:     // ֹͣǰ
+cuckoo_part2.cc:695:     // ȷѴ
+cuckoo_part2.cc:735:  // 䣺MP3PCMԼ2.754ǳȫ
+cuckoo_part2.cc:745:     // 򿪽
+cuckoo_part2.cc:757:     //  ID3v2 ǩ
+cuckoo_part2.cc:776:  // νɨ
+cuckoo_part2.cc:828:     // رս
+cuckoo_part2.cc:848: // LDR 贫 (ADC oneshotģʽ)
+cuckoo_part2.cc:883:     return raw;  // 0-4095 (12-bit), =ֵ, =ֵ
+cuckoo_part2.cc:895: // BellSoundPlayer - ͨAIƵϵͳ
+cuckoo_part2.cc:898:     // Ҫ SetOutputMutedҲҪ vTaskDelay
+cuckoo_part2.cc:917:     // ֱд I2S ֱ꣬ʹ data_if_mutex_  AudioOutputTask
+cuckoo_part2.cc:935: // CuckooStateMachine - ״̬
+cuckoo_part2.cc:943:       violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // Сٵ (B M2, GPIO18/45)
+cuckoo_part2.cc:955:     // Դ P-MOSFET  (GPIO LOW=ON, HIGH=OFF)
+cuckoo_part2.cc:974:     MotorPowerOff();  // Ĭ϶ϵ磬100K  5V
+cuckoo_part3.cc:19: // 赸У㱨ʱ PerformanceTask + ۺϱ ShowTask ã
+cuckoo_part3.cc:22: // 赸У㱨ʱ PerformanceTask + ۺϱ ShowTask ã
+cuckoo_part3.cc:45:     //  assets ȡ dog_bark.wav (16kHz mono s16)
+cuckoo_part3.cc:69:     // ѹ PCM ص Mp3PlayerDecodeSingleFile ѭԶ
+cuckoo_part3.cc:89:     // ѹ PCM ص Mp3PlayerDecodeSingleFile ѭԶ
+cuckoo_part3.cc:94:     // 첽ţ赸/ֲУ
+cuckoo_part3.cc:98:     // Сǰ  ͣ  Уͱͬʱ
+cuckoo_part3.cc:105:     // Сǰ  ͣ  Уͱͬʱ
+cuckoo_part3.cc:137:         // M1 赸: ת/ת棨1~3룬>3
+cuckoo_part3.cc:171:         // Сѭÿ֡ 9 ƽڶ
+cuckoo_part3.cc:197:         // Сҡβ
+cuckoo_part3.cc:216:         // LED ˸ÿ6֡ ~300ms
+cuckoo_part3.cc:225:         // 50ms ֡ʿ
+cuckoo_part3.cc:235:     // ֽһֱŹرպ ShowTask ĩβϨ
+cuckoo_part3.cc:239:     // ڽǶȲ279/s40s31Ȧʵ⣩ֻ360ڵĲ
+cuckoo_part3.cc:241:         long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // 旋转角度：+正转,-反转
+cuckoo_part3.cc:246:             go_fwd = (net < 0);  // net为负=反转太多，补正转
+cuckoo_part3.cc:249:             go_fwd = (net >= 0);  // net为正=正转太多，补反转绕一圈
+cuckoo_part3.cc:251:         // 反转<正转时，补偿×1.3
+cuckoo_part3.cc:263:     // ƽСת
+cuckoo_part3.cc:276:     // С˻
+cuckoo_part3.cc:282:     // СӵǰǶȹλ180㣨䣩
+cuckoo_part3.cc:298: // NVS ӳ־û
+cuckoo_part3.cc:339:     // ͳЧʱ
+cuckoo_part3.cc:350:  * @brief ʱݣ//ֶ
+cuckoo_part3.cc:362:     // AI󴥷豸մidle5 performanceAIڻʱԶcuckoo.performance
+cuckoo_part3.cc:365:         if ((now_us - last_idle_exit_us_) < 5000000) {  // 5봰
+cuckoo_part3.cc:371:     //  AI ˵/ȴ
+cuckoo_part3.cc:377:         vTaskDelay(pdMS_TO_TICKS(200));  // ״̬ص idle
+cuckoo_part3.cc:379:     // ڼֹΪѴʻ AI
+cuckoo_part3.cc:381:     // ʽѴʼ⣨ɰ汾 EnableVoiceProcessing ܲ߼
+cuckoo_part3.cc:390:             total_calls_ = hour;       // ¼ܱʱ㣩
+cuckoo_part3.cc:391:             call_count_ = 3;           // 㱨ʱ3ν
+cuckoo_part3.cc:395:             call_count_ = 3;           // 㱨ʱ3ν
+cuckoo_part3.cc:433:     //  AI ղŶзֹ Opus
+cuckoo_part3.cc:437:     // ====== 㱨ʱ򻯰棨ްװֻƵ̣======
+cuckoo_part3.cc:439:         // Phase 1: Ŵ  С+  Źر
+cuckoo_part3.cc:442:             // 첽ƽ+Ͷͬ
+cuckoo_part3.cc:446:             vTaskDelay(pdMS_TO_TICKS(10));  // ý
+cuckoo_part3.cc:447:             sm->BirdJumpPulse();  // 壨ͬʱڲ
+cuckoo_part3.cc:449:                 vTaskDelay(pdMS_TO_TICKS(1800));  // Ƚ(~1.76s)
+cuckoo_part3.cc:452:         // һٹ
+cuckoo_part3.cc:454:         sm->CloseBirdDoor();  // Źر
+cuckoo_part3.cc:456:         // һԽ뵽PSRAMOutputRawPcmظţMP3򿪵Ķ
+cuckoo_part3.cc:466:                     // OutputRawPcm ģŷ
+cuckoo_part3.cc:497:  // Phase 3: ָAIƵ
+cuckoo_part3.cc:498:         app.GetAudioService().SetOutputMuted(false);  // ָAIƵ
+cuckoo_part3.cc:502:         if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ IN1=HIGH
+cuckoo_part3.cc:525:             // 첽+С赸ѭ ShowTask һ£
+cuckoo_part3.cc:533:             // 赸+С̿ʼͿ/СУ
+cuckoo_part3.cc:550:     // ====== 㱨ʱ+С+һ ======
+cuckoo_part3.cc:553:         sm->OpenBirdDoor();  // Ŵ
+cuckoo_part3.cc:555:             // 첽ƽ+Ͷͬ
+cuckoo_part3.cc:559:             vTaskDelay(pdMS_TO_TICKS(10));  // ý
+cuckoo_part3.cc:560:             sm->BirdJumpPulse();  // 壨ͬʱڲ
+cuckoo_part3.cc:562:                 vTaskDelay(pdMS_TO_TICKS(1800));  // Ƚ(~1.76s)
+cuckoo_part3.cc:565:         // һٹ
+cuckoo_part3.cc:567:         sm->CloseBirdDoor();  // Źر
+cuckoo_part3.cc:568:     // ָ AI
+cuckoo_part3.cc:581:     // ָѴʼ⣨ EnableVoiceProcessing   ResetDecoder  TTS
+cuckoo_part3.cc:582:     // ֻ idle ״̬Żָ listening ״̬󴥷Ѵ
+cuckoo_part3.cc:604:     // AI æʱ򱳾Ƶвʱ
+cuckoo_part3.cc:612:     // ģʽж
+cuckoo_part3.cc:616:         return;  // ȫ쾲
+cuckoo_part3.cc:621:         return;  // ھ
+cuckoo_part3.cc:634:                 return;  // ҹ: 22~6
+cuckoo_part3.cc:638:     // mode==1 ȫ챨ʱreturn
+cuckoo_part3.cc:640:     // 㱨ʱ
+cuckoo_part3.cc:642:     // 㱨ʱ
+cuckoo_part3.cc:648:     // 㱨ʱ
+cuckoo_part3.cc:670: // ģʽ NVS 洢
+cuckoo_part3.cc:732: // 幦  ֧5ӣNVS־û
+cuckoo_part3.cc:881:                     volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% ǿ 100% (ǰ10)
+cuckoo_part3.cc:909: // ɫݣ MCP ߵʵ֣
+cuckoo_part3.cc:910: // - DogShow: СݣšܳСҡͷ˻ءţ
+cuckoo_part3.cc:911: // - LindaShow: մ赸ݣ0015 + 赸 + LED˸
+cuckoo_part3.cc:912: // - GardenShow: ԰Lindaݣ0016 + Сٶ + LED˸
+cuckoo_part3.cc:915: // DogShow()  MCP ڣز
+cuckoo_part3.cc:916: // ʵʱ DogShowTask() ִУ Core 1 ̨
+cuckoo_part4.cc:3:     if (is_running_) return;  // бУܾظ
+cuckoo_part4.cc:4:     // ִ̨бݣ̶ Core 1ӿغģ
+cuckoo_part4.cc:8:         vTaskDelete(nullptr);  // ɺɾ
+cuckoo_part4.cc:19:     // ===  AI ˵ݺͬʱ ===
+cuckoo_part4.cc:20:     // === ͬʱ AIֵӿȻ ===
+cuckoo_part4.cc:22:     // === 3ʼ ===
+cuckoo_part4.cc:202: // ֱӲŹУ PlayWavAsset
+cuckoo_part4.cc:231:         // ز 2205016000
+cuckoo_part4.cc:251:         //  drain ݣֹ ring buffer
+cuckoo_part4.cc:277:     // MCP ڣءʵʱںִ̨С
+cuckoo_part4.cc:278:     if (is_running_) return;  // бУܾ
+cuckoo_part4.cc:290:     // MCP ڣءʵʱںִ̨С
+cuckoo_part4.cc:291:     if (is_running_) return;  // бУܾ
+cuckoo_part4.cc:308:     //  AI ˵ݺͬʱУֵӿ
+cuckoo_part4.cc:315:     // 1. LEDһʾݼʼ
+cuckoo_part4.cc:331:     // 3. LED˸ + 赸תֽ
+cuckoo_part4.cc:332:     //    ǰ24룺LED˸ + 赸
+cuckoo_part4.cc:333:     //    24LEDȫ赸ֱֽ
+cuckoo_part4.cc:341:     m1_fwd_time_ = 0;  // תۼʱ
+cuckoo_part4.cc:342:     m1_rev_time_ = 0;  // תۼʱ
+cuckoo_part4.cc:350:         // ֹͣǰԼ2루24ʱLEDȫֹͣ˸
+cuckoo_part4.cc:357:         // 赸1~3룬Ȼ
+cuckoo_part4.cc:396:         // LED˸ǰ24룬ÿ6֡лһ = Լ300ms
+cuckoo_part4.cc:410:     // 5. ֽ  赸ͣ  Ÿл  LEDϨ
+cuckoo_part4.cc:411:     if (m1_) m1_->Stop();  // ͣ赸
+cuckoo_part4.cc:413:     // ڽǶȲ279/s
+cuckoo_part4.cc:425:         // 反转<正转时，补偿×1.3
+cuckoo_part4.cc:437:     // лֻţ0~4ѭ
+cuckoo_part4.cc:455:     if (mp3_) mp3_->SetDisableDucking(false);  // ָ duck
+cuckoo_part4.cc:470:     //  AI ˵ݺͬʱУֵӿ
+cuckoo_part4.cc:477:     // 1. LEDһʾݼʼ
+cuckoo_part4.cc:493:     // 3. LED˸ + Сٶֱֽ
+cuckoo_part4.cc:512:         // : ÿ50ms֡ƶ9, 0~140Ұڶ
+cuckoo_part4.cc:535:     // 5. ֽ  Сƽ  Ÿл  LEDϨ
+cuckoo_part4.cc:537:         violin_servo_->Sweep(violin_angle, SERVO_CENTER_ANGLE, 1000);  // ӵǰǶƽص90
+cuckoo_part4.cc:540:     // лֻţ0~4ѭ
+cuckoo_part4.cc:558:     if (mp3_) mp3_->SetDisableDucking(false);  // ָ duck
+cuckoo_part4.cc:571:     // M1赸: ת1-3  ͣ20ms  ת1-3  ͣ20ms  ѭ8
+cuckoo_part4.cc:618:         // Сٶ: 90018090 ѭڶ
+cuckoo_part4.cc:633: // ٶȲԣ赸תָ
+cuckoo_part4.cc:641:     if (m1_) m1_->Forward(100);  // GPIOֱȫѹ
+cuckoo_part4.cc:655:     // /㱨ʱ  Show AI
+cuckoo_part4.cc:661:     // 壩ͣٿʼ
+cuckoo_part4.cc:667:     // ռãֹظ
+cuckoo_part4.cc:671:     // 첽ִУMCP ߵѭ߳ϣapp.Schedule
+cuckoo_part4.cc:672:     // ѭȴ AbortSpeaking/TTS-STOP
+cuckoo_part4.cc:673:     // Schedule صŲ϶ӣTTS-STOP ״̬ת޷ִУ
+cuckoo_part4.cc:674:     // ԰ŵ Core 1 ̨
+cuckoo_part4.cc:696:     // Start immediately — ShowTask now uses PlayShowMusicBg (bg audio ring buffer)
+cuckoo_part4.cc:720:     //  AIݺͬʱ
+cuckoo_part4.cc:721:     if (sm->mp3_) sm->mp3_->SetDisableDucking(true);  // ֲ
+cuckoo_part4.cc:726:         if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ IN1=HIGH
+cuckoo_part4.cc:728:     // ѡ?
+cuckoo_part4.cc:737:     // so audio service mixes music with TTS via ducking — no I2S conflict.
+cuckoo_part4.cc:747:     // 等待音乐开始播放（bg audio 缓冲就绪）
+cuckoo_part4.cc:758:     // 첽+С赸ѭ
+cuckoo_part4.cc:765:     // 赸+С̿ʼͿ/СУ
+cuckoo_part4.cc:768:     // ָֽѴʺ
+cuckoo_part4.cc:769:     // ע⣺StartShow  AbortSpeaking ״̬ listening idle
+cuckoo_part4.cc:770:     // ֱӻָᵼ»Ѵ listening ״̬ AbortSpeaking  audio_input
+cuckoo_part4.cc:773:     if (sm->mp3_) sm->mp3_->SetDisableDucking(false);  // ָ duck
+cuckoo_part4.cc:775:     // ȷ豸ص idle ٻָ
+cuckoo_part4.cc:801:     // ָѴֵ豸idleӿزת
+cuckoo_part4.cc:831:     if (m3_) m3_->Stop();  // С
+cuckoo_part4.cc:833:     if (violin_motor_) violin_motor_->Stop();  // С
+cuckoo_part4.cc:839:     //  stop_all+play_url طŴ
+cuckoo_part4.cc:849:     // ֱ AbortSpeaking TTS Ȼ
+cuckoo_part4.cc:934:     // AI˵ʱС滰Ծģʽ
+cuckoo_part4.cc:935:     // 50-200msģȻԾ
+cuckoo_part4.cc:936:     // ȴ300-700ms̫
+cuckoo_part4.cc:938:     if (water_bird_) water_bird_->Stop();  // ͣˮͷGPIO39ͻ
+cuckoo_part4.cc:939:     gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);  // ͨ磬С񵯳
+cuckoo_part4.cc:942:     gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // ϵ磬С
+cuckoo_part4.cc:943:     int cooldown = 300 + (esp_random() % 401);  // 300-700msȴʱ
+cuckoo_part5.cc:27:         // Mid-music transition: kids became active → bring dog out
+cuckoo_part5.cc:34:         // Mid-music transition: kids became resting → stop & put dog away
+cuckoo_part5.cc:209:         // === 大门+小狗：只有大门关着才执行 ===
+cuckoo_part5.cc:264:     // User explicitly asked for kids — force create dog_intro regardless of stale state flags.
+cuckoo_part5.cc:340:     MotorPowerOn();  // ȷԴȶ
+cuckoo_part5.cc:354:         case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;  // Сٵ (B M2, GPIO18/45)
+cuckoo_part5.cc:452:     // 第0步：统一路径格式，把 /opus 或 /stream 都转成 /pcm
+cuckoo_part5.cc:473:     // 第2步：构造完整URL，直接用原始路径不转换
+cuckoo_part5.cc:474:     // /pcm 本身就能返回JSON或PCM，无需改路径
+cuckoo_part5.cc:493:     // 第3步：没有 Content-Length = 流式传输 = 音频（不是JSON），跳过
+cuckoo_part5.cc:499:     // 第4步：读第一个字节 —— JSON 以 { 开头，音频是二进制乱码
+cuckoo_part5.cc:507:     // 第5步：读完整个 JSON 响应体
+cuckoo_part5.cc:521:     // 第6步：确认包含 multi_artist 字段后，返回JSON给AI
+cuckoo_part5.cc:535:  //  AI ˵ TTS ͬʱУPlayOpus Զ duck  30%
+cuckoo_part5.cc:545:     // URLhttpͷֱʹ
+cuckoo_part5.cc:550:         //  URL еĿոΪ %20
+cuckoo_part5.cc:553:                 //  2 ַ
+cuckoo_part5.cc:561:         // ڲţͣɸٷ¸
+cuckoo_part5.cc:566:             // ȾPlayOpusTask˳is_playing_false
+cuckoo_part5.cc:572:             // ձƵbufferֹǰ׻
+cuckoo_part5.cc:579:     // ôַƴ
+cuckoo_part5.cc:594:             // ո HTTP request line Ƿָ
+cuckoo_part5.cc:604:         // ASCIIֱӸ
+cuckoo_part5.cc:634:     // ڲţͣɸٷ¸
+cuckoo_part5.cc:662: // CuckooTools MCPע
+cuckoo_part5.cc:956:  // 音乐代理在启动时自动配置（config.h 里的 DEFAULT_MUSIC_PROXY_HOST/PORT）。
+cuckoo_part5.cc:957:  // set_music_proxy 是空操作占位工具，永远瞬间成功，不做TCP连接检查。
+cuckoo_part5.cc:958:  // 这个工具只是为了满足 AI 在调用 play_url 之前先调 set_music_proxy 的习惯。
+cuckoo_part5.cc:968:                 // 先检查多版本：如果服务器返回歌手列表JSON，直接返回给AI念（不播歌）
+cuckoo_part5.cc:971:                 return multi;  // 歌手列表JSON返回给AI，AI自动念出来让用户选
+cuckoo_part5.cc:984:     // === ɫ ===
+cuckoo_part5.cc:1042: // ӿ FreeRTOS  (Core 1)
+cuckoo_part5.cc:1045: // ְ:
+cuckoo_part5.cc:1046: // - NTPʱͬ60s/300sУ׼
+cuckoo_part5.cc:1047: // - 豸״̬أidle?ԶţAI˵ʱСԾ
+cuckoo_part5.cc:1048: // - Ѵֵ̬Ի0.3ֹ󴥷idleʱ0.02
+cuckoo_part5.cc:1049: // - Ƶʱˢ£ÿ10sֹI2SԴرգ
+cuckoo_part5.cc:1050: // - /㱨ʱ
+cuckoo_part5.cc:1051: // - Ӽ
+cuckoo_part5.cc:1052: // - RTC־ÿ30s浽ڴ棩
+cuckoo_part5.cc:1055:     // ȡԭ + RTC
+cuckoo_part5.cc:1070:     // ʱˢƵʱֹڼI2SŹʱ
+cuckoo_part5.cc:1075:     //  WiFi  NTP gettimeofday ɻȡǰʱ
+cuckoo_part5.cc:1077:     //  WiFi  NTP gettimeofday ɻȡǰʱ
+cuckoo_part5.cc:1081:         if (tv.tv_sec > 1000000000) {  // 2001Ժ˵ NTP ͬ
+cuckoo_part5.cc:1095:     // Ĭִַ config.h ʱ̶
+cuckoo_part5.cc:1098:     //  NVS ѱ;ģʽ
+cuckoo_part5.cc:1105:  // TODO(#22): 1ѯΪ¼:
+cuckoo_part5.cc:1106:  // - ע OnDeviceStateChanged ص idle/active ת
+cuckoo_part5.cc:1107:  // - ʱNTPͬtick_sec
+cuckoo_part5.cc:1108:  // - Core 1󲿷ʱʡ
+cuckoo_part5.cc:1114:         // 豸idleûAI¼ʱڷ󴥷
+cuckoo_part5.cc:1122:                 // Ի߻Ѵֵ0.3ֹ󴥷ڼ䲻裬ShowԼƣ
+cuckoo_part5.cc:1126:                 // Իлָ׼˷棨30dB AEC Ŵ
+cuckoo_part5.cc:1132:                 // idleʱֵָ0.02ڼ/Ÿڼ䲻
+cuckoo_part5.cc:1135:                 // idleʱ˷棨37.5dBװλ
+cuckoo_part5.cc:1155:             // AI˵ʱС滰Ծڱޱʱ
+cuckoo_part5.cc:1157:                 // ƵԾȣ300ms  = ˵
+cuckoo_part5.cc:1160:                     // ˵50-200ms
+cuckoo_part5.cc:1163:                 // ˵ʱ
+cuckoo_part5.cc:1168:         // === ÿ（sub_tick % 4 == 0）===
+cuckoo_part5.cc:1172:         // NTPͬδͬʱÿ60ԣͬÿ300У׼һ
+cuckoo_part5.cc:1190:         // WiFiʡCuckooBoard::SetPowerSaveLevelش
+cuckoo_part5.cc:1191:         // ֲʱLOW_POWER
+cuckoo_part5.cc:1193:  // ÿ30뱣־RTCڴ棨RTCڿŹλԱ
+cuckoo_part5.cc:1202:  // ÿ60+ջˮλڱ
+cuckoo_part5.cc:1209:     // ƵԴ/ 15 ر I2S »ʧЧ
+cuckoo_part5.cc:1214:             // ȡҹģʽ
+cuckoo_part5.cc:1218:         // ʱͨ NTP  MCP ãڲʱ
+cuckoo_part5.cc:1220:             // NTPͬʱϵͳʱ䣬ʱƯ
+cuckoo_part5.cc:1230:                 // NTPδͬMCPʱ䣩˵ʱӵ
+cuckoo_part5.cc:1242:             // Ͱ
+cuckoo_part5.cc:1246:         // 㱨ʱÿ == 0 ʱ NeedHourlyChime ظ
+cuckoo_part5.cc:1251:         // 㱨ʱÿ == 30 ʱ NeedHalfHourlyChime ظ
+cuckoo_part5.cc:1257:             // 飨ÿһΣ
+cuckoo_part5.cc:1261:  // עNTPͬʱÿtick_sec%86400У׼
