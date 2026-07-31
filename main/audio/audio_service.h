@@ -222,7 +222,7 @@ private:
     void MixBackgroundAudio(std::vector<int16_t>& pcm);
 
     // Background audio mixing (music ducking during AI speech)
-    static constexpr size_t BG_AUDIO_RING_SIZE = 480000;  // ~30 seconds at 16kHz
+    static constexpr size_t BG_AUDIO_RING_SIZE = 960000;  // ~60 seconds at 16kHz  // ~60 seconds at 16kHz (was 480000)
     std::vector<int16_t> bg_audio_ring_;
     size_t bg_audio_write_pos_ = 0;
     size_t bg_audio_read_pos_ = 0;

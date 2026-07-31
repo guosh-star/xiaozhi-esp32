@@ -521,49 +521,95 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
              music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
     ESP_LOGI(TAG, "CheckMultiArtist: GET %s", url);
 
-    esp_http_client_config_t cfg = {};
-    cfg.url = url;
-    cfg.timeout_ms = 8000;
-    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
-    if (!cli) return "";
+    // Use raw socket HTTP/1.0 to avoid esp_http_client's HTTP/1.1
+    // which causes server to start ffmpeg even for check-only requests
+    struct hostent* he = gethostbyname(music_proxy_host_.c_str());
+    if (!he) return "";
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(music_proxy_port_);
+    addr.sin_addr.s_addr = *(uint32_t*)he->h_addr;
 
-    esp_err_t e = esp_http_client_open(cli, 0);
-    if (e != ESP_OK) { esp_http_client_cleanup(cli); return ""; }
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return "";
+    int timeout_ms = 8000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        closesocket(sock); return "";
+    }
 
-    int content_len = esp_http_client_fetch_headers(cli);
-    int status = esp_http_client_get_status_code(cli);
+    char req[1024];
+    snprintf(req, sizeof(req),
+        "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
+        encoded_path, music_proxy_host_.c_str(), music_proxy_port_);
+    send(sock, req, strlen(req), 0);
+
+    // Read HTTP response headers
+    char header_buf[1024] = {};
+    int hdr_pos = 0;
+    while (hdr_pos < 1023) {
+        int r = recv(sock, header_buf + hdr_pos, 1, 0);
+        if (r <= 0) break;
+        hdr_pos += r;
+        if (hdr_pos >= 4 && memcmp(header_buf + hdr_pos - 4, "\r\n\r\n", 4) == 0) break;
+    }
+    header_buf[hdr_pos] = '\0';
+
+    int status = 0;
+    sscanf(header_buf, "HTTP/1.%*d %d", &status);
+    if (status != 200) {
+        // Read error body (server sends JSON with hint + alternatives on 404)
+        int content_len = 0;
+        const char* cl = strstr(header_buf, "Content-Length:");
+        if (!cl) cl = strstr(header_buf, "content-length:");
+        if (cl) sscanf(cl + 15, "%d", &content_len);
+        if (content_len > 0 && content_len < 4096) {
+            char* resp = (char*)calloc(1, content_len + 1);
+            if (resp) {
+                int total = 0;
+                while (total < content_len) {
+                    int n = recv(sock, resp + total, content_len - total, 0);
+                    if (n <= 0) break;
+                    total += n;
+                }
+                resp[total] = '\0';
+                if (total > 0) {
+                    std::string result(resp);
+                    free(resp);
+                    closesocket(sock);
+                    return result;
+                }
+                free(resp);
+            }
+        }
+        closesocket(sock);
+        return "{\"error\": \"song_not_found\", \"status\": " + std::to_string(status) + "}";
+    }
+
+    // Parse Content-Length
+    int content_len = 0;
+    const char* cl = strstr(header_buf, "Content-Length:");
+    if (!cl) cl = strstr(header_buf, "content-length:");
+    if (cl) sscanf(cl + 15, "%d", &content_len);
     ESP_LOGI(TAG, "CheckMultiArtist: status=%d content_len=%d", status, content_len);
 
-    // 第3步：没有 Content-Length = 流式传输 = 音频（不是JSON），跳过
-    if (content_len <= 0) {
-        esp_http_client_close(cli); esp_http_client_cleanup(cli);
-        return "";
-    }
+    if (content_len <= 0) { closesocket(sock); return ""; }
 
-    // 第4步：读第一个字节 —— JSON 以 { 开头，音频是二进制乱码
-    char first_byte = 0;
-    int peek = esp_http_client_read(cli, &first_byte, 1);
-    if (peek <= 0 || first_byte != '{') {
-        esp_http_client_close(cli); esp_http_client_cleanup(cli);
-        return "";
-    }
-
-    // 第5步：读完整个 JSON 响应体
+    // Read body
     char* resp = (char*)calloc(1, content_len + 1);
-    if (!resp) { esp_http_client_close(cli); esp_http_client_cleanup(cli); return ""; }
-    resp[0] = '{';
-    int total = 1;
+    if (!resp) { closesocket(sock); return ""; }
+    int total = 0;
     while (total < content_len) {
-        int n = esp_http_client_read(cli, resp + total, content_len - total);
+        int n = recv(sock, resp + total, content_len - total, 0);
         if (n <= 0) break;
         total += n;
     }
+    closesocket(sock);
     resp[total] = '\0';
-    esp_http_client_close(cli);
-    esp_http_client_cleanup(cli);
 
-    // 第6步：确认包含 multi_artist 字段后，返回JSON给AI
-    if (strstr(resp, "multi_artist")) {
+    if (total > 0 && resp[0] == '{' && strstr(resp, "multi_artist")) {
         ESP_LOGI(TAG, "CheckMultiArtist: detected multi-artist, %d bytes", total);
         std::string result(resp);
         free(resp);

@@ -1012,8 +1012,8 @@ void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
     }
     size_t mix_count = (pcm.size() < available) ? pcm.size() : available;
     
-    // Per-sample gain ramping (fade over ~4800 samples = 300ms at 16kHz)
-    constexpr float kFadeStep = 0.7f / 4800.0f;
+    // Per-sample gain ramping (fade over ~16000 samples = 1000ms at 16kHz)
+    constexpr float kFadeStep = 0.7f / 16000.0f;
     float gain = bg_audio_gain_;
     float target = bg_audio_target_gain_;
     

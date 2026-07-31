@@ -344,6 +344,11 @@ serial_fallback:
 
     ESP_LOGI(TAG, "PlayOpus: downloading raw PCM...");
 
+    // Activate ring buffer before pre-buffer loop so PushBackgroundAudio works.
+    // Without this, bg_audio_active_ stays false (from ClearBackgroundAudio in PlayOpus)
+    // and the pre-buffer loop silently drops all data until the 10s timeout.
+    app.GetAudioService().SetBackgroundAudioGain(0.001f);  // near-silent but keeps bg_audio_active_=true
+
  // === Pre-buffer phase: fill ring buffer before enabling drain ===
     int64_t prebuf_start = esp_timer_get_time();
     while (self->is_playing_ && !self->stop_requested_) {
@@ -355,9 +360,8 @@ serial_fallback:
 
         size_t fill = app.GetAudioService().GetBgAudioFillLevel();
         if (fill >= 64000) {
-            app.GetAudioService().SetBackgroundAudioGain(0.3f);  // activate at low volume
+            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // fade-in via ~1000ms ramp
             app.GetAudioService().EnableBgAudioDrain(true);
-            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // fade-in via ~300ms ramp
             ESP_LOGI(TAG, "PlayOpus: drain enabled (buffered %d samples in %d ms)",
                      (int)fill, (int)((esp_timer_get_time() - prebuf_start) / 1000));
             break;
@@ -393,7 +397,7 @@ serial_fallback:
         }
         if (ai_level != prev_ai_level) {
             prev_ai_level = ai_level;
-            float gain = (ai_level == 2) ? 0.5f : (ai_level == 1) ? 0.6f : 1.0f;
+            float gain = (ai_level == 2) ? 0.5f : 1.0f;  // duck speaking to 50% to prevent mixer clipping
             app.GetAudioService().SetBackgroundAudioGain(gain);
             int heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
             int bg_fill = app.GetAudioService().GetBgAudioFillLevel();
@@ -405,10 +409,9 @@ serial_fallback:
                      bg_fill, task_hwm);
         }
 
- // When AI is speaking, pause TCP download to free WiFi airtime for
- // UDP audio packets (prevents WiFi buffer starvation TTS stutter).
- // Only pause if buffer sufficient to ride through typical AI reply.
-        if (ai_speaking && app.GetAudioService().GetBgAudioFillLevel() > 64000) {
+ // Pause TCP download when AI is active (listening/speaking/connecting)
+ // to free lwIP buffers for UDP audio. Without this the ASR takes 30-50s.
+        if (ai_level >= 1 && app.GetAudioService().GetBgAudioFillLevel() > 64000) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
