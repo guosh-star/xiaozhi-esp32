@@ -1,7 +1,0 @@
-cuckoo_part3.cc:582: 'ֻ idle ״̬Żָ listening ״̬\U000f4977Ѵ'
-cuckoo_part4.cc:769: 'ע⣺StartShow  AbortSpeaking ״̬ listening idle'
-cuckoo_part4.cc:769: 'ע⣺StartShow  AbortSpeaking ״̬ listening idle'
-cuckoo_part4.cc:769: 'ע⣺StartShow  AbortSpeaking ״̬ listening idle'
-cuckoo_part4.cc:770: 'ֱӻָᵼ»Ѵ listening ״̬ AbortSpeaking  audio_input'
-cuckoo_part5.cc:1049: '- Ƶʱˢ£ÿ10sֹI2SԴرգ'
-cuckoo_part5.cc:1261: 'עNTPͬʱÿtick_sec%86400У\u05fc'
