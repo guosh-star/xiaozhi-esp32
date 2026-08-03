@@ -89,7 +89,7 @@
 #define LDR_ADC_BITWIDTH  ADC_BITWIDTH_12  // 12-bit 分辨率，0~4095
 
 // 暗光判定阈值
-#define LDR_DARK          600 // ADC 值低于此判定为暗
+#define LDR_DARK          500 // ADC 值低于此判定为暗
 
 // WS2812 LED 灯带引脚（A/B 两路）
 #define LED_A_GPIO        GPIO_NUM_21

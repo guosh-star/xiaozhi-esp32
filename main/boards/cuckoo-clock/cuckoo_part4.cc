@@ -53,6 +53,7 @@ void CuckooStateMachine::DogShowTask() {
 
     // 5. Bark #1
     PlayDogBarkDirect();
+    if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // restart after BirdJumpShort stopped it
 
     // 6. Tail to 0 deg
     if (dog_servo_) {
@@ -84,6 +85,7 @@ void CuckooStateMachine::DogShowTask() {
 
     // 8. Bark #2
     PlayDogBarkDirect();
+    if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // restart after BirdJumpShort stopped it
 
     // 9. Tail back to 20 deg
     if (dog_servo_) {

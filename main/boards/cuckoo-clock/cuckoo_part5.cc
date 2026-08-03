@@ -1176,6 +1176,22 @@ void cuckoo_clock_task(void* params) {
         }
     }
 
+    // Bug fix: NTP sync may have jumped past a chime boundary.
+    // Check immediately whether we should trigger an hourly/half-hourly chime.
+    if (sm->time_set_.load()) {
+        int h = sm->current_hour_.load();
+        int m = sm->current_min_.load();
+        if (m == 0 && sm->NeedHourlyChime(h)) {
+            ESP_LOGI(TAG, "NTP init crossed hourly boundary, triggering chime for %02d:00", h);
+            sm->MarkHourlyChime(h);
+            sm->CheckTime(h, m, sm->is_dark_.load());
+        } else if (m == 30 && sm->NeedHalfHourlyChime(h)) {
+            ESP_LOGI(TAG, "NTP init crossed half-hour boundary, triggering chime for %02d:30", h);
+            sm->MarkHalfHourlyChime(h);
+            sm->CheckTime(h, m, sm->is_dark_.load());
+        }
+    }
+
     // ����Ĭ�����ִ�����ַ������ config.h ����ʱ�̶���
     sm->SetMusicProxy(DEFAULT_MUSIC_PROXY_HOST, DEFAULT_MUSIC_PROXY_PORT);
 
@@ -1266,6 +1282,19 @@ uint32_t tick_sec = 0;
                 sm->time_set_ = true;
                 ESP_LOGI(TAG, "NTP sync: %02d:%02d:%02d",
                          sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
+
+                // Bug fix: periodic NTP sync may have jumped past a chime boundary.
+                int h = sm->current_hour_.load();
+                int m = sm->current_min_.load();
+                if (m == 0 && sm->NeedHourlyChime(h)) {
+                    ESP_LOGI(TAG, "NTP sync crossed hourly boundary, triggering chime for %02d:00", h);
+                    sm->MarkHourlyChime(h);
+                    sm->CheckTime(h, m, sm->is_dark_.load());
+                } else if (m == 30 && sm->NeedHalfHourlyChime(h)) {
+                    ESP_LOGI(TAG, "NTP sync crossed half-hour boundary, triggering chime for %02d:30", h);
+                    sm->MarkHalfHourlyChime(h);
+                    sm->CheckTime(h, m, sm->is_dark_.load());
+                }
             } else {
                 ESP_LOGW(TAG, "NTP not synced yet, will retry in 60s");
             }
