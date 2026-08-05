@@ -172,6 +172,11 @@ void CuckooStateMachine::MusicDogIntro() {
 
 void CuckooStateMachine::MusicDogOutro() {
     dog_outro_running_ = true;
+    if (!dog_out_.load()) {
+        ESP_LOGI(TAG, "MusicDogOutro: dog was not out, skip all motors");
+        dog_outro_running_ = false;
+        return;
+    }
     dog_out_ = false;
     // First smooth return to 30deg, then back to home
     if (dog_servo_) {
@@ -186,7 +191,11 @@ void CuckooStateMachine::MusicDogOutro() {
     if (dog_servo_) {
         dog_servo_->Sweep(20, 180, (180 - 30) * 15);
     }
-    CloseDoor();
+    if (door_open_.load()) {
+        CloseDoor();
+    } else {
+        ESP_LOGI(TAG, "MusicDogOutro: door already closed, skip motor");
+    }
     MotorPowerOff();
     dog_intro_done_ = false;
     dog_outro_running_ = false;
@@ -303,7 +312,6 @@ void CuckooStateMachine::KidsComeOut() {
 void CuckooStateMachine::KidsRest() {
     if (kids_dance_) { ESP_LOGI(TAG, "KidsRest: stopping dance, sending kids back"); is_running_ = false; kids_dance_ = false; /* force RunDanceLoop exit, then fall through to close */ }
     kids_active_ = false;
-    dog_out_ = false;
     kids_appreciating_ = false;  // stop M1 light swinging
     SaveKidsActive();
     // Balance M1 motor: reverse must match forward before stopping

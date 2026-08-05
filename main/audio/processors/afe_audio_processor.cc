@@ -38,7 +38,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     char* ns_model_name = esp_srmodel_filter(models, ESP_NSNET_PREFIX, NULL);
     char* vad_model_name = esp_srmodel_filter(models, ESP_VADN_PREFIX, NULL);
     
-    afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_VC, AFE_MODE_LOW_COST);
+    afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_FD, AFE_MODE_LOW_COST);
     afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;  // FD+HIGH: full-duplex linear filter + NLP residual suppression
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;  // strongest echo suppression (non-linear post-processing)
     afe_config->aec_filter_length = 8;  // 长回声消除 128ms->256ms

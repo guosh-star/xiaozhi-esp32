@@ -886,6 +886,10 @@ void CuckooStateMachine::OpenDoor() {
  * @brief ���Źرգ�M2�����ת��ʱ�� MAIN_DOOR_TIME_MS��
  */
 void CuckooStateMachine::CloseDoor() {
+    if (!door_open_.load()) {
+        ESP_LOGI(TAG, "Door: already closed, skip motor");
+        return;
+    }
     MotorPowerOn();
     if (m2_) {
         m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);

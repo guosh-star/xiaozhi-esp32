@@ -15,26 +15,6 @@ if !errorlevel! neq 0 (
   echo   [idf_component.yml] OK
 )
 echo.
-echo Checking dependencies.lock...
-certutil -hashfile "%~dp0dependencies.lock" SHA256 | find /i "FDC5EE7DE754F2480F46F91A0F6F7C8A21CC795502D8AAAB81D5D21D47567412" > nul
-if !errorlevel! neq 0 (
-  echo   [dependencies.lock] CHANGED - restoring from backup
-  copy /y "%~dp0memory\backups\stable-config\dependencies.lock" "%~dp0dependencies.lock" > nul
-  set RESTORE=1
-) else (
-  echo   [dependencies.lock] OK
-)
-echo.
-echo Checking sdkconfig...
-certutil -hashfile "%~dp0sdkconfig" SHA256 | find /i "C6173BF08C9EB19E78B207A0056D1825E4399966E8720BF7829D9585D865365B" > nul
-if !errorlevel! neq 0 (
-  echo   [sdkconfig] CHANGED - restoring from backup
-  copy /y "%~dp0memory\backups\stable-config\sdkconfig" "%~dp0sdkconfig" > nul
-  set RESTORE=1
-) else (
-  echo   [sdkconfig] OK
-)
-echo.
 if !RESTORE! equ 1 (
   echo One or more config files were restored from backup.
   echo Delete managed_components and retry build.
