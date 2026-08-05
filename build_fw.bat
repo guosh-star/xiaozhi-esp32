@@ -19,11 +19,11 @@ if !errorlevel! equ 1 (
     echo ============================================================
     rmdir /s /q "%~dp0managed_components"
     rmdir /s /q "%~dp0build"
-    idf.py flash
+    idf.py build flash
 ) else (
     echo.
     echo Config files OK - building (fullclean to avoid stale cache)
-    idf.py fullclean flash
+    idf.py fullclean build flash
 )
 
 endlocal

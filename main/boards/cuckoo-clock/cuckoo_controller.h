@@ -178,6 +178,9 @@ public:
     // 解码 MP3 到内存缓冲区（不直接播放）
     int DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate);
 
+    // 流式解码 MP3，逐帧回调（零大 buffer，适合长音频）
+    int DecodeStreaming(int index, std::function<void(const int16_t* pcm, size_t samples, int src_sr, void* user_data)> callback, void* user_data = nullptr);
+
     void PlayTrack(uint8_t folder, uint8_t track); // 播放指定曲目
     void PlayIndex(uint16_t index);                // 按全局索引播放
     void Stop();

@@ -1,10 +1,12 @@
+// ===== Part 3: LdrSensor、BellSoundPlayer、Dance (L1925-2394) =====
+
 CuckooStateMachine::~CuckooStateMachine() {
     StopAll();
     MotorPowerOff();
 }
 
 /**
- * @brief �򿪵����Դ��P-MOSFET���͡�5V��ͨ��
+ * @brief 打开电机电源（P-MOSFET 低电平导通 5V）
  */
 void CuckooStateMachine::MotorPowerOn() {
     gpio_set_level(motor_power_pin_, 0);
@@ -15,10 +17,8 @@ void CuckooStateMachine::MotorPowerOff() {
 }
 
 // ============================================
-// �����赸���У����㱨ʱ PerformanceTask + �ۺϱ��� ShowTask ���ã�
 // ============================================
 
-// �����赸���У����㱨ʱ PerformanceTask + �ۺϱ��� ShowTask ���ã�
 struct DoorOpenCtx {
     CuckooStateMachine* sm;
 };
@@ -41,7 +41,6 @@ void CuckooStateMachine::DoorOpenTask(void* arg) {
 }
 
 void CuckooStateMachine::PlayDogBark() {
-    // �� assets ��ȡ dog_bark.wav (16kHz mono s16)
     const char* filename = "dog_bark.wav";
     void* wav_ptr = nullptr;
     size_t wav_size = 0;
@@ -65,7 +64,6 @@ void CuckooStateMachine::PlayDogBark() {
         return;
     }
 
-    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����?
     const int16_t* pcm = (const int16_t*)(wav_data + 44);
     size_t pcm_bytes = wav_size - 44;
     size_t num_samples = pcm_bytes / sizeof(int16_t);
@@ -85,23 +83,19 @@ void CuckooStateMachine::PlayDogBark() {
 }
 
 void CuckooStateMachine::RunDanceIntro() {
-    // �ѹ��� PCM ���ص� Mp3Player��DecodeSingleFile �����ѭ�����Զ�����?
     MotorPowerOn();
     auto* ctx = new DoorOpenCtx{this};
     xTaskCreatePinnedToCore(DoorOpenTask, "door_open", 2048, ctx, 5, nullptr, 1);
 
-    // �첽���ţ������������赸/���ֲ��У�
     if (dog_servo_) {
         dog_servo_->Sweep(180, 20, (180 - 20) * 15);
     }
-    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     PlayDogBark();
-    // С��ǰ�� �� ͣ �� �У��ͱ�������ͬʱ����
     if (dog_servo_) {
         dog_servo_->Sweep(20, 0, 20 * 15);
     }
@@ -133,7 +127,6 @@ void CuckooStateMachine::RunDanceLoop() {
         if (water_bird_ && !kids_dance_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
         unsigned long now = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-        // M1 �赸���? ��ת/��ת���棨�����?~3�룬���?3�������������?
         switch (m1_stage) {
             case 0:
                 if (m1_) m1_->Forward(DANCE_SPEED_PERCENT);
@@ -148,7 +141,7 @@ void CuckooStateMachine::RunDanceLoop() {
                 if (now - m1_timer > 20) {
                     m1_stage_start_ = now;  // reset for reverse timing
                     m1_timer = now; m1_stage = 2;
-                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����?~3��
+                    m1_rand_time = 1000 + (esp_random() % 2001);
                 }
                 break;
             case 2:
@@ -164,12 +157,11 @@ void CuckooStateMachine::RunDanceLoop() {
                 if (now - m1_timer > 20) {
                     m1_stage_start_ = now;  // reset for next cycle
                     m1_timer = now; m1_stage = 0;
-                    m1_rand_time = 1000 + (esp_random() % 2001);  // �����?~3��
+                    m1_rand_time = 1000 + (esp_random() % 2001);
                 }
                 break;
         }
 
-        // С����ѭ��������ÿ֡ 9�� ƽ���ڶ�
         violin_state_.timer += 50;
         switch (violin_state_.stage) {
             case 0: if (violin_state_.angle < 90) violin_state_.angle+=9; else if (violin_state_.angle > 90) violin_state_.angle-=9; break;
@@ -195,7 +187,6 @@ void CuckooStateMachine::RunDanceLoop() {
             violin_state_.timer = 0;
         }
 
-        // С��ҡβ��
         if (dog_servo_) {
             if (dog_state_.pause > 0) {
                 dog_state_.pause--;
@@ -214,7 +205,6 @@ void CuckooStateMachine::RunDanceLoop() {
             }
         }
 
-        // LED ��˸��ÿ6֡ ~300ms��
         led_toggle++;
         if (led_toggle >= 6) {
             led_toggle = 0;
@@ -223,7 +213,6 @@ void CuckooStateMachine::RunDanceLoop() {
             gpio_set_level(LED_B_GPIO, led_state ? 0 : 1);
         }
 
-        // 50ms ֡�ʿ���
         next_frame_us += 50000;
         int64_t wait_us = next_frame_us - esp_timer_get_time();
         if (wait_us > 0) {
@@ -233,21 +222,19 @@ void CuckooStateMachine::RunDanceLoop() {
 }
 
 void CuckooStateMachine::RunDanceFinale() {
-    // ���ֽ�������������һ������ֱ�����Źرպ��� ShowTask ĩβϨ��
     gpio_set_level(LED_A_GPIO, 1);
     gpio_set_level(LED_B_GPIO, 1);
 
-    // ���ڽǶȲ�����279��/s��40s��31Ȧʵ�⣩��ֻ��360�����ڵĲ��?
     if (m1_fwd_time_ > 0 || m1_rev_time_ > 0) {
-        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;  // 旋转角度�?正转,-反转
-        int rem = (int)(net % 360); if (rem < 0) rem = -rem;  // 取绝对�?
+        long net = ((long)(m1_fwd_time_ - m1_rev_time_) * 279) / 1000;
+        int rem = (int)(net % 360); if (rem < 0) rem = -rem;
         int ms; bool go_fwd;
         if (rem <= 180) {
             ms = rem * 1000 / 279;
             go_fwd = (net < 0);  // net为负=反转太多，补正转
         } else {
             ms = (360 - rem) * 1000 / 279;
-            go_fwd = (net >= 0);  // net为正=正转太多，补反转绕一�?
+            go_fwd = (net >= 0);
         }
         // 反转<正转时，补偿×1.3
         if (ms > 0 && m1_fwd_time_ > m1_rev_time_) {
@@ -261,7 +248,6 @@ void CuckooStateMachine::RunDanceFinale() {
         }
     }
 
-    // ƽ��С��������ת����
     if (violin_state_.rev_count < violin_state_.fwd_count && violin_motor_) {
         ESP_LOGI(TAG, "Violin: fwd=%d rev=%d, adding reverse", violin_state_.fwd_count, violin_state_.rev_count);
         violin_motor_->Reverse(VIOLIN_SPEED_PERCENT);
@@ -274,19 +260,16 @@ void CuckooStateMachine::RunDanceFinale() {
     if (violin_motor_) violin_motor_->Stop();
     if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
 
-    // С���˻�
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(920));
         m3_->Stop();
     }
-    // С������ӵ�ǰ�Ƕȹ�λ��?80�㣨�������䣩
     if (dog_servo_) {
         int dog_cur = dog_state_.angle;
         dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * 15);
         dog_state_.angle = 180;
     }
-    // ����
     MotorPowerOn();
     if (m2_) {
         m2_->Reverse(MAIN_DOOR_CLOSE_SPEED);
@@ -296,7 +279,6 @@ void CuckooStateMachine::RunDanceFinale() {
 }
 
 // ============================================
-// NVS ���ӳ־û�
 // ============================================
 
 static const char* kAlarmNvsNamespace = "cuckoo_alarm";
@@ -337,7 +319,6 @@ void CuckooStateMachine::LoadAlarmsFromNvs() {
         ESP_LOGI(TAG, "LoadAlarms: nvs_get_blob failed %d", err);
         return;
     }
-    // ͳ����Ч��ʱ��
     int count = 0;
     for (int i = 0; i < kMaxAlarms; i++) {
         if (alarms_[i].enabled) count++;
@@ -348,38 +329,29 @@ void CuckooStateMachine::LoadAlarmsFromNvs() {
 
 
 /**
- * @brief ������ʱ���ݣ�����/���?�ֶ���
- * @param type �������ͣ�kPerformanceHour(����)/kPerformanceHalf(���?/kPerformanceManual(�ֶ�)
- * @param hour Сʱ�������㱨ʱ�ã�
- * - ��AI�󴥷�������5���ں��Ե���
- * - �ȴ��AI�Ի���AbortSpeaking������ֹ���������ͻ��Ѵʼ��?
- * - ��Core 1����PerformanceTaskִ��
+ * @brief 启动表演（整点/半点/手动触发），在 Core 1 创建 PerformanceTask
  */
 void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
     if (is_running_) { ESP_LOGW(TAG, "Already performing"); return; }
 
     MotorPowerOn();
 
-    // ��AI�󴥷��豸�մ�idle����5�������� performanceAI�����ڻ���ʱ�Զ���cuckoo.performance
     if (last_idle_exit_us_ > 0) {
         uint64_t now_us = esp_timer_get_time();
-        if ((now_us - last_idle_exit_us_) < 5000000) {  // 5�봰��
+        if ((now_us - last_idle_exit_us_) < 5000000) {
             ESP_LOGW(TAG, "StartPerformance blocked: within 5s of wake-up (likely AI auto-trigger)");
             return;
         }
     }
 
-    // ���?AI ����˵��/�����ȴ����?
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
     if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         ESP_LOGI(TAG, "Aborting AI speaking before performance (state=%d)", (int)state);
         app.AbortSpeaking(kAbortReasonNone);
-        vTaskDelay(pdMS_TO_TICKS(200));  // ��״̬�ص� idle
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
-    // �����ڼ��������������ֹ����������Ϊ���Ѵʻ���?AI
     app.GetAudioService().EnableVoiceProcessing(false);
-    // ��ʽ�������Ѵʼ�⣨�ɰ�?EnableVoiceProcessing ���ܲ��������߼���
     app.GetAudioService().EnableWakeWordDetection(false);
 
     is_running_ = true;
@@ -388,12 +360,12 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
         case kPerformanceHour:
             if (hour > 12) hour -= 12;
             if (hour <= 0) hour = 12;
-            total_calls_ = hour;       // ��¼�ܱ�ʱ���������?
-            call_count_ = 3;           // ���㱨ʱ��3�ν���
+            total_calls_ = hour;
+            call_count_ = 3;
             break;
         case kPerformanceHalf:
             total_calls_ = 0;
-            call_count_ = 3;           // ��㱨ʱ��?�ν���
+            call_count_ = 3;
             break;
         case kPerformanceManual:
             total_calls_ = call_count_ = 3;
@@ -419,10 +391,7 @@ void CuckooStateMachine::StartPerformance(PerformanceType type, int hour) {
 
 
 /**
- * @brief ��ʱ�����������š�С����+�С����Źء���������+�赸������
- * - ���㣺���N��+0013.mp3ѭ��N��+�赸��LED+ˮ��+�赸���?С����+С����
- * - ��㣺���3�Σ������ֺ��赸
- * - ������ָ����Ѵʺ���������?
+ * @brief 表演任务线程：开门 → 鸟叫/报时 → 音乐 → 关门
  */
 void CuckooStateMachine::PerformanceTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
@@ -452,31 +421,25 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
     ESP_LOGI(TAG, "========================================");
     ESP_LOGI(TAG, "Performance: ENTER type=%d hour=%d min=%d", (int)sm->current_performance_, sm->current_hour_.load(), sm->current_min_.load());
 
-    // ���� AI �����ղ��Ŷ��з�ֹ������ Opus ����
     auto& app = Application::GetInstance();
     app.GetAudioService().SetOutputMuted(true);
     if (perf_check_timeout()) goto perf_cleanup;
 
-    // ====== ���㱨ʱ�򻯰棨����ް�װ��ֻ����Ƶ���̣�?=====
     if (sm->current_performance_ == kPerformanceHour) {
-        // Phase 1: ���Ŵ� �� С������+�� �� ���Źر�
-        sm->OpenBirdDoor();  // ���� (m4_)
+        sm->OpenBirdDoor();
         for (int i = 0; i < sm->call_count_; i++) {
-            // �첽�ƽ���+��������������������Ͷ�������ͬ��?
             if (sm->bell_player_) {
                 sm->bell_player_->PlayCuckooSoundAsync();
             }
-            vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
-            sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���?
+            vTaskDelay(pdMS_TO_TICKS(10));
+            sm->BirdJumpPulse();
             if (i < sm->call_count_ - 1) {
-                vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
+                vTaskDelay(pdMS_TO_TICKS(1800));
             }
         }
-        // �����һ�������ٹ���?
         vTaskDelay(pdMS_TO_TICKS(2000));
-        sm->CloseBirdDoor();  // ���Źر�
+        sm->CloseBirdDoor();
 
-        // һ���Խ��뵽PSRAM����OutputRawPcm�ظ����ţ�����MP3�����������򿪵Ķ���
         if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
             int16_t* bell_pcm = nullptr;
             size_t bell_samples = 0;
@@ -486,7 +449,6 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
                 ESP_LOGI(TAG, "Bell PCM loaded: %u samples @ %d Hz", (unsigned)bell_samples, bell_sr);
                 for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
                     app.GetAudioService().OutputRawPcm(bell_pcm, bell_samples, bell_sr);
-                    // OutputRawPcm �������ģ�����ŷ���?
                     if (!sm->is_running_) break;
                     if (i < sm->total_calls_ - 1) {
                         vTaskDelay(pdMS_TO_TICKS(50));
@@ -494,7 +456,6 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
                 }
                 heap_caps_free(bell_pcm);
             } else {
-    // ������ PlayIndex
                 ESP_LOGW(TAG, "DecodeToBuffer failed, falling back to PlayIndex");
                 for (int i = 0; i < sm->total_calls_ && sm->is_running_; i++) {
                     sm->mp3_->PlayIndex(13);
@@ -517,12 +478,11 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
         }
 
 
- // Phase 3: �ָ�AI��Ƶ���?
-        app.GetAudioService().SetOutputMuted(false);  // �ָ�AI��Ƶ
+        app.GetAudioService().SetOutputMuted(false);
         if (sm->hourly_perf_.load()) {
         gpio_set_level(LED_A_GPIO, 1);
         gpio_set_level(LED_B_GPIO, 1);
-        if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // ˮ�� IN1=HIGH
+        if (sm->water_bird_) sm->water_bird_->SetSpeed(WATER_WHEEL_SPEED);
 
     // Phase 2: music + dance (bg audio, same path as start_show/LindaShow/GardenShow)
         if (sm->mp3_ && sm->total_calls_ >= 1 && sm->total_calls_ <= 12) {
@@ -545,7 +505,6 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
                      (int)sm->kids_active_.load(), (int)sm->dog_intro_done_.load(),
                      (int)sm->dog_intro_running_.load(), sm->music_dance_enabled_);
 
-            // �첽��������+С���������������赸ѭ������ ShowTask һ�£�
             unsigned long intro_start_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
             xTaskCreatePinnedToCore([](void* arg) {
                 auto* s = static_cast<CuckooStateMachine*>(arg);
@@ -553,7 +512,6 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
                 vTaskDelete(nullptr);
             }, "dance_intro", 2048, sm, 5, nullptr, 1);
 
-            // �赸+С�������̿�ʼ���Ϳ���/С���������У�
             sm->RunDanceLoop();
 
             // Intro (door+dog, async, ~5s) must finish before the finale
@@ -570,25 +528,21 @@ void CuckooStateMachine::PerformanceTask(void* arg) {
         gpio_set_level(LED_A_GPIO, 0);
         gpio_set_level(LED_B_GPIO, 0);
 
-    // ====== ��㱨ʱ������?С������+��һ�� ======
             } // end if (hourly_perf_)
 } else if (sm->current_performance_ == kPerformanceHalf) {
-        sm->OpenBirdDoor();  // ���Ŵ�
+        sm->OpenBirdDoor();
         for (int i = 0; i < sm->call_count_; i++) {
-            // �첽�ƽ���+��������������������Ͷ�������ͬ��?
             if (sm->bell_player_) {
                 sm->bell_player_->PlayCuckooSoundAsync();
             }
-            vTaskDelay(pdMS_TO_TICKS(10));  // �ý�������������
-            sm->BirdJumpPulse();  // ��������壨����ͬʱ�ڲ���?
+            vTaskDelay(pdMS_TO_TICKS(10));
+            sm->BirdJumpPulse();
             if (i < sm->call_count_ - 1) {
-                vTaskDelay(pdMS_TO_TICKS(1800));  // �Ƚ�������(~1.76s)
+                vTaskDelay(pdMS_TO_TICKS(1800));
             }
         }
-        // �����һ�������ٹ���?
         vTaskDelay(pdMS_TO_TICKS(2000));
-        sm->CloseBirdDoor();  // ���Źر�
-    // �����ָ� AI
+        sm->CloseBirdDoor();
         app.GetAudioService().SetOutputMuted(false);
     }
 
@@ -611,8 +565,6 @@ perf_cleanup:
     sm->is_running_ = false;
     sm->current_performance_ = kPerformanceNone;
     ESP_LOGI(TAG, "Perf done: kids=%d dog_done=%d dog_run=%d dance_en=%d outro_done=%d timed_out=%d", (int)sm->kids_active_.load(), (int)sm->dog_intro_done_.load(), (int)sm->dog_intro_running_.load(), sm->music_dance_enabled_, (int)sm->dog_outro_done_, (int)perf_timed_out);
-    // �ָ����Ѵʼ�⣨����?EnableVoiceProcessing �� ���� ResetDecoder ���� TTS��
-    // ֻ�� idle ״̬�Żָ��������� listening ״̬�󴥷����Ѵ�
     if (app.GetDeviceState() == kDeviceStateIdle) {
         app.GetAudioService().EnableWakeWordDetection(true);
     }
@@ -621,23 +573,20 @@ perf_cleanup:
     vTaskDelete(NULL);
 }
 /**
- * @brief ��鲢��������?��㱨�?
- * - ҹ��(22:00-6:00)����ʱ
- * - AIæʱ�򱳾���Ƶ�����в���ʱ
- * - ���� (min==0): ���� StartPerformance(kPerformanceHour)
- * - ���?(min==30): ���� StartPerformance(kPerformanceHalf)
+ * @brief 整点/半点报时检查：实时读 LDR 判断亮度，安静模式过滤
  */
 void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
-    is_dark_ = dark;
+    // Real-time LDR read: NTP boundary compensation must not use stale is_dark_
+    // (10s tick cache) or it may wrongly skip chime when light just became bright.
     int ldr_raw = ldr_ ? ldr_->ReadRaw() : -1;
+    is_dark_ = (ldr_raw >= 0) ? (ldr_raw < LDR_DARK) : dark;
     ESP_LOGI(TAG, "CheckTime: %02d:%02d dark=%d LDR=%d thresh=%d quiet_mode=%d running=%d",
-             hour, min, (int)dark, ldr_raw, LDR_DARK, quiet_mode_.load(), (int)is_running_);
+             hour, min, (int)is_dark_, ldr_raw, LDR_DARK, quiet_mode_.load(), (int)is_running_);
     if (is_running_) {
         ESP_LOGI(TAG, "Skipping chime: performance already running");
         return;
     }
 
-    // AI æʱ�򱳾���Ƶ�����в���ʱ
     auto state = Application::GetInstance().GetDeviceState();
     if (state != kDeviceStateIdle || Application::GetInstance().GetAudioService().IsBgAudioActive()) {
         ESP_LOGI(TAG, "Skipping chime: device busy (state=%d, bg_audio=%d)", state,
@@ -645,15 +594,14 @@ void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
         return;
     }
 
-    // ����ģʽ�ж�
     int mode = quiet_mode_.load();
     if (mode == 0) {
         ESP_LOGI(TAG, "Skipping chime: quiet_mode=0 (always silent)");
-        return;  // ȫ�쾲��
+        return;
     }
     if (mode == 2 && is_dark_) {
         ESP_LOGI(TAG, "Skipping chime: quiet_mode=2 (dark-silent) LDR=%d threshold=%d", ldr_raw, LDR_DARK);
-        return;  // ��ھ���?
+        return;
     }
     if (mode == 2 && !is_dark_) {
         ESP_LOGI(TAG, "Chime allowed: quiet_mode=2 but LDR=%d >= threshold=%d (bright)", ldr_raw, LDR_DARK);
@@ -669,21 +617,17 @@ void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
         } else {
             if (hour >= start || hour < end) {
                 ESP_LOGI(TAG, "Skipping chime: quiet_mode=3 overnight window %d-%d", start, end);
-                return;  // ��ҹ: 22~6
+                return;
             }
         }
     }
-    // mode==1 ȫ�챨ʱ����return
 
-    // ���㱨ʱ
 
-    // ���㱨ʱ
     if (min == 0) {
         ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
         StartPerformance(kPerformanceHour, hour);  // bird+bell always, Phase2 skipped if hourly_perf_ disabled
         MarkHourlyChime(hour);  // dedup after successful trigger
     }
-    // ��㱨�?
     else if (min == 30) {
         ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
         StartPerformance(kPerformanceHalf, hour);
@@ -705,7 +649,6 @@ void CuckooStateMachine::GetTime(int &hour, int &min) {
 }
 
 // ============================================
-// ����ģʽ NVS �洢
 // ============================================
 void CuckooStateMachine::SaveQuietMode() {
     nvs_handle_t nvs;
@@ -779,14 +722,9 @@ void CuckooStateMachine::LoadHourlyPerf() {
 
 
 // ============================================
-// ���幦�� �� ֧�����?�����ӣ�NVS�־û�
 // ============================================
 /**
- * @brief ��������
  * @param hour Сʱ (0-23)
- * @param minute ���� (0-59)
- * @param repeat_daily true=ÿ���ظ�, false=һ����
- * �Զ�ȥ�أ�ͬʱ������ӻ����repeat_daily
  */
 void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
     std::lock_guard<std::mutex> lock(alarm_mutex_);
@@ -815,8 +753,7 @@ void CuckooStateMachine::SetAlarm(int hour, int minute, bool repeat_daily) {
 }
 
 /**
- * @brief ��ȡ�����б�JSON
- * @return JSON�����ַ�����[{"index":1,"hour":8,"minute":0,"enabled":true,"repeat_daily":true},...]
+ * @brief 获取闹钟列表 JSON（供 MCP 工具查询）
  */
 std::string CuckooStateMachine::GetAlarmsJson() {
     std::lock_guard<std::mutex> lock(alarm_mutex_);
@@ -852,8 +789,7 @@ bool CuckooStateMachine::DeleteAlarm(int index) {
 }
 
 /**
- * @brief ֹͣ�������������?
- * һ��������ֹͣ���Զ����ã��ظ����ӱ�������
+ * @brief 停止响铃中的闹钟
  */
 void CuckooStateMachine::StopAlarm() {
     alarm_stopped_ = true;
@@ -878,10 +814,7 @@ void CuckooStateMachine::StopAlarm() {
 }
 
 /**
- * @brief ÿ�������Ӵ���
- * - ʱ��ƥ������==0ʱ����
- * - ����AlarmTask�ں�̨��������
- * - �����в����ظ�����
+ * @brief 检查闹钟是否到点，触发闹铃
  */
 void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
     if (alarm_ringing_) return;  // already ringing
@@ -910,8 +843,7 @@ void CuckooStateMachine::CheckAlarms(int hour, int minute, int sec) {
 }
 
 /**
- * @brief ���岥�����񣺷���50�֣�100�룩��������15%��ǿ��100%��ÿ��֮����ͣ2����
- * �ڼ���alarm_stopped_��־�����û�ֹͣ�������˳�
+ * @brief 闹钟响铃任务：循环响铃直到停止或超时
  */
 void CuckooStateMachine::AlarmTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
@@ -928,7 +860,7 @@ void CuckooStateMachine::AlarmTask(void* arg) {
             if (sm->mp3_) {
                 float volume;
                 if (i < 10) {
-                    volume = 0.15f + 0.85f * (float)i / 9.0f;  // 15% ��ǿ�� 100% (ǰ10��)
+                    volume = 0.15f + 0.85f * (float)i / 9.0f;
                 } else {
                     volume = 1.0f;
                 }
@@ -954,17 +886,3 @@ void CuckooStateMachine::AlarmTask(void* arg) {
     vTaskDelete(NULL);
     sm->SaveAlarmsToNvs();
 }
-
-// ============================================
-// ��ɫ���ݣ����� MCP ���ߵ�ʵ�֣�
-// - DogShow: С���������ݣ����š��ܳ����С�ҡͷ���˻ء����ţ�
-// - LindaShow: �մ��赸���ݣ�����0015 + �赸���?+ LED��˸��
-// - GardenShow: ԰��Linda�������ݣ�����0016 + С���ٶ��?+ LED��˸��
-// ============================================
-
-// DogShow() �� MCP ������ڣ��������ز�������?
-// ʵ�ʱ����� DogShowTask() ��ִ�У����� Core 1 ��̨�����
-/**
- * @brief С���������ݣ�MCP��ڣ���������?
- * ��Core 1����dog_show����ʵ����DogShowTask()ִ��
- */

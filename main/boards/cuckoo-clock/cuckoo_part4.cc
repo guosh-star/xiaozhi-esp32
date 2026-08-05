@@ -28,15 +28,15 @@ void CuckooStateMachine::DogShowTask() {
 
     MotorPowerOn();
 
-    // 1. Water wheel on
-    if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
-
-    // 2. Open door
+    // 1. Open door
     if (m2_) {
         m2_->Forward(MAIN_DOOR_OPEN_SPEED);
         vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
         m2_->Stop();
     }
+
+    // 2. Water wheel on (after door, avoids voltage sag from shared power rail)
+    if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
 
     // 3. Dog tail out: 180->20, 1200ms
     if (dog_servo_) {
@@ -208,66 +208,57 @@ void CuckooStateMachine::PlayDogBarkDirect() {
 bool CuckooStateMachine::PlayShowMusicBg(int index) {
     if (!mp3_) return false;
 
-    // ���� MP3 �� PSRAM
-    int16_t* pcm = nullptr;
-    size_t total_samples = 0;
-    int src_sr = 0;
-    if (mp3_->DecodeToBuffer(index, &pcm, &total_samples, &src_sr) < 0) {
-        ESP_LOGE(TAG, "PlayShowMusicBg: decode failed for %04d.mp3", index);
-        return false;
-    }
-
-    ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 %u samples %dHz", index, (unsigned)total_samples, src_sr);
-
     auto& audio = Application::GetInstance().GetAudioService();
     audio.SetBackgroundAudioGain(1.0f);
 
-    const int DST_SR = 16000;
-    const size_t CHUNK_SRC = 2048;  // push in small chunks
-    size_t offset = 0;
+    struct StreamCtx {
+        AudioService* audio;
+        std::atomic<bool>* is_running;
+        size_t total_pushed;
+        bool drain_enabled;
+    } ctx = {&audio, &is_running_, 0, false};
 
-    while (offset < total_samples && is_running_) {
-        size_t chunk = (total_samples - offset > CHUNK_SRC) ? CHUNK_SRC : (total_samples - offset);
-
-        // �������ز��� 22050��16000
-        if (src_sr != DST_SR) {
-            float ratio = (float)src_sr / DST_SR;
-            std::vector<int16_t> dst(chunk * 2 / 3 + 2);  // ~30% smaller after resample
-            size_t d = 0;
-            float pos = 0;
-            while (pos < (float)chunk - 1.0f && d < dst.size() - 1) {
-                size_t idx = (size_t)pos;
-                float frac = pos - idx;
-                dst[d++] = (int16_t)((float)pcm[offset + idx] * (1.0f - frac) + (float)pcm[offset + idx + 1] * frac);
-                pos += ratio;
+    int ret = mp3_->DecodeStreaming(index, [](const int16_t* pcm, size_t samples, int src_sr, void* user_data) {
+        auto* c = (StreamCtx*)user_data;
+        size_t offset = 0;
+        while (offset < samples && c->is_running->load()) {
+            size_t chunk = (samples - offset > 2048) ? 2048 : (samples - offset);
+            if (src_sr != 16000) {
+                float ratio = (float)src_sr / 16000;
+                std::vector<int16_t> dst(chunk * 2 + 4);
+                size_t d = 0; float pos = 0;
+                while (pos < (float)chunk - 1.0f && d < dst.size() - 1) {
+                    size_t idx = (size_t)pos;
+                    float frac = pos - idx;
+                    dst[d++] = (int16_t)((float)pcm[offset + idx] * (1.0f - frac) + (float)pcm[offset + idx + 1] * frac);
+                    pos += ratio;
+                }
+                c->audio->PushBackgroundAudio(dst.data(), d, 16000);
+            } else {
+                c->audio->PushBackgroundAudio(pcm + offset, chunk, 16000);
             }
-            audio.PushBackgroundAudio(dst.data(), d, DST_SR);
-        } else {
-            audio.PushBackgroundAudio(pcm + offset, chunk, DST_SR);
+            c->total_pushed += chunk;
+            if (!c->drain_enabled && c->total_pushed >= 64000) {
+                c->audio->EnableBgAudioDrain(true);
+                c->drain_enabled = true;
+            }
+            offset += chunk;
+            while (c->audio->GetBgAudioFillLevel() > 64000 && c->is_running->load())
+                vTaskDelay(pdMS_TO_TICKS(50));
         }
+    }, &ctx);
 
-        audio.EnableBgAudioDrain(true);
-        offset += chunk;
-
-        // �� drain �������ݣ���ֹ ring buffer ���
-        while (audio.GetBgAudioFillLevel() > 64000 && is_running_)
-            vTaskDelay(pdMS_TO_TICKS(50));
-        vTaskDelay(pdMS_TO_TICKS(10));
+    if (ret < 0) {
+        ESP_LOGE(TAG, "PlayShowMusicBg: decode failed for %04d.mp3", index);
+        return false;
     }
-
-    free(pcm);
-    // Push done: wait for ring buffer to drain, then clear bg audio flags
-    // so show loops watching IsBgAudioActive() exit when music really ends.
-    {
-        int drain_wait = 0;
-        while (is_running_ && audio.GetBgAudioFillLevel() > 0 && drain_wait < 200) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            drain_wait++;
-        }
-        vTaskDelay(pdMS_TO_TICKS(200));
-        audio.ClearBackgroundAudio();
-        ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 finished, bg audio cleared", index);
+    int drain_wait = 0;
+    while (is_running_ && audio.GetBgAudioFillLevel() > 0 && drain_wait < 200) {
+        vTaskDelay(pdMS_TO_TICKS(50)); drain_wait++;
     }
+    vTaskDelay(pdMS_TO_TICKS(200));
+    audio.ClearBackgroundAudio();
+    ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 finished, bg audio cleared", index);
     return true;
 }
 

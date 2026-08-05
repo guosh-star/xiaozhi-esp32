@@ -1,3 +1,5 @@
+// ===== Part 5: MCP注册、clock_task (L4413-4991) =====
+
 void CuckooStateMachine::MusicDanceTick() {
     // Mp3Player tracks playback state (stays true during AI speech ducking),
     // while IsBgAudioActive() may briefly drop when audio service clears buffers.
@@ -376,26 +378,22 @@ void CuckooStateMachine::PlayCuckooSound() {
 }
 
 /**
- * @brief ���ö���Ƕ�
- * @param servo_id 0=С���ٶ��, 1=С��β�Ͷ��
- * @param angle 0~180��
+ * @brief 设置舵机角度（MCP 工具）
  */
 void CuckooStateMachine::SetServoAngle(int servo_id, int angle) {
-    MotorPowerOn();  // ȷ����Դ�ȶ�
+    MotorPowerOn();
     if (servo_id == 0 && violin_servo_) violin_servo_->SetAngle(angle);
     else if (servo_id == 1 && dog_servo_) dog_servo_->SetAngle(angle);
 }
 
 /**
- * @brief ���õ���ٶ�
- * @param motor_id 1=M1�赸, 2=С���ٵ��, 3=С�����, 4=���ŵ��
- * @param speed -100~100 (����=��ת)
+ * @brief 设置电机速度（MCP 工具）
  */
 void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
     if (speed != 0) MotorPowerOn();
     switch (motor_id) {
         case 1: if (m1_) m1_->SetSpeed(speed); break;
-        case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;  // С���ٵ�� (��B M2, GPIO18/45)
+        case 2: if (violin_motor_) violin_motor_->SetSpeed(speed); break;
         case 3: if (m3_) m3_->SetSpeed(speed); break;
         case 4: if (m4_) m4_->SetSpeed(speed); break;
         default: break;
@@ -410,13 +408,7 @@ void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
 }
 
 /**
- * @brief �������ֲ������
- * @param url_or_path URL�����·������ "/pcm?q=�ܽ���"��
- * @return 0=�ɹ�, <0=ʧ��
- * - ���AI�Ի�����CPU����
- * - �Զ�����URL�е����ĺͿո�
- * - ���ļ�������httpǰ׺���Զ�ƴ�Ӵ�����ַ
- * - ���ڲ���ʱ��ͣ�ɸ��ٷ��¸�
+ * @brief 粤语查询：返回拼音+释义（MCP 工具）
  */
 std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     if (music_proxy_host_.empty()) {
@@ -622,7 +614,6 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
     
- // ����� AI ˵������ TTS ������ͬʱ���У�PlayOpus ���Զ� duck �� 30%��
     auto& app = Application::GetInstance();
     auto ai_state = app.GetDeviceState();
     if (ai_state == kDeviceStateSpeaking) {
@@ -632,15 +623,12 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     // If already playing, stop old task cleanly to start new one.
     
     // Auto-detect format from URL path
-    // ���������URL��http��ͷ����ֱ��ʹ��
     if (strncmp(url_or_path, "http", 4) == 0) {
         char conv_url[1280];
         strncpy(conv_url, url_or_path, sizeof(conv_url) - 1);
         conv_url[sizeof(conv_url) - 1] = '\0';
-        // ���� URL �еĿո�Ϊ %20
         for (char* p = conv_url; *p; p++) {
             if (*p == ' ') {
-                // ���� 2 �ַ�
                 size_t tail_len = strlen(p + 1);
                 if ((size_t)(p + 3 + tail_len - conv_url) >= sizeof(conv_url)) break;
                 memmove(p + 3, p + 1, tail_len + 1);
@@ -648,25 +636,21 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
             }
         }
         ConvertToPcmUrl(conv_url, sizeof(conv_url));
-        // ������ڲ��ţ���ͣ�ɸ��ٷ��¸�
         if (mp3_->IsPlaying()) {
             ESP_LOGI(TAG, "PlayOnlineMusic: stopping current music for new request");
             mp3_->Stop();
             vTaskDelay(pdMS_TO_TICKS(200));
-            // �Ⱦ�PlayOpusTask�˳���is_playing_��false��
             int wait = 0;
             while (mp3_->IsPlaying() && wait < 100) {
                 vTaskDelay(pdMS_TO_TICKS(50));
                 wait++;
             }
-            // ��ձ�����Ƶbuffer��ֹǰ�����׻���
             Application::GetInstance().GetAudioService().ClearBackgroundAudio();
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         return mp3_->PlayOpus(conv_url);
     }
     
-    // �����ô�����ַƴ��
     if (music_proxy_host_.empty()) {
         ESP_LOGE(TAG, "Music proxy not configured. Check DEFAULT_MUSIC_PROXY_HOST in config.h.");
         return -10;
@@ -681,7 +665,6 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     while (*src && dst < end) {
         unsigned char c = (unsigned char)*src;
         if (c == ' ') {
-            // �ո��� HTTP request line ���Ƿָ������������
             if (dst + 3 <= end) {
                 *dst++ = '%';
                 *dst++ = '2';
@@ -691,10 +674,8 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
             continue;
         }
         if (c < 0x80) {
-        // ASCIIֱ�Ӹ���
             *dst++ = *src;
         } else {
-        // ��ASCII %XX ����
             int bytes = 0;
             if ((c & 0xE0) == 0xC0) bytes = 2;
             else if ((c & 0xF0) == 0xE0) bytes = 3;
@@ -721,7 +702,6 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
                  music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
     }
     ConvertToPcmUrl(full_url, sizeof(full_url));
-    // ������ڲ��ţ���ͣ�ɸ��ٷ��¸�
     if (mp3_->IsPlaying()) {
         ESP_LOGI(TAG, "PlayOnlineMusic: stopping current music for new request");
         mp3_->Stop();
@@ -738,9 +718,7 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
 }
 
 /**
- * @brief �������ִ�����������ַ
- * @param host ��������IP
- * @param port �����˿�
+ * @brief 设置 QQ 音乐代理服务器（MCP 工具）
  */
 void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
     music_proxy_host_ = host;
@@ -749,7 +727,6 @@ void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
 }
 
 // ============================================
-// CuckooTools MCPע��
 // ============================================
 CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
 
@@ -761,7 +738,7 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
         mcp.AddTool("cuckoo.performance",
-            "Hourly chime: bell rings + music. ONLY call when user explicitly says ��ʱ/���㱨ʱ/����/what time. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
+            "Hourly chime: bell rings + music. ONLY call when user explicitly says 报时/半点报时/几点/what time. DO NOT auto-call on wake-up. For shows/singing/dancing use cuckoo.start_show instead.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int hour = props["hour"].value<int>();
@@ -828,8 +805,8 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.start_show",
-        "�ۺϱ��ݣ��赸+С��+ˮ��+����һ������ '����' '��Ŀ' '��������' '����' '�ݳ�' ���ۺϱ�������"
-        "ע�⣺����û�ֻ�ᵽĳ����ɫ��԰��/�մ�/С��������Ҫ�ô˹��ߣ����ö�Ӧ�Ľ�ɫ���ߡ�ʶ���ı������ӽ���ɫ��ʱ����'Ӧ��''�յ�''�ִ�'���մ'ԭַ'��԰�ӣ���Ҳ�ö�Ӧ��ɫ���ߣ���Ҫ�ô˹��ߡ�",
+        "综合表演：舞蹈+小提琴+水车+鸟跳一起进行。触发词 '表演' '节目' '出来表演' '演出' '表演' 等综合表演相关。"
+        "注意：用户只提到某个角色（花园/美边/小狗）时不要用此工具，用对应的角色工具。识别到文本中包含角色（'花园''琳达''小狗' ）时也用对应角色工具，不要用此工具。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StartShow();
@@ -845,7 +822,7 @@ void CuckooTools::RegisterAll() {
         });
 
     mcp.AddTool("cuckoo.stop_music",
-        "Stop music playback. Call ONLY when user explicitly asks to stop the music (ͣ��/��ͣ����/��Ҫ����/�ص�). Do NOT call this for performance or alarm - use cuckoo.stop_all for those.",
+        "Stop music playback. Call ONLY when user explicitly asks to stop the music (停止/别播了/不要音乐/关掉). Do NOT call this for performance or alarm - use cuckoo.stop_all for those.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopMusic();
@@ -969,7 +946,7 @@ void CuckooTools::RegisterAll() {
     }
 
     mcp.AddTool("cuckoo.stop_alarm",
-        "Stop a ringing ALARM only. For ������/ͣ����. NOT for stopping music/performance - use cuckoo.stop_all for that.",
+        "Stop a ringing ALARM only. For 关闭闹钟/停闹钟. NOT for stopping music/performance - use cuckoo.stop_all for that.",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             state_machine_->StopAlarm();
@@ -983,7 +960,7 @@ void CuckooTools::RegisterAll() {
         pl.AddProperty(Property("start_hour", kPropertyTypeInteger, 0, 23));
         pl.AddProperty(Property("end_hour", kPropertyTypeInteger, 0, 23));
         mcp.AddTool("cuckoo.set_quiet_mode",
-            "Set chime quiet mode. 0=ȫ�쾲��(������ʱ), 1=ȫ�챨ʱ, 2=��ھ���(LDR����), 3=ָ��ʱ��ξ���(start_hour~end_hour����). "
+            "Set chime quiet mode. 0=全天静音(永不报时), 1=全天报时, 2=暗光静音(LDR判断), 3=指定时间段静音(start_hour~end_hour之间). "
             "Mode 2 uses light sensor only (no time limit). Mode 3 defaults to 22-6.",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
@@ -1014,8 +991,8 @@ void CuckooTools::RegisterAll() {
                 "{\"mode\": %d, \"start_hour\": %d, \"end_hour\": %d, "
                 "\"desc\": \"mode=%d: %s\"}",
                 m, sh, eh, m,
-                m == 0 ? "ȫ�쾲��" : m == 1 ? "ȫ�챨ʱ" :
-                m == 2 ? "��ھ���(LDR)" : "ʱ��ξ���");
+                m == 0 ? "全天静音" : m == 1 ? "全天报时" :
+                m == 2 ? "暗光静音(LDR)" : "时间段静音");
             return std::string(json);
         });
 
@@ -1065,7 +1042,6 @@ void CuckooTools::RegisterAll() {
                 }
             });
     }
-    // === ��ɫ���� ===
     mcp.AddTool("cuckoo.dog_show",
         "小狗丽莎表演：开门、小狗跑出来、叫一声、摇头摆尾10秒、再叫一声、退回、关门。说完只回一句简短的话，不要多说。用户说 丽莎在哪里 / 丽莎，丽莎 / 丽莎出来 时调用此工具。Dog show: call when user asks about dog/puppy/Lisa. Keep response very brief.",
         PropertyList(),
@@ -1123,20 +1099,9 @@ void CuckooTools::RegisterAll() {
 }
 
 // ============================================
-// �ӿ� FreeRTOS ���� (Core 1)
 //
-// ����: 250ms sub-tick, 1s per tick
-// ְ��:
-// - NTPʱ��ͬ����60s/300s����У׼��
-// - �豸״̬��أ�idle?�����Զ��������ţ�AI˵��ʱС�������Ծ��
-// - ���Ѵ���ֵ��̬�������Ի���0.3����ֹ�󴥷���idleʱ0.02��������
-// - ��Ƶʱ���ˢ�£�ÿ10s��ֹI2S��Դ�����رգ�
-// - ����/��㱨ʱ����
-// - ���Ӽ��
-// - RTC������־��ÿ30s���浽�������ڴ棩
 // ============================================
 void cuckoo_clock_task(void* params) {
-    // ������ȡ����ԭ�� + RTC ����
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
              esp_reset_reason(), esp_reset_reason());
     if (rtc_crash_log.magic == 0xCAFEBABE && rtc_crash_log.tick_sec > 0) {
@@ -1151,18 +1116,15 @@ void cuckoo_clock_task(void* params) {
 
     auto* sm = static_cast<CuckooStateMachine*>(params);
 
-    // ����ʱ����ˢ����Ƶʱ�������ֹ�����ڼ�I2S���Ź���ʱ
     auto& as = Application::GetInstance().GetAudioService();
     as.RefreshOutputTimestamp();
     as.RefreshInputTimestamp();
 
-    // ������ WiFi ������ NTP gettimeofday ���ɻ�ȡ��ǰʱ��
 
-    // ������ WiFi ������ NTP gettimeofday ���ɻ�ȡ��ǰʱ��
     {
         struct timeval tv;
         gettimeofday(&tv, nullptr);
-        if (tv.tv_sec > 1000000000) {  // 2001���Ժ�˵�� NTP ��ͬ��
+        if (tv.tv_sec > 1000000000) {
             struct tm timeinfo;
             localtime_r(&tv.tv_sec, &timeinfo);
             sm->current_hour_ = timeinfo.tm_hour;
@@ -1192,47 +1154,36 @@ void cuckoo_clock_task(void* params) {
         }
     }
 
-    // ����Ĭ�����ִ�����ַ������ config.h ����ʱ�̶���
     sm->SetMusicProxy(DEFAULT_MUSIC_PROXY_HOST, DEFAULT_MUSIC_PROXY_PORT);
 
-    // �� NVS �����ѱ��������;���ģʽ
     sm->LoadAlarmsFromNvs();
     sm->LoadQuietMode();
     sm->LoadKidsActive();
 
 uint32_t tick_sec = 0;
 
- // TODO(#22): ��1����ѯ��Ϊ�¼�����:
- // - ע�� OnDeviceStateChanged �ص����� idle/active ת��
- // - ��������ʱ����NTPͬ������tick_sec����
- // - ����Core 1�󲿷�ʱ���������ʡ��
     uint32_t sub_tick = 0;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(250));
         sub_tick++;
 
-        // ����豸��idle�����û�����AI����¼ʱ������ڷ��󴥷�
         {
             auto dev_state = (int)Application::GetInstance().GetDeviceState();
             if (sm->prev_device_state_ == (int)kDeviceStateIdle && dev_state != (int)kDeviceStateIdle) {
                 sm->last_idle_exit_us_ = esp_timer_get_time();
-                ESP_LOGI(TAG, "Device woke up �� opening bird door");
+                ESP_LOGI(TAG, "Device woke up - opening bird door");
                 sm->OpenBirdDoor();
 
-                // �Ի�����߻��Ѵ���ֵ��0.3������ֹ�󴥷��������ڼ䲻�裬��Show�Լ����ƣ�
                 if (!sm->IsRunning())
                     Application::GetInstance().GetAudioService().SetWakeWordThreshold(0.3f);
 
-                // �Ի��лָ���׼��˷����棨30dB�������� AEC ���������Ŵ�
                 Application::GetInstance().GetAudioService().SetInputGain(30.0f);
             } else if (sm->prev_device_state_ != (int)kDeviceStateIdle && dev_state == (int)kDeviceStateIdle) {
-                ESP_LOGI(TAG, "Device sleeping �� closing bird door");
+                ESP_LOGI(TAG, "Device sleeping - closing bird door");
                 sm->CloseBirdDoor();
 
-                // idleʱ�ָ�����ֵ��0.02�������������������ڼ�/�Ÿ��ڼ䲻����
                 // NOTE(2026-07-19): threshold restore moved to the safety-net check below
 
-                // idleʱ������˷����棨37.5dB����������װλ������
                 Application::GetInstance().GetAudioService().SetInputGain(45.0f);
             }
             sm->prev_device_state_ = dev_state;
@@ -1252,24 +1203,18 @@ uint32_t tick_sec = 0;
                 idle_thresh_applied = false;
             }
 
-            // AI˵��ʱС����滰��������Ծ�����ڱ��������ޱ�������ʱ��
             if (dev_state == (int)kDeviceStateSpeaking) {
-                // �����Ƶ�����Ծ�ȣ�300ms ������� = ����˵����
                 int64_t ms_since_output = Application::GetInstance().GetAudioService().MsSinceLastOutput();
-                if (ms_since_output < 300) {
-                    // ����˵����������������50-200ms�����
+                if (ms_since_output < 300 && !sm->IsRunning()) {
                     sm->BirdJumpShort();
                 }
-                // ��˵��ʱ����
             }
              sm->MusicDanceTick();
         }
 
-        // === ÿ��（sub_tick % 4 == 0）===
         if (sub_tick % 4 == 0) {
             tick_sec = sub_tick / 4;
 
-        // NTPͬ����δͬ��ʱÿ60�����ԣ�ͬ����ÿ300��У׼һ��
         if (!sm->time_set_ ? (tick_sec % 60 == 0) : (tick_sec % 300 == 0)) {
             struct timeval tv;
             gettimeofday(&tv, nullptr);
@@ -1300,10 +1245,7 @@ uint32_t tick_sec = 0;
             }
         }
 
-        // WiFiʡ����CuckooBoard::SetPowerSaveLevel���ش���
-        // �����ֲ���ʱ����LOW_POWER��
 
- // ÿ30�뱣�������־��RTC�������ڴ棨RTC�ڿ��Ź���λ���Ա�����
         if (tick_sec % 30 == 0) {
             auto& app = Application::GetInstance();
             rtc_crash_log.tick_sec = tick_sec;
@@ -1312,25 +1254,20 @@ uint32_t tick_sec = 0;
             rtc_crash_log.free_heap = esp_get_free_heap_size();
         }
 
- // ÿ60������+ջˮλ�����ڱ������
         if (tick_sec % 60 == 0) {
             ESP_LOGI(TAG, "Heartbeat t=%ds stack_hwm=%d free_heap=%d",
                      (int)tick_sec, (int)uxTaskGetStackHighWaterMark(NULL),
                      (int)esp_get_free_heap_size());
         }
 
-    // ��Ƶ��Դ������������/������� 15 ���ر� I2S ���»���ʧЧ
         if (tick_sec % 10 == 0) {
             auto& as = Application::GetInstance().GetAudioService();
             as.RefreshOutputTimestamp();
             as.RefreshInputTimestamp();
-            // ��ȡ�����������ҹ��ģʽ
             sm->is_dark_ = sm->CheckDark();
         }
 
-        // ���ʱ����ͨ�� NTP �� MCP ���ã����ڲ�ʱ��
         if (sm->time_set_) {
-            // NTP��ͬ��ʱ��ϵͳʱ�䣬��������ʱ��Ư��
             struct timeval tv;
             gettimeofday(&tv, nullptr);
             if (tv.tv_sec > 1000000000) {
@@ -1340,7 +1277,6 @@ uint32_t tick_sec = 0;
                 sm->current_min_ = timeinfo.tm_min;
                 sm->current_sec_ = timeinfo.tm_sec;
             } else {
-                // NTPδͬ������MCP���ʱ�䣩�����˵�����ʱ�ӵ���
                 sm->current_sec_++;
                 if (sm->current_sec_ >= 60) {
                     sm->current_sec_ = 0;
@@ -1352,25 +1288,20 @@ uint32_t tick_sec = 0;
                 }
             }
 
-            // ����Ͱ����
             int h = sm->current_hour_;
             int m = sm->current_min_;
 
-        // ���㱨ʱÿ���� == 0 ʱ�������� NeedHourlyChime ���ظ���
             if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
                 ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
                 sm->CheckTime(h, m, sm->is_dark_);
             }
-        // ��㱨ʱÿ���� == 30 ʱ�������� NeedHalfHourlyChime ���ظ���
             else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
                 ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
                 sm->CheckTime(h, m, sm->is_dark_);
             }
 
-            // �����飨ÿ����һ�Σ�
             sm->CheckAlarms(h, m, sm->current_sec_);
         }
         }  // sub_tick >= 4 guard
- // ע��NTPͬ��������ʱ������ÿ��tick_sec%86400У׼
     }
 }

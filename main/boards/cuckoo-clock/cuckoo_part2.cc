@@ -852,6 +852,104 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
     return 0;
 }
 
+// 流式解码：逐帧回调，零大 buffer，适合长音频（如 0009.mp3）
+int Mp3Player::DecodeStreaming(int index,
+    std::function<void(const int16_t* pcm, size_t samples, int src_sr, void* user_data)> callback,
+    void* user_data) {
+    stop_requested_ = false;
+    ducking_gain_ = 1.0f; ducking_start_us_ = 0;
+
+    char filename[16];
+    snprintf(filename, sizeof(filename), "%04d.mp3", index);
+
+    void* mp3_data = nullptr;
+    size_t mp3_size = 0;
+    if (!assets_->GetAssetData(filename, mp3_data, mp3_size)) {
+        ESP_LOGE(TAG, "Failed to get asset: %s", filename);
+        return -1;
+    }
+    if (!mp3_data || mp3_size == 0) {
+        ESP_LOGE(TAG, "Empty asset: %s", filename);
+        return -1;
+    }
+
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+    esp_audio_err_t ret = esp_mp3_dec_open(nullptr, 0, &mp3_dec_handle_);
+    if (ret != ESP_AUDIO_ERR_OK) {
+        ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
+        return -1;
+    }
+
+    uint8_t* mp3_start = (uint8_t*)mp3_data;
+    size_t mp3_data_size = mp3_size;
+    if (mp3_size > 10 && memcmp(mp3_start, "ID3", 3) == 0) {
+        uint32_t id3_size = ((mp3_start[6] & 0x7F) << 21) | ((mp3_start[7] & 0x7F) << 14)
+                          | ((mp3_start[8] & 0x7F) << 7)  |  (mp3_start[9] & 0x7F);
+        size_t skip = 10 + id3_size;
+        if (skip < mp3_size - 1024) {
+            mp3_start += skip;
+            mp3_data_size -= skip;
+        }
+    }
+
+    esp_audio_dec_info_t dec_info = {};
+    uint8_t* input_ptr = mp3_start;
+    size_t remaining = mp3_data_size;
+
+    while (remaining > 0 && !stop_requested_) {
+        size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
+        memcpy(input_buf_, input_ptr, in_len);
+
+        esp_audio_dec_in_raw_t raw;
+        raw.buffer = input_buf_;
+        raw.len = in_len;
+        raw.consumed = 0;
+        raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
+
+        esp_audio_dec_out_frame_t frame;
+        frame.buffer = output_buf_;
+        frame.len = kOutputBufSize;
+        frame.needed_size = 0;
+        frame.decoded_size = 0;
+
+        ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
+
+        if (ret == ESP_AUDIO_ERR_OK) {
+            if (frame.decoded_size > 0) {
+                size_t n = frame.decoded_size / sizeof(int16_t);
+                int sr = dec_info.sample_rate ? dec_info.sample_rate : 16000;
+                callback((const int16_t*)frame.buffer, n, sr, user_data);
+            }
+            size_t consumed = raw.consumed;
+            if (consumed == 0) break;
+            if (consumed > remaining) consumed = remaining;
+            input_ptr += consumed;
+            remaining -= consumed;
+        } else if (ret == ESP_AUDIO_ERR_NOT_SUPPORT) {
+            break;
+        } else {
+            if (raw.consumed) {
+                size_t skip = raw.consumed;
+                if (skip > remaining) skip = remaining;
+                input_ptr += skip;
+                remaining -= skip;
+            } else {
+                break;
+            }
+        }
+    }
+
+    if (mp3_dec_handle_) {
+        esp_mp3_dec_close(mp3_dec_handle_);
+        mp3_dec_handle_ = nullptr;
+    }
+
+    return 0;
+}
+
 // ============================================
 // LDR 锟斤拷锟斤拷锟斤拷锟借传锟斤拷锟斤拷 (ADC oneshot模式)
 // ============================================
