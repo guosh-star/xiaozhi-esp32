@@ -1060,15 +1060,20 @@ LdrSensor::~LdrSensor() {
 }
 
 /**
- * @brief 读取光敏电阻原始 ADC 值
+ * @brief 读取光敏电阻原始 ADC 值（连续 5 次取平均，间隔 20ms）
  * @return 0-4095（12 位），0=最暗，4095=最亮
  */
 int LdrSensor::ReadRaw() {
-    int raw = 0;
+    int sum = 0;
     if (adc_handle_) {
-        adc_oneshot_read(adc_handle_, adc_chan_, &raw);
+        for (int i = 0; i < 5; i++) {
+            int raw;
+            adc_oneshot_read(adc_handle_, adc_chan_, &raw);
+            sum += raw;
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
     }
-    return raw;  // 0-4095 (12-bit), 0=暗值, 4095=亮值
+    return sum / 5;  // 0-4095 (12-bit), 5次平均平滑瞬时抖动
 }
 
 /**
