@@ -51,36 +51,34 @@
 // ============================================
 
 // M1 舞蹈电机 — GPIO4,5
-//   GPIO4,5,6,7
+//   引脚组：GPIO4,5（M1 舞蹈）+ GPIO6,7（M2 大门）
 #define MOTOR_DANCE_IN1  GPIO_NUM_4 // M1 正转
 #define MOTOR_DANCE_IN2  GPIO_NUM_5
-#define MOTOR_BIRD_IN1   GPIO_NUM_6 // M4 小提琴旋转（备用）
-#define MOTOR_BIRD_IN2   GPIO_NUM_7
+#define MOTOR_BIRD_IN1   GPIO_NUM_6 // M2 大门正转（board.cc m2_ 实际用途）
+#define MOTOR_BIRD_IN2   GPIO_NUM_7 // M2 大门反转
 
-// M2 大门电机 — GPIO9,46 | M3 小狗电机 — GPIO10,11 | M4 小提琴升降 — GPIO18,45
-//   GPIO10,11,18,3
+// M4 小鸟门电机 — GPIO9,46 | M3 小狗电机 — GPIO10,11 | 小提琴升降电机 — GPIO18,45
+//   引脚组：GPIO10,11（M3 小狗）+ GPIO18,45（小提琴升降）+ GPIO9,46（M4 鸟门）
 #define MOTOR_DOG_IN1    GPIO_NUM_10 // M3 小狗正转
 #define MOTOR_DOG_IN2    GPIO_NUM_11
-#define MOTOR_VIOLIN_IN1 GPIO_NUM_18 // violin_motor 正转
-#define MOTOR_VIOLIN_IN2 GPIO_NUM_45 // violin_motor 反转（注：实际脚号为45）
+#define MOTOR_VIOLIN_IN1 GPIO_NUM_18 // 小提琴升降电机正转
+#define MOTOR_VIOLIN_IN2 GPIO_NUM_45 // 小提琴升降电机反转（注：实际脚号为45）
 
-// 大门电机（独立定时器2）
+// 鸟门电机（PWM 驱动，独立定时器2）
 //
-#define MOTOR_DOOR_IN1   GPIO_NUM_9  // M2 大门正转
-#define MOTOR_DOOR_IN2   GPIO_NUM_46
+#define MOTOR_DOOR_IN1   GPIO_NUM_9  // M4 小鸟门正转（board.cc m4_ 实际用途）
+#define MOTOR_DOOR_IN2   GPIO_NUM_46 // M4 小鸟门反转
 
 // 水车+鸟跳电机（DRV8833 独立控制，定时器3）
 #define MOTOR_WATER_BIRD_IN1  GPIO_NUM_8  // 水车旋转
 #define MOTOR_WATER_BIRD_IN2  GPIO_NUM_39 // 鸟跳驱动
 
-// 舵机引脚（SG90，定时器1）
+// 舵机引脚（2克微型舵机，定时器1）
 //
 #define SERVO_VIOLIN      GPIO_NUM_40 // 小提琴手臂舵机
 #define SERVO_DOG         GPIO_NUM_42 // 狗尾舵机
 
 // 光敏电阻（ADC 检测昼夜）
-//
-//
 //
 #define LDR_GPIO          GPIO_NUM_3     // ADC1_CH2
 #define LDR_ADC_UNIT      ADC_UNIT_1
@@ -97,15 +95,14 @@
 
 // LEDC PWM 通道分配（定时器0，四路主电机）
 //
-//
 #define LEDC_CH_DANCE_IN1   LEDC_CHANNEL_0 // M1 正转
 #define LEDC_CH_DANCE_IN2   LEDC_CHANNEL_1 // M1 反转
-#define LEDC_CH_BIRD_IN1    LEDC_CHANNEL_2 // M4 正转（备用）
-#define LEDC_CH_BIRD_IN2    LEDC_CHANNEL_3 // M4 反转（备用）
+#define LEDC_CH_BIRD_IN1    LEDC_CHANNEL_2 // M2 大门正转（PWM 备用，board.cc 中 m2_ 用 GPIO 直驱）
+#define LEDC_CH_BIRD_IN2    LEDC_CHANNEL_3 // M2 大门反转（PWM 备用）
 #define LEDC_CH_DOG_IN1     LEDC_CHANNEL_4 // M3 正转
 #define LEDC_CH_DOG_IN2     LEDC_CHANNEL_5 // M3 反转
-#define LEDC_CH_VIOLIN_IN1  LEDC_CHANNEL_6 // violin_motor 正转
-#define LEDC_CH_VIOLIN_IN2  LEDC_CHANNEL_7 // violin_motor 反转
+#define LEDC_CH_VIOLIN_IN1  LEDC_CHANNEL_6 // 小提琴升降正转
+#define LEDC_CH_VIOLIN_IN2  LEDC_CHANNEL_7 // 小提琴升降反转
 
 // 舵机 PWM 通道（定时器1）
 #define LEDC_CH_SERVO_V     LEDC_CHANNEL_0 // 小提琴舵机
@@ -113,8 +110,8 @@
 #define LEDC_TIMER_SERVO    LEDC_TIMER_1
 
 // 大门电机 PWM 通道（定时器2）
-#define LEDC_CH_DOOR_IN1    LEDC_CHANNEL_2 // 大门正转
-#define LEDC_CH_DOOR_IN2    LEDC_CHANNEL_3 // 大门反转
+#define LEDC_CH_DOOR_IN1    LEDC_CHANNEL_2 // M4 小鸟门正转（PWM 驱动）
+#define LEDC_CH_DOOR_IN2    LEDC_CHANNEL_3 // M4 小鸟门反转（PWM 驱动）
 #define LEDC_TIMER_DOOR     LEDC_TIMER_2
 
 // 水车+鸟跳 PWM 通道（定时器3）
@@ -160,7 +157,7 @@
 #define WATER_WHEEL_SPEED      100 // 水车转速（%）
 
 // 舵机中立角度
-#define SERVO_CENTER_ANGLE     90 // SG90 中立位 90°
+#define SERVO_CENTER_ANGLE     90 // 舵机中立位 90°（2克微型舵机）
 
 // ============================================
 // QQ 音乐代理服务器配置

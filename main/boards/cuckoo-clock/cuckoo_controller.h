@@ -70,8 +70,8 @@ public:
 };
 
 /**
- * SG90 舵机封装
- * 使用 PWM 控制，50Hz，0.5-2.5ms 脉冲
+ * @brief 2克微型舵机封装
+ * 使用 PWM 控制，50Hz，0.5-2.5ms 脉冲，角度 0~180°
  */
 class Servo {
 private:
@@ -99,7 +99,8 @@ public:
  */
 
 /**
- * 钟声合成播放器
+ * @brief 钟声合成播放器
+ * 播放布谷鸟叫声（同步/异步）与钟声音效，支持独立初始化。
  */
 class BellSoundPlayer {
 public:
@@ -210,7 +211,8 @@ public:
 };
 
 /**
- * 光敏电阻传感器 (ADC 模拟读取，昼夜检测)
+ * @brief 光敏电阻传感器（ADC 模拟读取，昼夜检测）
+ * 用 ADC oneshot 读取环境亮度，阈值以下判定为暗（夜间静音模式用）。
  */
 class LdrSensor {
 private:
@@ -487,8 +489,8 @@ public:
 };
 
 /**
- * 布谷鸟钟 MCP 工具集
- * 注册所有钟控 MCP 工具到小智 AI
+ * @brief 布谷鸟钟 MCP 工具集
+ * 注册所有钟控 MCP 工具到小智 AI（报时、演出、音乐、闹钟、门/灯等）。
  */
 class CuckooTools {
 private:

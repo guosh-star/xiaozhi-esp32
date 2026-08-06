@@ -1,17 +1,22 @@
 // ===== Part 5: MCP注册、clock_task (L4413-4991) =====
 
+/**
+ * @brief 音乐舞蹈 tick（250ms 主循环调用）
+ * 音乐播放且小朋友们活跃时：M1 正反转脉冲 + 吉他/狗尾舵机摆动；
+ * 音乐停止或小朋友休息时：平衡 M1、送狗退场、关门。
+ */
 void CuckooStateMachine::MusicDanceTick() {
-    // Mp3Player tracks playback state (stays true during AI speech ducking),
-    // while IsBgAudioActive() may briefly drop when audio service clears buffers.
-    // Using both ensures music dance survives AI conversations.
+    // Mp3Player 跟踪播放状态（AI 说话 ducking 期间保持 true），
+    // 而 IsBgAudioActive() 在音频服务清空缓冲时可能短暂为 false。
+    // 两者并用确保音乐舞蹈在 AI 对话期间不中断。
     bool music_playing = (mp3_ && mp3_->IsPlaying()) ||
                          Application::GetInstance().GetAudioService().IsBgAudioActive();
-    // Track kids_active_ transition for mid-music changes
+    // 跟踪 kids_active_ 状态变化，用于音乐中途的切换
     static bool was_kids_active = true;
     bool kids_now = kids_active_.load();
 
     if (music_playing && !IsRunning()) {
-        // MusicDanceTick log muted to reduce noise (prints every 270ms)
+        // MusicDanceTick 日志静音以降低噪声（每 270ms 打印一次）
         if (music_dance_enabled_ != 1) {
             music_dance_phase_ = 0;
             music_dance_enabled_ = 1;
@@ -19,21 +24,21 @@ void CuckooStateMachine::MusicDanceTick() {
             was_kids_active = kids_now;
         }
 
-        // Dog comes out when music plays &amp; kids active. NOT gated on
-        // music_dance_enabled_ init block which can be skipped by stale state.
+        // 音乐播放且小朋友们活跃时小狗出场。不受 music_dance_enabled_
+        // 初始化块门控（该块可能被陈旧状态跳过）。
         if (kids_now && !dog_intro_running_ && !dog_intro_done_) {
             dog_intro_running_ = true;
             MusicDogIntro();
         }
 
-        // Mid-music transition: kids became active → bring dog out
+        // 音乐中途切换：小朋友们变为活跃 → 小狗出场
         if (!was_kids_active && kids_now && !dog_intro_running_ && !dog_intro_done_) {
             was_kids_active = true;
             dog_outro_done_ = false;
             dog_intro_running_ = true;
             MusicDogIntro();
         }
-        // Mid-music transition: kids became resting → stop & put dog away
+        // 音乐中途切换：小朋友们变为休息 → 停止并送回小狗
         if (was_kids_active && !kids_now) {
             was_kids_active = false;
             if (m1_) m1_->Stop();
@@ -50,10 +55,10 @@ void CuckooStateMachine::MusicDanceTick() {
 
         int phase = music_dance_phase_ % 8;
 
-        // Wait for dog_intro to finish before taking over servo/motor
+        // 等待小狗出场动画结束再接管舵机/电机
         if (kids_now && dog_intro_done_) {
             if (kids_appreciating_ && m1_) {
-                // Phase 0-3 fwd 20ms, Phase 4-5 rev 20ms, Phase 6 rev 22ms, Phase 7 rev 24ms
+                // Phase 0-3 正转 20ms，Phase 4-5 反转 20ms，Phase 6 反转 22ms，Phase 7 反转 24ms
                 if (phase <= 3) {
                     m1_->Forward();
                     vTaskDelay(pdMS_TO_TICKS(20));
@@ -77,8 +82,8 @@ void CuckooStateMachine::MusicDanceTick() {
                 }
             }
             
-            // Guitar + Dog servos: sync to same phase rhythm
-            // Phase 0-3: forward beat, Phase 4-7: backward beat
+            // 吉他 + 小狗舵机：与同一节奏同步
+            // Phase 0-3：正向节拍，Phase 4-7：反向节拍
             static int guitar_angle = 90;
             static int dog_angle = 40;
             bool forward_beat = (phase <= 3);
@@ -109,12 +114,12 @@ void CuckooStateMachine::MusicDanceTick() {
         }
         music_dance_phase_++;
     } else {
-        // Don't shut down during an active performance (ShowTask/KidsDanceShow)
+        // 演出进行中（ShowTask/KidsDanceShow）不关闭设备
         if (is_running_) return;
-        // MusicDT-ELSE log muted to reduce noise (prints every 250ms)
+        // MusicDT-ELSE 日志静音以降低噪声（每 250ms 打印一次）
         was_kids_active = kids_now;
         if (music_dance_enabled_ == 1) {
-            // Balance M1 motor: reverse must match forward
+            // 平衡 M1 电机：反转次数必须匹配正转次数
             if (m1_ && m1_music_rev_count_ < m1_music_fwd_count_) {
                 int diff = m1_music_fwd_count_ - m1_music_rev_count_;
                 ESP_LOGI(TAG, "MusicDance: fwd=%d rev=%d, adding %d reverse pulses", m1_music_fwd_count_, m1_music_rev_count_, diff);
@@ -129,7 +134,7 @@ void CuckooStateMachine::MusicDanceTick() {
             m1_music_rev_count_ = 0;
             if (m1_) m1_->Stop();
             if (violin_servo_) violin_servo_->SetAngle(90);
-            // Music ended: dog goes back, close door (only if kids were active)
+            // 音乐结束：小狗回去、关门（仅当小朋友们活跃过）
             if (!dog_outro_done_) {
                 dog_outro_done_ = true;
                 auto ret = xTaskCreatePinnedToCore([](void* arg) {
@@ -144,6 +149,9 @@ void CuckooStateMachine::MusicDanceTick() {
     }
 }
 
+/**
+ * @brief 小狗出场：开门（异步）+ 狗尾 180→20→35 度 + 小狗前进
+ */
 void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: ENTER");
     dog_intro_running_ = true;
@@ -162,7 +170,7 @@ void CuckooStateMachine::MusicDogIntro() {
     if (dog_servo_) {
         dog_servo_->Sweep(20, 35, 25 * 15);
     }
-    // Re-enable motor power in case MusicDogOutro turned it off mid-way
+    // 重新打开电机电源（防止 MusicDogOutro 中途关闭了它）
     MotorPowerOn();
     dog_intro_done_ = true;
     dog_intro_running_ = false;
@@ -170,6 +178,9 @@ void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: done, handing over to MusicDanceTick");
 }
 
+/**
+ * @brief 小狗退场：狗尾回 20→180 度、小狗后退、关门、关电机电源
+ */
 void CuckooStateMachine::MusicDogOutro() {
     dog_outro_running_ = true;
     if (!dog_out_.load()) {
@@ -178,7 +189,7 @@ void CuckooStateMachine::MusicDogOutro() {
         return;
     }
     dog_out_ = false;
-    // First smooth return to 30deg, then back to home
+    // 先平滑回到 30 度，再回原位
     if (dog_servo_) {
         int cur = dog_state_.angle;
         if (cur > 30) dog_servo_->Sweep(cur, 20, (cur - 30) * 15);
@@ -212,8 +223,8 @@ void CuckooStateMachine::MusicDogOutro() {
 void CuckooStateMachine::KidsDanceShow() {
     if (is_running_) { ESP_LOGW(TAG, "KidsDanceShow: already running"); return; }
     is_running_ = true;
-    // Set kids_active_ NOW so MusicDanceTick doesn't enter else branch
-    // and trigger MusicDogOutro during the door-open delay below
+    // 立即置 kids_active_，避免 MusicDanceTick 进入 else 分支
+    // 而在下面开门延时期间触发 MusicDogOutro
     kids_active_ = true;
     kids_appreciating_ = true;  // M1 light swinging with MusicDanceTick
     music_dance_enabled_ = 1;
@@ -252,9 +263,9 @@ void CuckooStateMachine::KidsDanceShow() {
         sm->KidsComeOut();
         sm->dog_intro_done_ = true;  // safety: ensure MusicDanceTick IF drives motors
         sm->kids_dance_ = true;
-        // Visible dance: same big moves as hourly chime
+        // 可见舞蹈：与整点报时相同的大幅动作
         sm->RunDanceLoop();
-        // MusicDanceTick resume guard: stop M1 + reset state to prevent mid-song race
+        // MusicDanceTick 恢复守卫：停 M1 并重置状态，防止歌曲中途竞态
         if (sm->m1_) sm->m1_->Stop();
         sm->music_dance_enabled_ = 0;
         sm->m1_music_fwd_count_ = 0;
@@ -263,7 +274,7 @@ void CuckooStateMachine::KidsDanceShow() {
             bool music_stopped = !Application::GetInstance().GetAudioService().IsBgAudioActive()
                                  && (!sm->mp3_ || !sm->mp3_->IsPlaying());
             if (music_stopped) {
-                // Music ended: full cleanup, all off
+                // 音乐结束：完整清理，全部关闭
                 sm->kids_appreciating_ = false;
                 gpio_set_level(LED_A_GPIO, 0);
                 gpio_set_level(LED_B_GPIO, 0);
@@ -271,32 +282,36 @@ void CuckooStateMachine::KidsDanceShow() {
                 sm->MusicDogOutro();
                 sm->kids_active_ = false;
             } else {
-                // Music still playing: smooth transition to light swinging
+                // 音乐仍在播放：平滑过渡到轻摆
                 sm->kids_appreciating_ = true;
                 gpio_set_level(LED_A_GPIO, 0);
                 gpio_set_level(LED_B_GPIO, 0);
             }
             sm->kids_dance_ = false;
         }
-        // else: user stopped early, keep door open -> MusicDanceTick takes over
+        // else：用户提前停止，保持开门 → MusicDanceTick 接管
         sm->is_running_ = false;
         ESP_LOGI(TAG, "KidsDanceShow: dance finished, cleaned up");
         vTaskDelete(NULL);
     }, "kids_dance", 4096, this, 4, NULL);
 }
 
+/**
+ * @brief 小朋友们出来欣赏音乐（MCP cuckoo.kids_come_out）
+ * 置 kids_active_ 并保存；若音乐在播且小狗未出场则强制创建小狗出场。
+ */
 void CuckooStateMachine::KidsComeOut() {
     kids_active_ = true;
     dog_out_ = true;
     kids_appreciating_ = true;  // light M1 swinging via MusicDanceTick
     SaveKidsActive();
     ESP_LOGI(TAG, "KidsComeOut: kids active, will dance with music");
-    // Safety: if music is playing and dog isn't out yet, force-create dog_intro.
-    // Bypasses MusicDanceTick state machine which can miss the dog due to
-    // prio-6 task scheduling races between dog_outro and dog_intro on Core 1.
-    // User explicitly asked for kids — force create dog_intro regardless of stale state flags.
-    // Don't check dog_intro_done_ or dog_intro_running_ which can be corrupted by
-    // race conditions with MusicDanceTick and PerformanceTask.
+    // 安全措施：音乐在播但小狗还没出场时，强制创建小狗出场任务。
+    // 绕过 MusicDanceTick 状态机（它可能因 Core 1 上 prio-6 任务调度竞态
+    // 在 dog_outro 与 dog_intro 之间漏掉小狗）。
+    // 用户明确要求小朋友 → 不管陈旧状态标志，强制创建小狗出场。
+    // 不检查 dog_intro_done_ 或 dog_intro_running_（它们可能被
+    // MusicDanceTick 与 PerformanceTask 的竞态条件污染）。
     bool music_playing = (mp3_ && mp3_->IsPlaying()) ||
                          Application::GetInstance().GetAudioService().IsBgAudioActive();
     if (music_playing && !IsRunning()) {
@@ -309,12 +324,15 @@ void CuckooStateMachine::KidsComeOut() {
     }
 }
 
+/**
+ * @brief 小朋友们回去休息：停止舞蹈与轻摆，平衡 M1，送回小狗并关门
+ */
 void CuckooStateMachine::KidsRest() {
     if (kids_dance_) { ESP_LOGI(TAG, "KidsRest: stopping dance, sending kids back"); is_running_ = false; kids_dance_ = false; /* force RunDanceLoop exit, then fall through to close */ }
     kids_active_ = false;
     kids_appreciating_ = false;  // stop M1 light swinging
     SaveKidsActive();
-    // Balance M1 motor: reverse must match forward before stopping
+    // 平衡 M1 电机：停止前反转次数必须匹配正转次数
     if (m1_ && m1_music_rev_count_ < m1_music_fwd_count_) {
         int diff = m1_music_fwd_count_ - m1_music_rev_count_;
         ESP_LOGI(TAG, "KidsRest: fwd=%d rev=%d, adding %d reverse pulses", m1_music_fwd_count_, m1_music_rev_count_, diff);
@@ -327,16 +345,19 @@ void CuckooStateMachine::KidsRest() {
     }
     m1_music_fwd_count_ = 0;
     m1_music_rev_count_ = 0;
-    // Stop all movement
+    // 停止所有动作
     if (m1_) m1_->Stop();
     if (violin_servo_) violin_servo_->SetAngle(90);
     if (dog_servo_) dog_servo_->SetAngle(dog_state_.angle);  // hold current position
-    // Send dog back and close door immediately
+    // 立即送回小狗并关门
     MusicDogOutro();
     dog_outro_done_ = true;  // prevent duplicate cleanup when music ends
     ESP_LOGI(TAG, "KidsRest: kids resting, dog back, door closing");
 }
 
+/**
+ * @brief 打开鸟门（M4 正转固定时长）
+ */
 void CuckooStateMachine::OpenBirdDoor() {
     MotorPowerOn();
     if (m4_) {
@@ -347,6 +368,9 @@ void CuckooStateMachine::OpenBirdDoor() {
     MotorPowerOff();
 }
 
+/**
+ * @brief 关闭鸟门（M4 反转固定时长）
+ */
 void CuckooStateMachine::CloseBirdDoor() {
     MotorPowerOn();
     if (m4_) {
@@ -357,6 +381,9 @@ void CuckooStateMachine::CloseBirdDoor() {
     MotorPowerOff();
 }
 
+/**
+ * @brief 启动 LED 交替闪烁任务（300ms 间隔，双灯交替）
+ */
 void CuckooStateMachine::StartFlashLeds() {
     if (flash_leds_active_) return;
     flash_leds_active_ = true;
@@ -373,10 +400,16 @@ void CuckooStateMachine::StartFlashLeds() {
     }, "flash_leds", 2048, this, 4, NULL);
 }
 
+/**
+ * @brief 停止 LED 闪烁任务
+ */
 void CuckooStateMachine::StopFlashLeds() {
     flash_leds_active_ = false;
 }
 
+/**
+ * @brief 播放布谷鸟叫声（同步，开电机电源）
+ */
 void CuckooStateMachine::PlayCuckooSound() {
     MotorPowerOn();
     if (bell_player_) {
@@ -409,6 +442,9 @@ void CuckooStateMachine::SetMotorSpeed(int motor_id, int speed) {
     if (speed == 0) MotorPowerOff();
 }
 
+/**
+ * @brief 设置鸟门电机速度（MCP 工具）
+ */
 void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
     if (speed != 0) MotorPowerOn();
     if (m4_) m4_->SetSpeed(speed);
@@ -416,7 +452,7 @@ void CuckooStateMachine::SetBirdDoorSpeed(int speed) {
 }
 
 /**
- * @brief 粤语查询：返回拼音+释义（MCP 工具）
+ * @brief 粤语查询：经音乐代理返回拼音+释义（保留接口，已不注册为 MCP 工具）
  */
 std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     if (music_proxy_host_.empty()) {
@@ -424,7 +460,7 @@ std::string CuckooStateMachine::CantoneseLookup(const char* word) {
         return "";
     }
 
-    // URL-encode the word manually for esp_http_client
+    // 手工对单词做 URL 编码（供 esp_http_client 使用）
     char encoded[512];
     char* dst = encoded;
     const char* src = word;
@@ -468,7 +504,7 @@ std::string CuckooStateMachine::CantoneseLookup(const char* word) {
         return "";
     }
 
-    // Read response body
+    // 读取响应体
     char* resp = (char*)calloc(1, content_len + 1);
     if (!resp) { esp_http_client_close(cli); esp_http_client_cleanup(cli); return ""; }
 
@@ -488,6 +524,11 @@ std::string CuckooStateMachine::CantoneseLookup(const char* word) {
     return result;
 }
 
+/**
+ * @brief 检查多版本歌曲：服务器返回歌手列表 JSON 则返回给 AI 念给用户选
+ * @param url_or_path 代理路径
+ * @return 非空=多版本 JSON（应念给用户选）；空=单曲直接播
+ */
 std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
     if (music_proxy_host_.empty()) return "";
 
@@ -521,8 +562,8 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
              music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
     ESP_LOGI(TAG, "CheckMultiArtist: GET %s", url);
 
-    // Use raw socket HTTP/1.0 to avoid esp_http_client's HTTP/1.1
-    // which causes server to start ffmpeg even for check-only requests
+    // 用原始 socket HTTP/1.0，避免 esp_http_client 的 HTTP/1.1
+    // （仅检查请求也会让服务器启动 ffmpeg）
     struct hostent* he = gethostbyname(music_proxy_host_.c_str());
     if (!he) return "";
     struct sockaddr_in addr;
@@ -546,7 +587,7 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
         encoded_path, music_proxy_host_.c_str(), music_proxy_port_);
     send(sock, req, strlen(req), 0);
 
-    // Read HTTP response headers
+    // 读取 HTTP 响应头
     char header_buf[1024] = {};
     int hdr_pos = 0;
     while (hdr_pos < 1023) {
@@ -560,7 +601,7 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
     int status = 0;
     sscanf(header_buf, "HTTP/1.%*d %d", &status);
     if (status != 200) {
-        // Read error body (server sends JSON with hint + alternatives on 404)
+        // 读取错误响应体（404 时服务器返回带提示和备选曲目的 JSON）
         int content_len = 0;
         const char* cl = strstr(header_buf, "Content-Length:");
         if (!cl) cl = strstr(header_buf, "content-length:");
@@ -588,7 +629,7 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
         return "{\"error\": \"song_not_found\", \"status\": " + std::to_string(status) + "}";
     }
 
-    // Parse Content-Length
+    // 解析 Content-Length
     int content_len = 0;
     const char* cl = strstr(header_buf, "Content-Length:");
     if (!cl) cl = strstr(header_buf, "content-length:");
@@ -597,7 +638,7 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
 
     if (content_len <= 0) { closesocket(sock); return ""; }
 
-    // Read body
+    // 读取响应体
     char* resp = (char*)calloc(1, content_len + 1);
     if (!resp) { closesocket(sock); return ""; }
     int total = 0;
@@ -619,6 +660,12 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
     return "";
 }
 
+/**
+ * @brief 播放在线音乐（走 PlayOpus：/opus 或 /pcm 双路径）
+ * @param url_or_path 完整 URL 或代理路径（/pcm?q=歌名 等）
+ * @return >=0 成功；-1 播放器未初始化；-10 代理未配置
+ * 自动做 URL 编码、路径转换；已在播放时先停旧任务再播新歌。
+ */
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
     
@@ -628,9 +675,9 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
         ESP_LOGI(TAG, "PlayOnlineMusic: AI speaking, music will overlap (ducked)");
     }
     
-    // If already playing, stop old task cleanly to start new one.
+    // 若正在播放，先干净地停止旧任务再播新的
     
-    // Auto-detect format from URL path
+    // 从 URL 路径自动检测格式
     if (strncmp(url_or_path, "http", 4) == 0) {
         char conv_url[1280];
         strncpy(conv_url, url_or_path, sizeof(conv_url) - 1);
@@ -664,7 +711,7 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
         return -10;
     }
     
- // URL-encode non-ASCII chars (Chinese etc.), esp_http_client does not support raw Chinese URLs
+ // 对非 ASCII 字符做 URL 编码（中文等），esp_http_client 不支持原始中文 URL
     char encoded_path[1024];
     const char* src = url_or_path;
     char* dst = encoded_path;
@@ -701,7 +748,7 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     *dst = '\0';
     
     char full_url[1280];  // http:// + host + :port + encoded_path
- // Ensure path starts with /
+ // 确保路径以 / 开头
     if (encoded_path[0] != '/') {
         snprintf(full_url, sizeof(full_url), "http://%s:%d/%s",
                  music_proxy_host_.c_str(), music_proxy_port_, encoded_path);
@@ -736,12 +783,19 @@ void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
 
 // ============================================
 // ============================================
+/**
+ * @brief 构造 MCP 工具集，绑定状态机指针
+ */
 CuckooTools::CuckooTools(CuckooStateMachine* sm) : state_machine_(sm) {}
 
+/**
+ * @brief 注册全部 MCP 工具（cuckoo.* 前缀，供 AI 大模型调用）
+ * 包括：报时、时间、音乐、演出、门/灯、闹钟、安静模式、在线音乐、各角色秀等。
+ */
 void CuckooTools::RegisterAll() {
     auto& mcp = McpServer::GetInstance();
 
- // === Time / Chime ===
+ // === 时间 / 报时 ===
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 1, 12));
@@ -754,7 +808,7 @@ void CuckooTools::RegisterAll() {
                 return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
             });
     }
-    // === LED Flash (2026-07-29) ===
+    // === LED 闪烁 (2026-07-29) ===
     mcp.AddTool("cuckoo.flash_leds",
         "让两串LED灯串交替闪烁（300ms间隔）。触发词: 闪灯/灯闪起来/灯光闪烁。"
         "关灯用 cuckoo.set_led state=0。",
@@ -792,7 +846,7 @@ void CuckooTools::RegisterAll() {
             return std::string(json);
         });
 
- // === Music / Show ===
+ // === 音乐 / 演出 ===
     {
         PropertyList pl;
         pl.AddProperty(Property("track", kPropertyTypeInteger, 1, 12));
@@ -865,7 +919,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"kids_dance_started\"}");
         });
 
- // === Hardware (wiring later) ===
+ // === 硬件（稍后接线）===
     mcp.AddTool("cuckoo.dance",
         "Dance routine: M1+M2 motors + violin servo.",
         PropertyList(),
@@ -910,7 +964,7 @@ void CuckooTools::RegisterAll() {
     }
 
 
-    // === Alarms ===
+    // === 闹钟 ===
     {
         PropertyList pl;
         pl.AddProperty(Property("hour", kPropertyTypeInteger, 0, 23));
@@ -961,7 +1015,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"alarm_stopped\"}");
         });
 
-    // === Quiet Mode ===
+    // === 安静模式 ===
     {
         PropertyList pl;
         pl.AddProperty(Property("mode", kPropertyTypeInteger, 0, 3));
@@ -1077,7 +1131,7 @@ void CuckooTools::RegisterAll() {
             return std::string("{\"status\": \"garden_show_started\"}");
         });
 
-    // === Hourly Performance Toggle ===
+    // === 整点报时演出开关 ===
     {
         PropertyList pl;
         pl.AddProperty(Property("enabled", kPropertyTypeBoolean, true));
@@ -1109,6 +1163,11 @@ void CuckooTools::RegisterAll() {
 // ============================================
 //
 // ============================================
+/**
+ * @brief 布谷鸟钟主循环任务（Core 1，250ms tick）
+ * 处理：NTP 时钟同步与报时触发、设备状态变化（开门/关门）、
+ * 音乐舞蹈 tick、闹钟检查、心跳日志与崩溃日志保存、LDR 暗光刷新。
+ */
 void cuckoo_clock_task(void* params) {
     ESP_LOGI(TAG, "Reset reason: cpu0=%d cpu1=%d",
              esp_reset_reason(), esp_reset_reason());
@@ -1146,8 +1205,8 @@ void cuckoo_clock_task(void* params) {
         }
     }
 
-    // Bug fix: NTP sync may have jumped past a chime boundary.
-    // Check immediately whether we should trigger an hourly/half-hourly chime.
+    // Bug 修复：NTP 同步可能跳过了报时边界。
+    // 立即检查是否需要触发整点/半点报时。
     if (sm->time_set_.load()) {
         int h = sm->current_hour_.load();
         int m = sm->current_min_.load();
@@ -1190,16 +1249,16 @@ uint32_t tick_sec = 0;
                 ESP_LOGI(TAG, "Device sleeping - closing bird door");
                 sm->CloseBirdDoor();
 
-                // NOTE(2026-07-19): threshold restore moved to the safety-net check below
+                // NOTE(2026-07-19)：阈值恢复移到下面安全网检查中
 
                 Application::GetInstance().GetAudioService().SetInputGain(45.0f);
             }
             sm->prev_device_state_ = dev_state;
 
-            // Safety net (2026-07-19): whenever device is in quiet idle (no show,
-            // no music), enforce sensitive wake threshold 0.02. Fixes paths that
-            // leaked 0.30: session ended during music, show finished while idle, etc.
-            // Flag ensures we only set once per quiet-idle entry (no log spam).
+            // 安全网 (2026-07-19)：设备处于安静空闲（无演出、
+            // 无音乐）时强制恢复灵敏唤醒阈值 0.02。修复了泄漏 0.30 的路径：
+            // 音乐中会话结束、演出在空闲时结束等。
+            // 标志确保每次进入安静空闲只设置一次（避免日志刷屏）。
             static bool idle_thresh_applied = false;
             bool idle_quiet = (dev_state == (int)kDeviceStateIdle) && !sm->IsRunning();
             if (idle_quiet) {
@@ -1236,7 +1295,7 @@ uint32_t tick_sec = 0;
                 ESP_LOGI(TAG, "NTP sync: %02d:%02d:%02d",
                          sm->current_hour_.load(), sm->current_min_.load(), sm->current_sec_.load());
 
-                // Bug fix: periodic NTP sync may have jumped past a chime boundary.
+                // Bug 修复：周期性 NTP 同步可能跳过了报时边界。
                 int h = sm->current_hour_.load();
                 int m = sm->current_min_.load();
                 if (m == 0 && sm->NeedHourlyChime(h)) {

@@ -1,3 +1,14 @@
+/**
+ * @brief 通过原始 BSD Socket 播放网络音乐（Opus OGG 或原始 PCM 流）
+ * @param url 音乐 URL（http://host:port/path/...）
+ * @return 0=成功启动；-1=已在播放或 URL 过长
+ * - 启动 PlayOpusTask 后台任务下载并播放；播放前清空遗留背景音频、重置停止标志与 ducking
+ * - Opus 路径：OGG 解封装 → PushPacketToDecodeQueue（原 Opus 解码队列）
+ * - PCM 路径：legacy 模式 PushBackgroundAudio（高保真音频 ring buffer）
+ * - Ducking：AI 说话时暂停推送数据，让出带宽给语音，说完恢复
+ * - 自动将音乐音量降到 65%，用于 AEC 参考采集降噪
+ * - 网络不通时，降级到串口回退模式
+ */
 int Mp3Player::PlayOpus(const char* url) {
     if (is_playing_) {
         ESP_LOGW(TAG, "PlayOpus: music already playing, refusing (call stop_music first)");
@@ -5,10 +16,10 @@ int Mp3Player::PlayOpus(const char* url) {
     }
     ESP_LOGI(TAG, "PlayOpus: launching for %s", url);
     is_playing_ = true;
-    stop_requested_ = false;  // 锟斤拷锟?Stop() 锟斤拷锟矫的憋拷志
+    stop_requested_ = false;  // 每次播放前重置停止标志
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
 
-    // Clear stale bg audio from previous session to prevent startup noise burst
+    // 清除上一会话遗留的背景音频，防止启动时噪声突发
     Application::GetInstance().GetAudioService().ClearBackgroundAudio();
 
     if (strlen(url) >= 512) {
@@ -21,10 +32,18 @@ int Mp3Player::PlayOpus(const char* url) {
     strncpy(ctx->url, url, 511);
     ctx->url[511] = '\0';
 
-    xTaskCreatePinnedToCore(PlayOpusTask, "opus_http", 1024 * 24, ctx, 3, NULL, 1);  // 24KB stack for OGG/Opus decode
+    xTaskCreatePinnedToCore(PlayOpusTask, "opus_http", 1024 * 24, ctx, 3, NULL, 1);  // OGG/Opus 解码需要 24KB 栈
     return 0;
 }
 
+/**
+ * @brief 网络音乐下载播放任务（后台线程，栈 24KB）
+ * 建立 TCP 连接发送 HTTP GET，按路径分流：
+ * - /opus：OGG 解复用器 + PushPacketToDecodeQueue（与 AI 语音共用解码队列），音量降至 65% 供 AEC；
+ * - /pcm：原始 s16le 推入背景音频环形缓冲，预缓冲满 64000 样本后开启排空；
+ * 支持串口回退（网络不通时经 UART0 转发）；AI 说话时 ducking 暂停下载/降音量；
+ * 播放结束恢复音量与唤醒词阈值，必要时重启唤醒词检测。
+ */
 void Mp3Player::PlayOpusTask(void* arg) {
     struct OpusCtx { Mp3Player* self; char url[512]; };
     auto* ctx = (OpusCtx*)arg;
@@ -38,9 +57,9 @@ void Mp3Player::PlayOpusTask(void* arg) {
 
     auto& app = Application::GetInstance();
 
- // 锟斤拷锟斤拷使锟矫憋拷锟斤拷锟斤拷频锟姐，锟斤拷Ducking锟斤拷锟斤拷AI锟斤拷锟斤拷
+ // 使用背景音频播放，Ducking 控制 AI 语音
 
-    // 锟斤拷锟斤拷URL
+    // 解析 URL
     char host[128] = {};
     char path[384] = {};
     int port = 80;
@@ -84,7 +103,7 @@ void Mp3Player::PlayOpusTask(void* arg) {
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
- // 锟饺筹拷锟皆碉拷锟绞拷锟斤拷锟絀P锟斤拷锟劫筹拷锟斤拷DNS锟斤拷锟斤拷
+ // 先尝试点分十进制 IP，再尝试 DNS 解析
     if (!inet_aton(host, &addr.sin_addr)) {
         struct addrinfo hints = {}, *res = nullptr;
         hints.ai_family = AF_INET;
@@ -102,8 +121,8 @@ void Mp3Player::PlayOpusTask(void* arg) {
     
     ESP_LOGI(TAG, "PlayOpus: connecting to %s:%d...", host, port);
     
- // 锟斤拷锟斤拷锟斤拷connect+5锟诫超时锟斤拷SO_SNDTIMEO锟斤拷lwip锟较诧拷锟斤拷效锟斤拷
- // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷止goto serial_fallback锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷始锟斤拷
+ // 非阻塞 connect + 5 秒超时，SO_SNDTIMEO 对 lwip 不生效
+ // 防止连接超时直接 goto serial_fallback，未关闭 sock
     {
         int sock_flags = fcntl(sock, F_GETFL, 0);
         fcntl(sock, F_SETFL, sock_flags | O_NONBLOCK);
@@ -124,18 +143,18 @@ void Mp3Player::PlayOpusTask(void* arg) {
             close(sock);
             goto serial_fallback;
         }
-        fcntl(sock, F_SETFL, sock_flags);  // restore blocking mode
+        fcntl(sock, F_SETFL, sock_flags);  // 恢复阻塞模式
     }
     
-    if (false) {  // gate for serial fallback
+    if (false) {  // 串口回退开关
 serial_fallback:
- // 锟斤拷锟节伙拷锟斤拷路锟斤拷锟斤拷通锟斤拷goto锟斤拷锟斤，sock锟窖关闭ｏ拷
+ // 网络路径不通，goto 到这里，sock 已关闭
         
- // === Serial fallback ===
+ // === 串口回退 ===
         printf("\x01MUSIC_REQ\x02%s\x03\n", url);
         fflush(stdout);
         
- // 锟斤拷锟酵Ｖ癸拷锟街撅拷锟斤拷锟絇layOpus锟叫碉拷Stop()锟斤拷锟矫ｏ拷锟斤拷锟斤拷fread循锟斤拷锟斤拷锟斤拷
+ // 复位停止标志，使 PlayOpus 中 Stop() 的调用不会中断 fread 循环
         self->stop_requested_ = false;
         self->ducking_gain_ = 1.0f; self->ducking_start_us_ = 0;
         
@@ -150,8 +169,8 @@ serial_fallback:
             app.GetAudioService().PushPacketToDecodeQueue(std::move(packet), true);
         });
         
- // 锟斤拷UART0 RX锟斤拷取Opus锟斤拷锟捷ｏ拷锟斤拷始锟接筹拷锟矫达拷锟斤拷转锟斤拷锟斤拷锟斤拷取锟斤拷锟斤拷
-        vTaskDelay(pdMS_TO_TICKS(3000));  // Wait 3s for serial_relay to fetch data
+ // 从 UART0 RX 读取 Opus 数据，开始延时等待 serial_relay 转取数据
+        vTaskDelay(pdMS_TO_TICKS(3000));  // 等待 3 秒让 serial_relay 转取数据
         
         uint8_t serial_buf[4096];
         uint64_t serial_start = esp_timer_get_time() / 1000;
@@ -169,10 +188,10 @@ serial_fallback:
                 last_data_ms = esp_timer_get_time() / 1000;
                 total_dl += n;
                 demuxer->Process(serial_buf, n);
- // 锟斤拷止AFE锟斤拷源锟斤拷锟斤拷锟截憋拷锟斤拷朔锟?
+ // 防止 AFE 音频源超时被 watchdog 误杀
                 uint64_t now_ms = esp_timer_get_time() / 1000;
-                if (now_ms - last_refresh_ms > 8000) {  // every 8s
- // HACK: Prevent audio watchdog timeout during long downloads
+                if (now_ms - last_refresh_ms > 8000) {  // 每 8 秒
+ // HACK: 防止长时间下载期间音频看门狗超时
                 app.GetAudioService().RefreshInputTimestamp();
 
                     last_refresh_ms = now_ms;
@@ -182,11 +201,11 @@ serial_fallback:
             }
             
             uint64_t now = esp_timer_get_time() / 1000;
-            if (stream_started && (now - last_data_ms > 5000)) break;  // 5s idle
-            if (!stream_started && (now - serial_start > 15000)) break;  // 15s startup
-            if (now - serial_start > 120000) break;  // 2min total
-            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // 锟斤拷锟窖词达拷锟斤拷 stop
- // 500ms锟斤拷锟剿拷丶锟解，锟斤拷止锟斤拷锟斤拷锟斤拷锟窖碉拷锟铰硷拷停止
+            if (stream_started && (now - last_data_ms > 5000)) break;  // 5 秒空闲
+            if (!stream_started && (now - serial_start > 15000)) break;  // 15 秒启动超时
+            if (now - serial_start > 120000) break;  // 总计 2 分钟
+            if (app.GetDeviceState() == kDeviceStateConnecting) break;  // 断连词唤醒后，停止下载
+ // 500ms 双重检测，防止说话声被误判为断连而停止
             auto serial_state = app.GetDeviceState();
             if (serial_state == kDeviceStateSpeaking) {
                 if (!ducked_serial) {
@@ -214,14 +233,14 @@ serial_fallback:
     }
     ESP_LOGI(TAG, "PlayOpus: connected to %s:%d", host, port);
     
-    // 锟斤拷锟斤拷HTTP GET锟斤拷锟斤拷
+    // 发送 HTTP GET 请求
     char req[1024];
     snprintf(req, sizeof(req),
         "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
         path, host, port);
     send(sock, req, strlen(req), 0);
     
-    // 锟斤拷取HTTP锟斤拷应头
+    // 读取 HTTP 响应头
     char header_buf[1024] = {};
     int hdr_pos = 0;
     while (hdr_pos < 1023) {
@@ -244,13 +263,13 @@ serial_fallback:
         return;
     }
 
- // === Detect format: /opus uses OGG demuxer + main audio pipeline ===
- // === /pcm uses raw bytes pushed to background ring buffer ===
+ // === 检测格式：/opus 使用 OGG 解复用器 + 主音频管线 ===
+ // === /pcm 使用原始字节推入后台环形缓冲 ===
     bool use_opus = (strstr(path, "/opus") != nullptr);
     
     if (use_opus) {
-        // ============ Opus path: OGG demux + PushPacketToDecodeQueue ============
- // 锟斤拷AI锟斤拷锟斤拷Opus锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷同一锟斤拷锟斤拷锟脚讹拷锟叫癸拷锟斤拷
+        // ============ Opus 路径：OGG 解复用 + PushPacketToDecodeQueue ============
+ // 与 AI 语音 Opus 播放共用同一解码队列
         ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
         
         auto* demuxer = new OggDemuxer();
@@ -268,7 +287,7 @@ serial_fallback:
         int64_t t0 = esp_timer_get_time(), last_refresh = t0;
         size_t total_dl = 0;
         
- // 锟斤拷锟街诧拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷65%锟斤拷锟斤拷锟斤拷AEC锟截采革拷锟斤拷
+ // 播放音乐时音量降至 65%，并开启 AEC 参考采集
         auto* codec = Board::GetInstance().GetAudioCodec();
         int old_vol = codec ? codec->output_volume() : 90;
         int music_vol = old_vol * 65 / 100;
@@ -276,7 +295,7 @@ serial_fallback:
         if (codec) codec->SetOutputVolume(music_vol);
         ESP_LOGI(TAG, "PlayOpus: volume %d -> %d for AEC", old_vol, music_vol);
         
-        bool is_ducking = false;  // true = AI speaking, don't push music
+        bool is_ducking = false;  // true = AI 正在说话，不推送音乐
         
         while (self->is_playing_ && !self->stop_requested_) {
             int read = recv(sock, buf, CHUNK, 0);
@@ -286,10 +305,10 @@ serial_fallback:
             }
             total_dl += read;
 
- // Ducking: AI说锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟捷碉拷锟斤拷锟狡革拷锟斤拷锟斤拷锟斤拷
- // 锟斤拷锟斤拷speaking状态时ResetDecoder锟斤拷锟斤拷锟斤拷私锟斤拷锟斤拷锟斤拷
- // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟捷伙拷使锟斤拷锟斤拷锟斤拷前锟斤拷锟斤拷一小锟轿ｏ拷5-15锟斤拷锟紸I锟截革拷锟叫硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
- // 锟斤拷一锟斤拷3-5锟斤拷锟接的革拷锟斤拷5-15锟斤拷锟紸I锟截革拷锟叫硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
+ // Ducking: AI 说话时暂停下载数据，让出 WiFi 带宽给语音
+ // 仅在 speaking 状态时 ResetDecoder，避免清除私有数据
+ // 若先清除数据会使播放器前端丢一小段（5-15ms），AI 重复中间内容
+ // 先等 3-5 秒的音频，再 5-15 秒 AI 重复中间内容
             auto dev_state = app.GetDeviceState();
             if (dev_state == kDeviceStateConnecting) {
                 ESP_LOGI(TAG, "PlayOpus: auto-stop (wake word)");
@@ -300,7 +319,7 @@ serial_fallback:
                     is_ducking = true;
                     ESP_LOGI(TAG, "PlayOpus: ducking for AI speech...");
                 }
-                demuxer->Process(buf, read);  // keep decoder state, skip output
+                demuxer->Process(buf, read);  // 保持解码器状态，跳过输出
                 continue;
             }
             if (is_ducking) {
@@ -317,11 +336,11 @@ serial_fallback:
             }
         }
         
-        // 锟街革拷锟斤拷锟斤拷
+        // 恢复音量
         if (codec) codec->SetOutputVolume(old_vol);
         ESP_LOGI(TAG, "PlayOpus: volume restored to %d", old_vol);
         
- // 锟饺达拷锟斤拷锟斤拷锟斤拷锟斤拷趴锟?
+ // 等待播放队列排空
         vTaskDelay(pdMS_TO_TICKS(1000));
         app.GetAudioService().WaitForPlaybackQueueEmpty();
         
@@ -334,22 +353,22 @@ serial_fallback:
         return;
     }
     
- // ============ PCM path (legacy): raw s16le PushBackgroundAudio ============
+ // ============ PCM 路径（旧版）：原始 s16le PushBackgroundAudio ============
     const size_t CHUNK = 4096;
     uint8_t buf[CHUNK];
     int64_t t0 = esp_timer_get_time(), last_refresh = t0;
     size_t total_dl = 0;
     bool ai_speaking = false;
-    int prev_ai_level = 0;   // 0=idle, 1=listening, 2=speaking/connecting
+    int prev_ai_level = 0;   // 0=空闲, 1=聆听, 2=说话/连接中
 
     ESP_LOGI(TAG, "PlayOpus: downloading raw PCM...");
 
-    // Activate ring buffer before pre-buffer loop so PushBackgroundAudio works.
-    // Without this, bg_audio_active_ stays false (from ClearBackgroundAudio in PlayOpus)
-    // and the pre-buffer loop silently drops all data until the 10s timeout.
-    app.GetAudioService().SetBackgroundAudioGain(0.001f);  // near-silent but keeps bg_audio_active_=true
+    // 预缓冲循环前先激活环形缓冲，PushBackgroundAudio 才能生效。
+    // 否则 bg_audio_active_ 保持 false（PlayOpus 中 ClearBackgroundAudio 所致）
+    // 预缓冲循环会静默丢弃所有数据，直到 10 秒超时。
+    app.GetAudioService().SetBackgroundAudioGain(0.001f);  // 近静音但保持 bg_audio_active_=true
 
- // === Pre-buffer phase: fill ring buffer before enabling drain ===
+ // === 预缓冲阶段：先填满环形缓冲再开启排空 ===
     int64_t prebuf_start = esp_timer_get_time();
     while (self->is_playing_ && !self->stop_requested_) {
         int read = recv(sock, buf, CHUNK, 0);
@@ -360,7 +379,7 @@ serial_fallback:
 
         size_t fill = app.GetAudioService().GetBgAudioFillLevel();
         if (fill >= 64000) {
-            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // fade-in via ~1000ms ramp
+            app.GetAudioService().SetBackgroundAudioGain(1.0f);  // 通过约 1000ms 斜坡淡入
             app.GetAudioService().EnableBgAudioDrain(true);
             ESP_LOGI(TAG, "PlayOpus: drain enabled (buffered %d samples in %d ms)",
                      (int)fill, (int)((esp_timer_get_time() - prebuf_start) / 1000));
@@ -379,25 +398,25 @@ serial_fallback:
         }
     }
 
- // === Main download push loop ===
+ // === 主下载推送循环 ===
     int recv_errors = 0;
     while (self->is_playing_ && !self->stop_requested_) {
         auto state = app.GetDeviceState();
-        // 3-level ducking: idle=100%, listening=70%, speaking/connecting=50%
+        // 三档 ducking：空闲=100%，聆听=70%，说话/连接=50%
         int ai_level = 0;
         if (state == kDeviceStateSpeaking || state == kDeviceStateConnecting) {
             ai_level = 2;
         } else if (state == kDeviceStateListening) {
             ai_level = 1;
         }
-        // Track ai_speaking for WiFi throttle logic (level 2 only)
+        // 跟踪 ai_speaking 供 WiFi 节流逻辑使用（仅 level 2）
         bool ai_now = (ai_level == 2);
         if (ai_now != ai_speaking) {
             ai_speaking = ai_now;
         }
         if (ai_level != prev_ai_level) {
             prev_ai_level = ai_level;
-            float gain = (ai_level == 2) ? 0.5f : 1.0f;  // duck speaking to 50% to prevent mixer clipping
+            float gain = (ai_level == 2) ? 0.5f : 1.0f;  // 说话时降到 50% 防止混音削波
             app.GetAudioService().SetBackgroundAudioGain(gain);
             int heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
             int bg_fill = app.GetAudioService().GetBgAudioFillLevel();
@@ -409,8 +428,8 @@ serial_fallback:
                      bg_fill, task_hwm);
         }
 
- // Pause TCP download when AI is active (listening/speaking/connecting)
- // to free lwIP buffers for UDP audio. Without this the ASR takes 30-50s.
+ // AI 活跃（聆听/说话/连接）时暂停 TCP 下载
+ // 释放 lwIP 缓冲给 UDP 音频；否则 ASR 需要 30-50 秒。
         if (ai_level >= 1 && app.GetAudioService().GetBgAudioFillLevel() > 64000) {
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
@@ -423,22 +442,22 @@ serial_fallback:
             app.GetAudioService().PushBackgroundAudio(
                 reinterpret_cast<int16_t*>(buf), read / sizeof(int16_t), 16000);
         } else if (read == 0) {
- // Server closed connection gracefully
+ // 服务器正常关闭连接
             ESP_LOGI(TAG, "PlayOpus: server closed connection");
             break;
         } else {
- // read < 0: timeout or transient error
+ // read < 0：超时或瞬时错误
             recv_errors++;
             if (recv_errors > 5) {
                 ESP_LOGE(TAG, "PlayOpus: recv failed %d times, giving up (errno=%d)", recv_errors, errno);
                 break;
             }
- // Wait 1s before retry WiFi may be reconnecting after AI conversation
+ // 重试前等待 1 秒，AI 对话后 WiFi 可能正在重连
             ESP_LOGW(TAG, "PlayOpus: recv error %d/%d (errno=%d), retrying...", recv_errors, 5, errno);
             for (int w = 0; w < 10 && self->is_playing_ && !self->stop_requested_; w++) {
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
- // Refresh power save in case it was changed by channel close
+ // 刷新省电设置（通道关闭可能已改变它）
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
             continue;
         }
@@ -449,7 +468,7 @@ serial_fallback:
 
         int64_t now = esp_timer_get_time();
         if (now - last_refresh > 8000000) {
- // Diagnostic: log buffer fill + download rate every 8s
+ // 诊断：每 8 秒记录缓冲填充量和下载速率
             size_t fill = app.GetAudioService().GetBgAudioFillLevel();
             int64_t elapsed = now - t0;
             float dl_rate = elapsed > 0 ? (float)total_dl * 1000000.0f / (float)elapsed : 0;
@@ -468,8 +487,8 @@ serial_fallback:
     }
 
     if (total_dl > 0) {
-        // 鐩存帴娓呯┖锛屼笉绛?ring buffer 鎺掔┖
-        // 鍘熸潵 while 绛夊緟鎺掔┖浼氬鑷?MusicDanceTick 缁х画璺?~5 绉掞紙79K 鏍锋湰 梅 16kHz锛?
+        // 直接清空，不等 ring buffer 排空
+        // 原来 while 等待排空会导致 MusicDanceTick 继续跑 ~5 秒（79K 样本 ÷ 16kHz）
         app.GetAudioService().ClearBackgroundAudio();
     }
     close(sock);
@@ -477,17 +496,17 @@ serial_fallback:
     int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
     ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB", (int)total_ms, (int)(total_dl / 1024));
 
-    // 锟借备锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟窖词硷拷猓凤拷锟斤拷锟剿凤拷锟斤拷锟斤拷通锟斤拷锟斤拷锟?
-    // 锟斤拷时锟戒背锟斤拷锟斤拷频锟斤拷锟脚猴拷锟斤拷频锟斤拷锟斤拷路锟斤拷锟斤拷锟斤拷锟斤拷停止
-    // 锟斤拷esp_codec_dev_read锟斤拷锟截癸拷锟斤拷/锟斤拷锟斤拷锟捷碉拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
-    // 锟斤拷锟窖词硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟?锟斤拷锟斤拷锟斤拷"锟斤拷实锟斤拷锟斤拷锟斤拷
+    // 设备空闲时恢复唤醒词检测，确保演出正常通过扬声器
+    // 定时背景音频信号，若音频输出路径异常则停止
+    // 用 esp_codec_dev_read 回调检测/传输数据的完整流程
+    // 唤醒词检测结束后的“演出”真实状态
     if (app.GetDeviceState() == kDeviceStateIdle) {
         ESP_LOGI(TAG, "PlayOpus: restarting wake word detection after music");
         app.GetAudioService().EnableWakeWordDetection(false);
         vTaskDelay(pdMS_TO_TICKS(50));
         app.GetAudioService().EnableWakeWordDetection(true);
-        // Fix(2026-07-19): idle transition during music skips threshold restore
-        // (IsBgAudioActive guard), leaving 0.30 stuck. Restore sensitive 0.02 here.
+        // 修复(2026-07-19)：音乐期间进入空闲会跳过阈值恢复
+        // （IsBgAudioActive 守卫）导致 0.30 卡住，在此恢复灵敏阈值 0.02。
         app.GetAudioService().SetWakeWordThreshold(0.02f);
     }
 
@@ -495,14 +514,15 @@ serial_fallback:
 }
 
 /**
- * @brief 锟斤拷锟斤拷锟斤拷锟斤拷ringtone
- * @param volume 锟斤拷锟斤拷系锟斤拷 0.0~1.0锟斤拷锟斤拷锟藉开头锟斤拷15%锟斤拷强锟斤拷100%
- * 锟斤拷锟斤拷A5(880Hz)/C#6(1100Hz)锟斤拷锟斤拷锟絇CM锟斤拷锟斤拷锟斤拷锟斤拷每锟斤拷2锟斤拷
+ * @brief 播放闹钟铃声（A5/C#6 交替双音：80ms 响 + 80ms 停，共 2 秒）
+ * @param volume 音量系数 0.0~1.0
+ * 生成 A5(880Hz)/C#6(1100Hz) 正弦波 PCM，每 100ms 分块经 OutputRawPcm 输出，
+ * 块间检查 stop_requested_ 保证停止响应及时。
  */
 void Mp3Player::PlayAlarmRing(float volume) {
     auto& app = Application::GetInstance();
     const int sample_rate = 16000;
-    const int chunk_ms = 100;  // 100ms chunks for responsive stop
+    const int chunk_ms = 100;  // 100ms 分块，保证停止响应及时
     const int total_ms = 2000;
     const int chunk_samples = sample_rate * chunk_ms / 1000;
     const int total_chunks = total_ms / chunk_ms;
@@ -514,7 +534,7 @@ void Mp3Player::PlayAlarmRing(float volume) {
     const int beep_off_ms = 80;
     const int cycle_ms = beep_on_ms + beep_off_ms;
 
- // 锟斤拷锟缴诧拷锟斤拷100ms锟介播锟脚ｏ拷每锟斤拷之锟斤拷锟斤拷stop_requested_
+ // 闹铃节奏：100ms 块播，每块之间检查 stop_requested_
     size_t buf_bytes = chunk_samples * sizeof(int16_t);
     int16_t* pcm = (int16_t*)malloc(buf_bytes);
     if (!pcm) {
@@ -550,11 +570,11 @@ void Mp3Player::PlayAlarmRing(float volume) {
 }
 
 /**
- * @brief 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷循锟斤拷
- * 锟斤拷FreeRTOS锟斤拷锟斤拷锟斤拷锟斤拷询 pending_track_ / pending_bell_hour_锟斤拷
- * 锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷AI锟斤拷锟斤拷锟斤拷锟斤拷哦锟接︼拷锟狡碉拷锟斤拷锟斤拷锟斤拷指锟紸I锟斤拷锟?
+ * @brief 播放任务主循环
+ * 用 FreeRTOS 任务循环轮询 pending_track_ / pending_bell_hour_。
+ * 报时/闹钟时播放对应音频，完成后交还 AI 语音。
  */
-    // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
+    // 播放任务入口
 void Mp3Player::PlayTaskEntry(void* arg) {
     Mp3Player* self = (Mp3Player*)arg;
     while (1) {
@@ -568,7 +588,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
         }
 
         if (self->pending_track_ > 0) {
- // play single track - manage mute here
+ // 播放单曲 - 在此管理静音
             self->is_playing_ = true;
             int track = self->pending_track_;
             self->pending_track_ = 0;
@@ -583,7 +603,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
         }
 
         if (self->pending_bell_hour_ > 0) {
- // play bell chime using short PCM bell sound (~0.5s each)
+ // 播放报时钟声：短 PCM 铃声（每次约 0.5 秒）
             self->is_playing_ = true;
             int hour = self->pending_bell_hour_;
             self->pending_bell_hour_ = 0;
@@ -591,7 +611,7 @@ void Mp3Player::PlayTaskEntry(void* arg) {
             for (int i = 0; i < hour; i++) {
                 if (self->stop_requested_) break;
                 self->bell_player_.PlayBellSoundSync();
- // pause ~1s between strikes for natural clock sound
+ // 两次敲击间隔约 1 秒，模拟自然钟声
                 if (i < hour - 1 && !self->stop_requested_) {
                     vTaskDelay(pdMS_TO_TICKS(1000));
                 }
@@ -602,18 +622,28 @@ void Mp3Player::PlayTaskEntry(void* arg) {
     }
 }
 
+/**
+ * @brief 播放指定文件夹/曲目（兼容 DFPlayer 接口）
+ * @param folder 文件夹号：1=报时铃声，2=音乐
+ * @param track 曲目号（音乐自动钳位到 1~12）
+ */
 void Mp3Player::PlayTrack(uint8_t folder, uint8_t track) {
     if (folder == 1) {
-        // 锟斤拷锟斤拷
+        // 播放铃声
         PlayBell(track);
     } else if (folder == 2) {
-        // 锟斤拷锟斤拷
+        // 播放音乐
         if (track < 1) track = 1;
         if (track > 12) track = 12;
         PlayIndex(track);
     }
 }
 
+/**
+ * @brief 按编号播放音乐（异步，经播放任务执行）
+ * @param index 音乐编号（自动钳位 >=1）
+ * 停止当前播放→重置状态→置 pending_track_→确保播放任务已创建。
+ */
 void Mp3Player::PlayIndex(uint16_t index) {
     if (index < 1) index = 1;
 
@@ -622,15 +652,15 @@ void Mp3Player::PlayIndex(uint16_t index) {
         return;
     }
 
-    // 停止锟斤拷前锟斤拷锟斤拷
+    // 停止当前播放
     Stop();
 
-    // 锟斤拷锟?stop_requested_ 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷目
+    // 重置 stop_requested_ 并设置播放目标
     stop_requested_ = false;
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
     pending_track_ = index;
 
-    // 确锟斤拷锟斤拷锟斤拷锟窖达拷锟斤拷
+    // 确保播放任务已创建
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -647,10 +677,15 @@ void Mp3Player::PlayIndex(uint16_t index) {
     }
 }
 
+/**
+ * @brief 停止当前播放
+ * 置 stop_requested_ 并清空待播队列，重置解码器。
+ * 注意：不直接置 is_playing_=false，由播放任务自行退出。
+ */
 void Mp3Player::Stop() {
     stop_requested_ = true;
- // 锟斤拷要锟节达拷锟斤拷锟斤拷is_playing_=false 锟斤拷 锟斤拷PlayOpusTask锟斤拷锟斤拷锟皆硷拷锟斤拷
- // 锟斤拷锟斤拷PlayOpus()锟斤拷锟皆可匡拷锟截等达拷锟斤拷锟斤拷锟斤拷锟剿筹拷
+ // 不要在这里设置 is_playing_=false，应由 PlayOpusTask 自行设置
+ // 调用 PlayOpus() 可以可靠地等待播放任务退出
     pending_track_ = 0;
     pending_bell_hour_ = 0;
 
@@ -658,15 +693,22 @@ void Mp3Player::Stop() {
         esp_mp3_dec_reset(mp3_dec_handle_);
     }
     
- // 锟斤拷锟斤拷锟斤拷频锟斤拷锟叫ｏ拷锟矫撅拷锟斤拷锟斤拷锟絎aitForPlaybackQueueEmpty()锟斤拷锟劫凤拷锟斤拷
+ // 等待音频队列排空，用 WaitForPlaybackQueueEmpty() 后再返回
     Application::GetInstance().GetAudioService().ResetDecoder();
 }
 
+/**
+ * @brief 暂停播放（置停止标志并清 is_playing_）
+ */
 void Mp3Player::Pause() {
     stop_requested_ = true;
     is_playing_ = false;
 }
 
+/**
+ * @brief 重置播放状态，准备下一次播放
+ * 清 stop_requested_、ducking 状态、is_playing_、待播队列。
+ */
 void Mp3Player::ResetForNextPlay() {
     stop_requested_ = false;
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -675,32 +717,46 @@ void Mp3Player::ResetForNextPlay() {
     pending_bell_hour_ = 0;
 }
 
+/**
+ * @brief 恢复播放（不支持，需重新调用 PlayIndex）
+ */
 void Mp3Player::Resume() {
     ESP_LOGW(TAG, "Resume not supported, call PlayIndex again");
 }
 
+/**
+ * @brief 设置音量（实际由 AudioService 统一处理，此处仅记录日志）
+ * @param vol 音量值 0~100
+ */
 void Mp3Player::SetVolume(uint8_t vol) {
     ESP_LOGI(TAG, "Volume request: %d (handled by AudioService)", vol);
 }
 
+// ---- 音量/切歌兼容接口（空实现，音量由 AudioService 处理）----
 void Mp3Player::VolumeUp() { SetVolume(20); }
 void Mp3Player::VolumeDown() { SetVolume(10); }
 void Mp3Player::Next() {}
 void Mp3Player::Prev() {}
 
+/**
+ * @brief 播放报时钟声（异步，经播放任务执行）
+ * @param hour 报时点数 1~12（自动钳位）
+ * 停止当前播放→置 pending_bell_hour_→确保播放任务已创建；
+ * 任务内每点敲一次铃，间隔约 1 秒模拟自然钟声。
+ */
 void Mp3Player::PlayBell(int hour) {
     if (hour < 1) hour = 1;
     if (hour > 12) hour = 12;
 
     if (!assets_) return;
 
-    // 停止锟斤拷前锟斤拷锟斤拷
+    // 停止当前播放，为新报时清场
     Stop();
 
-    // 璁剧疆锟斤拷锟斤拷閲嶅娆℃暟
+    // 记录报时点数，异步任务中读取
     pending_bell_hour_ = hour;
 
-    // 确锟斤拷锟斤拷锟斤拷锟窖达拷锟斤拷
+    // 确保播放任务已创建
     if (!play_task_) {
         stop_requested_ = false;
         ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -717,11 +773,24 @@ void Mp3Player::PlayBell(int hour) {
     }
 }
 
+/**
+ * @brief 播放背景音乐（等价于 PlayIndex）
+ * @param index 音乐编号（>=1）
+ */
 void Mp3Player::PlayBgMusic(int index) {
     if (index < 1) index = 1;
     PlayIndex(index);
 }
 
+/**
+ * @brief 将 MP3 资源一次性解码到 PSRAM 缓冲
+ * @param index MP3 编号（如 15 → 0015.mp3）
+ * @param out_buf 输出 PCM 缓冲（PSRAM 分配，调用方负责释放）
+ * @param out_samples 输出采样数
+ * @param out_samplerate 输出采样率
+ * @return 0=成功；-1=失败
+ * 跳过 ID3v2 标签逐帧解码，PCM 上限 2M 采样（4MB）。
+ */
 int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate) {
     stop_requested_ = false;
     ducking_gain_ = 1.0f; ducking_start_us_ = 0;
@@ -740,17 +809,17 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
- // 锟斤拷锟斤拷锟斤拷洌篗P3锟筋坏锟斤拷锟絇CM锟斤拷锟斤拷约2.75锟斤拷锟斤拷4锟斤拷锟角筹拷锟斤拷全
+ // 内存分配：MP3 解码后 PCM 数据约 2.75 倍，4 倍保证安全
     size_t max_samples = mp3_size * 4;
     if (max_samples < 8192) max_samples = 8192;
-    if (max_samples > 2 * 1024 * 1024) max_samples = 2 * 1024 * 1024;  // cap at 2M samples (4MB)
+    if (max_samples > 2 * 1024 * 1024) max_samples = 2 * 1024 * 1024;  // 上限 2M 采样（4MB）
     int16_t* buf = (int16_t*)heap_caps_malloc(max_samples * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (!buf) {
         ESP_LOGE(TAG, "Failed to allocate %lu samples in PSRAM", (unsigned long)max_samples);
         return -1;
     }
 
-    // 锟津开斤拷锟斤拷锟斤拷
+    // 打开解码器
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -762,7 +831,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         return -1;
     }
 
-    // 锟斤拷锟斤拷 ID3v2 锟斤拷签
+    // 跳过 ID3v2 标签
     uint8_t* mp3_start = (uint8_t*)mp3_data;
     size_t mp3_data_size = mp3_size;
     if (mp3_size > 10 && memcmp(mp3_start, "ID3", 3) == 0) {
@@ -781,7 +850,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
     size_t remaining = mp3_data_size;
     size_t written = 0;
 
- // 锟斤拷锟轿斤拷锟斤拷扫锟斤拷
+ // 逐帧解码扫描
     while (remaining > 0 && written < max_samples) {
         size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
         memcpy(input_buf_, input_ptr, in_len);
@@ -813,7 +882,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
             }
             size_t consumed = raw.consumed;
             if (consumed == 0) {
- // Decoder buffered all input; no progress possible, stop
+ // 解码器已缓冲全部输入，无法继续，停止
                 break;
             }
             if (consumed > remaining) consumed = remaining;
@@ -833,7 +902,7 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
         }
     }
 
-    // 锟截闭斤拷锟斤拷锟斤拷
+    // 关闭解码器
     if (mp3_dec_handle_) {
         esp_mp3_dec_close(mp3_dec_handle_);
         mp3_dec_handle_ = nullptr;
@@ -852,7 +921,13 @@ int Mp3Player::DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples,
     return 0;
 }
 
-// 流式解码：逐帧回调，零大 buffer，适合长音频（如 0009.mp3）
+/**
+ * @brief 流式解码 MP3：逐帧回调输出 PCM，零大 buffer，适合长音频（如 0009.mp3）
+ * @param index MP3 编号
+ * @param callback 每帧回调 (pcm, samples, src_sr, user_data)
+ * @param user_data 透传给回调的参数
+ * @return 0=成功；-1=失败
+ */
 int Mp3Player::DecodeStreaming(int index,
     std::function<void(const int16_t* pcm, size_t samples, int src_sr, void* user_data)> callback,
     void* user_data) {
@@ -951,12 +1026,12 @@ int Mp3Player::DecodeStreaming(int index,
 }
 
 // ============================================
-// LDR 锟斤拷锟斤拷锟斤拷锟借传锟斤拷锟斤拷 (ADC oneshot模式)
+// LDR 光敏电阻读取 (ADC oneshot 模式)
 // ============================================
 LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, int threshold)
     : adc_pin_(adc_pin), adc_handle_(nullptr), adc_chan_(chan), threshold_(threshold) {
 
- // ---- ADC oneshot init ----
+ // ---- ADC oneshot 初始化 ----
     adc_oneshot_unit_init_cfg_t unit_cfg = {
         .unit_id = unit,
         .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
@@ -974,6 +1049,9 @@ LdrSensor::LdrSensor(gpio_num_t adc_pin, adc_unit_t unit, adc_channel_t chan, in
              adc_pin_, (int)unit, (int)chan, threshold_);
 }
 
+/**
+ * @brief 析构 LDR 传感器，释放 ADC oneshot 单元
+ */
 LdrSensor::~LdrSensor() {
     if (adc_handle_) {
         adc_oneshot_del_unit(adc_handle_);
@@ -981,30 +1059,38 @@ LdrSensor::~LdrSensor() {
     }
 }
 
+/**
+ * @brief 读取光敏电阻原始 ADC 值
+ * @return 0-4095（12 位），0=最暗，4095=最亮
+ */
 int LdrSensor::ReadRaw() {
     int raw = 0;
     if (adc_handle_) {
         adc_oneshot_read(adc_handle_, adc_chan_, &raw);
     }
-    return raw;  // 0-4095 (12-bit), 锟斤拷=锟斤拷值, 锟斤拷=锟斤拷值
+    return raw;  // 0-4095 (12-bit), 0=暗值, 4095=亮值
 }
 
 /**
- * @brief 锟叫断碉拷前锟角凤拷为锟节帮拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟街碉拷锟?
- * @return true=锟节帮拷, false=锟斤拷锟斤拷
+ * @brief 判断当前是否为黑暗，结合阈值与实时采样值
+ * @return true=黑暗, false=明亮
  */
 bool LdrSensor::IsDark() { return ReadRaw() < threshold_; }
+/**
+ * @brief 设置黑暗判定阈值
+ * @param threshold ADC 原始读数阈值，低于此值判定为暗
+ */
 void LdrSensor::SetThreshold(int threshold) { threshold_ = threshold; }
 
 
 // ============================================
-// BellSoundPlayer - 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟酵拷锟紸I锟斤拷频系统锟斤拷锟斤拷锟?
+// BellSoundPlayer - 布谷鸟叫声播放器，通过 AI 音频系统输出
 // ============================================
 void BellSoundPlayer::PlayCuckooSoundSync() {
-    // 锟斤拷锟斤拷要 SetOutputMuted锟斤拷也锟斤拷锟斤拷要 vTaskDelay
+    // 不需要 SetOutputMuted，也不需要 vTaskDelay
     auto& app = Application::GetInstance();
     if (app.GetAudioService().IsBgAudioActive()) {
-        // Music playing: mix cuckoo sound into bg audio (no interruption)
+        // 音乐播放中：将布谷鸟叫声混入背景音频（不打断）
         for (int repeat = 0; repeat < 2; repeat++) {
             app.GetAudioService().MixIntoBackgroundAudio(
                 cuckoo_wake_sound, CUCKOO_WAKE_SOUND_NUM_SAMPLES, 0.9f);
@@ -1019,8 +1105,12 @@ void BellSoundPlayer::PlayCuckooSoundSync() {
     }
 }
 
+/**
+ * @brief 同步播放报时钟声（直接写 I2S）
+ * 经 OutputRawPcm 输出，与 AudioOutputTask 共用 data_if_mutex_ 同步。
+ */
 void BellSoundPlayer::PlayBellSoundSync() {
-    // 直锟斤拷写 I2S 锟斤拷锟斤拷直锟斤拷锟斤拷锟疥，使锟斤拷 data_if_mutex_ 锟斤拷 AudioOutputTask 锟斤拷锟斤拷
+    // 直接写 I2S 是直接输出，使用 data_if_mutex_ 与 AudioOutputTask 同步
     auto& app = Application::GetInstance();
     app.GetAudioService().OutputRawPcm(
         cuckoo_bell_sound,
@@ -1029,6 +1119,9 @@ void BellSoundPlayer::PlayBellSoundSync() {
     );
 }
 
+/**
+ * @brief 异步播放布谷鸟叫声（创建临时任务，播完自删）
+ */
 void BellSoundPlayer::PlayCuckooSoundAsync() {
     xTaskCreate([](void* arg) {
         auto* self = static_cast<BellSoundPlayer*>(arg);
@@ -1038,7 +1131,7 @@ void BellSoundPlayer::PlayCuckooSoundAsync() {
 }
 
 // ============================================
-// CuckooStateMachine - 锟斤拷锟斤拷锟斤拷锟斤拷状态锟斤拷
+// CuckooStateMachine - 布谷鸟状态机
 // ============================================
 CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m4,
                                         Motor* violin_motor, Servo* violin, Servo* dog,
@@ -1046,7 +1139,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
                                         BellSoundPlayer* bell_player,
                                         LdrSensor* ldr)
     : m1_(m1), m2_(m2), m3_(m3), m4_(m4),
-      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // 小锟斤拷锟劫碉拷锟?(锟斤拷B M2, GPIO18/45)
+      violin_motor_(violin_motor), violin_servo_(violin), dog_servo_(dog),  // 小提琴电机 (电机 B M2, GPIO18/45)
       water_bird_(water_bird),
       mp3_(mp3), bell_player_(bell_player), ldr_(ldr),
       motor_power_pin_(GPIO_NUM_NC),
@@ -1058,7 +1151,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
       is_dark_(false) {
     last_idle_exit_us_ = 0;
     prev_device_state_ = -1;
-    // 锟斤拷锟斤拷锟皆?P-MOSFET 锟斤拷锟斤拷 (GPIO LOW=ON, HIGH=OFF)
+    // 电机电源 P-MOSFET 控制 (GPIO LOW=ON, HIGH=OFF)
     motor_power_pin_ = (gpio_num_t)POWER_MOTOR_GPIO;
     gpio_config_t motor_pwr_cfg = {
         .pin_bit_mask = (1ULL << motor_power_pin_),
@@ -1067,7 +1160,7 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&motor_pwr_cfg);
- // LED (GPIO1KS8050 B, C, 5V)
+ // LED（GPIO1，S8050 B/C 极，5V）
     gpio_config_t led_cfg = {
         .pin_bit_mask = (1ULL << LED_A_GPIO) | (1ULL << LED_B_GPIO),
         .mode = GPIO_MODE_OUTPUT,
@@ -1077,6 +1170,6 @@ CuckooStateMachine::CuckooStateMachine(Motor* m1, Motor* m2, Motor* m3, Motor* m
     gpio_config(&led_cfg);
     gpio_set_level(LED_A_GPIO, 0);
     gpio_set_level(LED_B_GPIO, 0);
-    MotorPowerOff();  // 默锟较断电，100K 锟斤拷锟斤拷锟斤拷锟斤拷 5V
+    MotorPowerOff();  // 默认断电，100K 下拉保证 5V
   }
 
