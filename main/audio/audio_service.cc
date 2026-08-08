@@ -57,6 +57,9 @@ AudioService::~AudioService() {
     if (output_resampler_ != nullptr) {
         esp_ae_rate_cvt_close(output_resampler_);
     }
+    if (raw_pcm_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(raw_pcm_resampler_);
+    }
 }
 
 void AudioService::Initialize(AudioCodec* codec) {
@@ -374,7 +377,7 @@ void AudioService::AudioOutputTask() {
             // 20 ms of silence at 16 kHz = host for MixBackgroundAudio
             // Static allocation avoids heap churn every 20ms which can
             // cause timing jitter and worsen audio stutter on underrun
-            static constexpr int kBgFrameSamples = 16000 * 20 / 1000;
+            static constexpr int kBgFrameSamples = 32000 * 20 / 1000;
             static std::vector<int16_t> bg_silence(kBgFrameSamples);
             std::fill(bg_silence.begin(), bg_silence.end(), 0);
             MixBackgroundAudio(bg_silence);
@@ -894,20 +897,26 @@ void AudioService::OutputRawPcm(const int16_t* data, size_t num_samples, int sam
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
         codec_->EnableOutput(true);
     }
-    if (sample_rate != codec_->output_sample_rate()) {
-        float ratio = (float)codec_->output_sample_rate() / (float)sample_rate;
-        size_t out_samples = (size_t)(num_samples * ratio);
-        std::vector<int16_t> resampled(out_samples);
-        for (size_t i = 0; i < out_samples; i++) {
-            float src_pos = i / ratio;
-            size_t idx = (size_t)src_pos;
-            float frac = src_pos - idx;
-            if (idx + 1 < num_samples) {
-                resampled[i] = (int16_t)(data[idx] * (1.0f - frac) + data[idx + 1] * frac);
-            } else {
-                resampled[i] = data[idx];
+    int out_rate = codec_->output_sample_rate();
+    ESP_LOGI(TAG, "OutputRawPcm: samples=%d in_rate=%d out_rate=%d",
+             (int)num_samples, sample_rate, out_rate);
+    if (sample_rate != out_rate) {
+        // 使用 ESP AE Rate Converter（高质量 FIR 重采样，复杂度 3），替代手写线性插值
+        if (raw_pcm_resampler_ == nullptr || raw_pcm_src_rate_ != sample_rate) {
+            if (raw_pcm_resampler_ != nullptr) {
+                esp_ae_rate_cvt_close(raw_pcm_resampler_);
             }
+            auto cfg = RATE_CVT_CFG(sample_rate, out_rate, 1);
+            esp_ae_rate_cvt_open(&cfg, &raw_pcm_resampler_);
+            raw_pcm_src_rate_ = sample_rate;
         }
+        uint32_t out_samples = 0;
+        esp_ae_rate_cvt_get_max_out_sample_num(raw_pcm_resampler_, num_samples, &out_samples);
+        std::vector<int16_t> resampled(out_samples);
+        uint32_t actual = out_samples;
+        esp_ae_rate_cvt_process(raw_pcm_resampler_, (esp_ae_sample_t)data, num_samples,
+                               (esp_ae_sample_t)resampled.data(), &actual);
+        resampled.resize(actual);
         codec_->OutputData(resampled);
     } else {
         std::vector<int16_t> vec(data, data + num_samples);
@@ -918,7 +927,7 @@ void AudioService::OutputRawPcm(const int16_t* data, size_t num_samples, int sam
 }
 
 void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate) {
-    if (!bg_audio_active_ || sample_rate != 16000) return;
+    if (!bg_audio_active_ || sample_rate != 32000) return;
     std::lock_guard<std::mutex> lock(bg_audio_mutex_);
     for (size_t i = 0; i < samples; i++) {
         bg_audio_ring_[bg_audio_write_pos_] = data[i];

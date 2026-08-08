@@ -868,14 +868,34 @@ void Application::HandleWakeWordDetectedEvent() {
         if (!music_playing) {
             auto* codec = Board::GetInstance().GetAudioCodec();
             if (codec) {
+                ESP_LOGI(TAG, "WakeWord: playing cuckoo sound (BUILD=2026-08-07-21:10)");
                 codec->EnableOutput(true);
                 audio_service_.RefreshOutputTimestamp();
+                // 重采样 cuckoo_wake_sound 到 codec 输出采样率
+                int out_rate = codec->output_sample_rate();
                 for (int repeat = 0; repeat < 2; repeat++) {
-                    std::vector<int16_t> audio_data(
-                        cuckoo_wake_sound,
-                        cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES
-                    );
-                    codec->OutputData(audio_data);
+                    if (out_rate != CUCKOO_WAKE_SOUND_SAMPLE_RATE) {
+                        float ratio = (float)out_rate / (float)CUCKOO_WAKE_SOUND_SAMPLE_RATE;
+                        size_t out_samples = (size_t)((float)CUCKOO_WAKE_SOUND_NUM_SAMPLES * ratio) + 2;
+                        std::vector<int16_t> resampled(out_samples);
+                        size_t d = 0;
+                        for (size_t i = 0; i < out_samples; i++) {
+                            float src_pos = (float)i / ratio;
+                            size_t idx = (size_t)src_pos;
+                            float frac = src_pos - (float)idx;
+                            if (idx + 1 < CUCKOO_WAKE_SOUND_NUM_SAMPLES) {
+                                resampled[d++] = (int16_t)((float)cuckoo_wake_sound[idx] * (1.0f - frac) + (float)cuckoo_wake_sound[idx + 1] * frac);
+                            } else if (idx < CUCKOO_WAKE_SOUND_NUM_SAMPLES) {
+                                resampled[d++] = cuckoo_wake_sound[idx];
+                            } else {
+                                resampled[d++] = 0;
+                            }
+                        }
+                        codec->OutputData(resampled);
+                    } else {
+                        std::vector<int16_t> audio_data(cuckoo_wake_sound, cuckoo_wake_sound + CUCKOO_WAKE_SOUND_NUM_SAMPLES);
+                        codec->OutputData(audio_data);
+                    }
                     if (repeat < 1) {
                         vTaskDelay(pdMS_TO_TICKS(50));
                     }

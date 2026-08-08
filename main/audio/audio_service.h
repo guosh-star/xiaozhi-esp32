@@ -142,6 +142,11 @@ public:
     size_t GetBgAudioFillLevel();
     bool IsBgAudioActive() { return bg_audio_active_ && bg_audio_drain_enabled_; }
     void EnableBgAudioDrain(bool enable);
+    void SetBgAudioActive(bool active) { bg_audio_active_ = active; }
+    void SetBgAudioGainImmediate(float gain) {
+        bg_audio_gain_ = bg_audio_target_gain_ = gain;
+        bg_audio_active_ = (gain > 0.0f);
+    }
     void SetOutputMuted(bool muted);
     void RefreshOutputTimestamp() { last_output_time_ = std::chrono::steady_clock::now(); }
     void RefreshInputTimestamp() { last_input_time_ = std::chrono::steady_clock::now(); }
@@ -168,6 +173,8 @@ private:
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
+    esp_ae_rate_cvt_handle_t raw_pcm_resampler_ = nullptr;
+    int raw_pcm_src_rate_ = 0;
     
     // Encoder/Decoder state
     int encoder_sample_rate_ = 16000;

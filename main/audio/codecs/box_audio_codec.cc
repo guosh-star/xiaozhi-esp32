@@ -235,14 +235,28 @@ void BoxAudioCodec::EnableOutput(bool enable) {
 
 int BoxAudioCodec::Read(int16_t* dest, int samples) {
     if (input_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+        int ret = esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t));
+        if (ret != ESP_OK) {
+            // ES7210 在 32kHz 双工模式下偶尔失败 → 塞静音，避免时钟域污染
+            memset(dest, 0, samples * sizeof(int16_t));
+        }
     }
     return samples;
 }
 
 int BoxAudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
+        int ret = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+        if (ret != ESP_OK) {
+            // I2S TX 通道可能在 RESET-DECODER 后被关闭，重开一次
+            output_enabled_ = false;
+            EnableOutput(true);
+            vTaskDelay(pdMS_TO_TICKS(10));
+            ret = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Write retry failed: %d", ret);
+            }
+        }
     }
     return samples;
 }

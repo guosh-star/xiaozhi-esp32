@@ -282,8 +282,35 @@ int CuckooBoxAudioCodec::Read(int16_t* dest, int samples) {
 }
 
 int CuckooBoxAudioCodec::Write(const int16_t* data, int samples) {
+    static int consecutive_fails = 0;  // 连续写入失败计数器
+
     if (output_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
+        int ret = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+
+        // I2S 偶发失败 → 3ms 轻量延时重试，不碰 codec（避免 EnableOutput 造成音频空洞）
+        if (ret != ESP_OK) {
+            vTaskDelay(pdMS_TO_TICKS(3));
+            ret = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+        }
+
+        if (ret == ESP_OK) {
+            consecutive_fails = 0;  // 成功即清零
+        } else {
+            consecutive_fails++;
+            // 连续 3 帧都失败 → 触发完整 codec 重启（保底恢复，极少触发）
+            if (consecutive_fails >= 3) {
+                ESP_LOGW(TAG, "Write: 3 consecutive failures, restarting codec");
+                output_enabled_ = false;
+                EnableOutput(true);
+                vTaskDelay(pdMS_TO_TICKS(5));
+                ret = esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t));
+                if (ret == ESP_OK) {
+                    consecutive_fails = 0;
+                } else {
+                    ESP_LOGE(TAG, "Write: codec restart also failed: %d", ret);
+                }
+            }
+        }
     }
     return samples;
 }
