@@ -44,13 +44,13 @@ void CuckooStateMachine::DogShowTask() {
     // 2. 水车开启（开门后启动，避免共享电源轨电压跌落）
     if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
 
-    // 3. 狗尾伸出：180→20 度，1200ms
+    // 3. 狗尾伸出：180→20 度，2000ms（脸朝后→脸朝前，转速约80°/s 保证舵机转到20度再出门）
     if (dog_servo_) {
-        dog_servo_->Sweep(180, 20, 1200);
+        dog_servo_->Sweep(180, 20, 2000);
         dog_state_.angle = 20;
     }
 
-    // 4. 小狗前进
+    // 4. 小狗前进（出门）
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
@@ -93,25 +93,23 @@ void CuckooStateMachine::DogShowTask() {
     PlayDogBarkDirect();
     if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // restart after BirdJumpShort stopped it
 
-    // 9. 狗尾回到 20 度
+    // 9. 狗尾回到 20 度（舵机回退，电机不动）
     if (dog_servo_) {
-        dog_servo_->Sweep(0, 20, 300);
+        dog_servo_->Sweep(dog_state_.angle, 20, 300);
         dog_state_.angle = 20;
     }
 
-    // 10. 小狗后退
+     // 10. 小狗后退
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
-
-    // 11. 狗尾回到 180 度
+   // 11. 狗尾回退到 180 度
     if (dog_servo_) {
         dog_servo_->Sweep(20, 180, 1200);
         dog_state_.angle = 180;
     }
-
     // 12. 停水车
     if (water_bird_) water_bird_->Stop();
 
@@ -312,6 +310,20 @@ void CuckooStateMachine::LindaShow() {
 
     auto& app = Application::GetInstance();
 
+    // 演出通过 MCP 触发时设备常停留在 Listening（AEC 开），
+    // 音乐会因此被 AEC 当回声处理产生咯咯声。
+    // 对齐 StartShow：先让设备回 Idle（AEC 关）再开始演出。
+    auto state0 = app.GetDeviceState();
+    if (state0 == kDeviceStateSpeaking || state0 == kDeviceStateListening) {
+        ESP_LOGI(TAG, "LindaShow: aborting AI speech to return to idle (state=%d)", (int)state0);
+        app.AbortSpeaking(kAbortReasonNone);
+        for (int i = 0; i < 30 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    app.GetAudioService().EnableVoiceProcessing(false);
+    app.GetAudioService().EnableWakeWordDetection(false);
+
     // 防止 AI 说话与背景音乐同时播放（置标志避免冲突）
 
     is_running_ = true;
@@ -460,6 +472,14 @@ void CuckooStateMachine::LindaShow() {
 
     app.GetAudioService().SetOutputMuted(false);
     if (mp3_) mp3_->SetDisableDucking(false);  // 恢复 duck
+
+    // 演出期间关闭了 AEC（消除咯咯声）。
+    // 若设备仍未回到 idle（停留在 listening 激活状态），必须显式恢复 AEC。
+    if (app.GetDeviceState() == kDeviceStateListening) {
+        ESP_LOGI(TAG, "LindaShow: still listening after abort, restoring AEC explicitly");
+        app.GetAudioService().EnableVoiceProcessing(true);
+    }
+
     if (app.GetDeviceState() == kDeviceStateIdle)
         app.GetAudioService().SetWakeWordThreshold(0.02f);
     ESP_LOGI(TAG, "LindaShow: done");
@@ -474,6 +494,20 @@ void CuckooStateMachine::GardenShow() {
     if (is_running_) { ESP_LOGW(TAG, "GardenShow: already running, skip"); return; }
 
     auto& app = Application::GetInstance();
+
+    // 演出通过 MCP 触发时设备常停留在 Listening（AEC 开），
+    // 音乐会因此被 AEC 当回声处理产生咯咯声。
+    // 对齐 StartShow/LindaShow：先让设备回 Idle（AEC 关）再开始演出。
+    auto state0 = app.GetDeviceState();
+    if (state0 == kDeviceStateSpeaking || state0 == kDeviceStateListening) {
+        ESP_LOGI(TAG, "GardenShow: aborting AI speech to return to idle (state=%d)", (int)state0);
+        app.AbortSpeaking(kAbortReasonNone);
+        for (int i = 0; i < 30 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    app.GetAudioService().EnableVoiceProcessing(false);
+    app.GetAudioService().EnableWakeWordDetection(false);
 
     // 防止 AI 说话与背景音乐同时播放（置标志避免冲突）
 
@@ -564,6 +598,14 @@ void CuckooStateMachine::GardenShow() {
 
     app.GetAudioService().SetOutputMuted(false);
     if (mp3_) mp3_->SetDisableDucking(false);  // 恢复 duck
+
+    // 演出期间关闭了 AEC（消除咯咯声）。
+    // 若设备仍未回到 idle（停留在 listening 激活状态），必须显式恢复 AEC。
+    if (app.GetDeviceState() == kDeviceStateListening) {
+        ESP_LOGI(TAG, "GardenShow: still listening after abort, restoring AEC explicitly");
+        app.GetAudioService().EnableVoiceProcessing(true);
+    }
+
     if (app.GetDeviceState() == kDeviceStateIdle)
         app.GetAudioService().SetWakeWordThreshold(0.02f);
     ESP_LOGI(TAG, "GardenShow: done");
@@ -706,9 +748,19 @@ void CuckooStateMachine::StartShow() {
  */
 void CuckooStateMachine::StartShowTask() {
     auto& app0 = Application::GetInstance();
-    // 立即开始 —— ShowTask 现在用 PlayShowMusicBg（背景音频环形缓冲）
-    // 音频服务通过 ducking 与 TTS 混音，无 I2S 冲突。
-    ESP_LOGI(TAG, "Show: starting immediately (bg audio + ducking handles overlap)");
+    // 演出通过 MCP 触发时设备常停留在 Listening（AEC 开），
+    // 音乐会因此被 AEC 当回声处理产生咯咯声。
+    // 对齐整点报时 StartPerformance：先让设备回 Idle（AEC 关）再开始演出。
+    auto state0 = app0.GetDeviceState();
+    if (state0 == kDeviceStateSpeaking || state0 == kDeviceStateListening) {
+        ESP_LOGI(TAG, "Show: aborting AI speech to return to idle (state=%d)", (int)state0);
+        app0.AbortSpeaking(kAbortReasonNone);
+        for (int i = 0; i < 30 && app0.GetDeviceState() != kDeviceStateIdle; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+    app0.GetAudioService().EnableVoiceProcessing(false);
+    app0.GetAudioService().EnableWakeWordDetection(false);
 
     app0.GetAudioService().SetWakeWordThreshold(0.30f);
 
@@ -726,6 +778,7 @@ void CuckooStateMachine::ShowTask(void* arg) {
     auto* sm = static_cast<CuckooStateMachine*>(arg);
     sm->violin_state_.Reset();
     sm->dog_state_.Reset();
+    sm->dog_intro_done_ = false;  // 出场未完成前禁止 RunDanceLoop 摆尾
     ESP_LOGI(TAG, "Show task started");
 
     auto& app = Application::GetInstance();
@@ -793,6 +846,16 @@ void CuckooStateMachine::ShowTask(void* arg) {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
+
+    // 演出期间 StartShowTask 关闭了 AEC（消除咯咯声）。
+    // 若设备仍未回到 idle（停留在 listening 激活状态），
+    // 状态机不会重新触发 Listening 分支，必须显式恢复 AEC，
+    // 否则 AI 会听不见用户说话。
+    if (app.GetDeviceState() == kDeviceStateListening) {
+        ESP_LOGI(TAG, "Show: still listening after abort, restoring AEC explicitly");
+        app.GetAudioService().EnableVoiceProcessing(true);
+    }
+
     ESP_LOGI(TAG, "Show: music ended, running dance finale");
 
     sm->RunDanceFinale();

@@ -112,12 +112,18 @@ void CuckooStateMachine::PlayDogBark() {
 }
 
 /**
- * @brief 舞蹈出场：异步开门 + 狗尾伸出 + 小狗前进 + 狗叫 + 狗尾归零
+ * @brief 舞蹈出场：同步开门 + 狗尾伸出 + 小狗前进 + 狗叫 + 狗尾归零
  */
 void CuckooStateMachine::RunDanceIntro() {
     MotorPowerOn();
-    auto* ctx = new DoorOpenCtx{this};
-    xTaskCreatePinnedToCore(DoorOpenTask, "door_open", 2048, ctx, 5, nullptr, 1);
+
+    // 同步开门（不再异步，避免 DoorOpenTask 提前 MotorPowerOff 断电）
+    if (m2_) {
+        m2_->Forward(MAIN_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
+    }
+    door_open_ = true;
 
     if (dog_servo_) {
         dog_servo_->Sweep(180, 20, (180 - 20) * 15);
@@ -131,6 +137,7 @@ void CuckooStateMachine::RunDanceIntro() {
     if (dog_servo_) {
         dog_servo_->Sweep(20, 0, 20 * 15);
     }
+    dog_intro_done_ = true;  // 出场完成，允许 RunDanceLoop 开始摆尾
 }
 
 /**
@@ -223,7 +230,7 @@ void CuckooStateMachine::RunDanceLoop() {
             violin_state_.timer = 0;
         }
 
-        if (dog_servo_) {
+        if (dog_servo_ && dog_intro_done_) {
             if (dog_state_.pause > 0) {
                 dog_state_.pause--;
             } else {
@@ -626,10 +633,22 @@ perf_cleanup:
 void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     // 实时读取 LDR：NTP 边界补偿不能用过期的 is_dark_
     // （10 秒 tick 缓存）否则天刚变亮时可能错误跳过报时。
+    // 双采样（2026-09-07）：报时时刻连续两次读 LDR（间隔 50ms），
+    // 两次都 < 阈值 才判定为暗，防瞬时遮挡误判漏报时。
     int ldr_raw = ldr_ ? ldr_->ReadRaw() : -1;
-    is_dark_ = (ldr_raw >= 0) ? (ldr_raw < LDR_DARK) : dark;
-    ESP_LOGI(TAG, "CheckTime: %02d:%02d dark=%d LDR=%d thresh=%d quiet_mode=%d running=%d",
-             hour, min, (int)is_dark_, ldr_raw, LDR_DARK, quiet_mode_.load(), (int)is_running_);
+    vTaskDelay(pdMS_TO_TICKS(50));
+    int ldr_raw2 = ldr_ ? ldr_->ReadRaw() : -1;
+    if (ldr_raw >= 0 && ldr_raw2 >= 0) {
+        is_dark_ = (ldr_raw < LDR_DARK) && (ldr_raw2 < LDR_DARK);  // 两次都为暗才算暗
+    } else if (ldr_raw >= 0) {
+        is_dark_ = (ldr_raw < LDR_DARK);
+    } else if (ldr_raw2 >= 0) {
+        is_dark_ = (ldr_raw2 < LDR_DARK);
+    } else {
+        is_dark_ = dark;  // 双采样均失败 → 回退传入值
+    }
+    ESP_LOGI(TAG, "CheckTime: %02d:%02d dark=%d LDR=%d LDR2=%d thresh=%d quiet_mode=%d running=%d",
+             hour, min, (int)is_dark_, ldr_raw, ldr_raw2, LDR_DARK, quiet_mode_.load(), (int)is_running_);
     if (is_running_) {
         ESP_LOGI(TAG, "Skipping chime: performance already running");
         return;
@@ -674,12 +693,10 @@ void CuckooStateMachine::CheckTime(int hour, int min, bool dark) {
     if (min == 0) {
         ESP_LOGI(TAG, "Hourly chime: %d:%02d, starting performance", hour, min);
         StartPerformance(kPerformanceHour, hour);  // bird+bell always, Phase2 skipped if hourly_perf_ disabled
-        MarkHourlyChime(hour);  // dedup after successful trigger
     }
     else if (min == 30) {
         ESP_LOGI(TAG, "Half-hour chime: %d:%02d, starting mini performance", hour, min);
         StartPerformance(kPerformanceHalf, hour);
-        MarkHalfHourlyChime(hour);  // dedup after successful trigger
     }
 }
 

@@ -87,7 +87,7 @@
 #define LDR_ADC_BITWIDTH  ADC_BITWIDTH_12  // 12-bit 分辨率，0~4095
 
 // 暗光判定阈值
-#define LDR_DARK          500 // ADC 值低于此判定为暗
+#define LDR_DARK          400 // ADC 值低于此判定为暗
 
 // WS2812 LED 灯带引脚（A/B 两路）
 #define LED_A_GPIO        GPIO_NUM_21
@@ -146,7 +146,7 @@
 
 // 小狗电机参数
 #define DOG_SPEED_PERCENT      20 // 狗行走速度（%）
-#define DOG_WALK_TIME_MS       1000 // 狗行走持续时间
+#define DOG_WALK_TIME_MS       1200 // 狗行走持续时间
 
 // 狗尾舵机参数
 #define DOG_TAIL_SWEEP_START   180 // 收起步角度

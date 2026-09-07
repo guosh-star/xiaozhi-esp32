@@ -150,15 +150,21 @@ void CuckooStateMachine::MusicDanceTick() {
 }
 
 /**
- * @brief 小狗出场：开门（异步）+ 狗尾 180→20→35 度 + 小狗前进
+ * @brief 小狗出场：同步开门 + 狗尾 180→20→35 度 + 小狗前进
  */
 void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: ENTER");
     dog_intro_running_ = true;
     MotorPowerOn();
-    auto* ctx = new DoorOpenCtx{this};
-    auto ret = xTaskCreatePinnedToCore(DoorOpenTask, "door_open_m", 2048, ctx, 6, nullptr, 1);
-    if (ret != pdPASS) ESP_LOGE(TAG, "MusicDogIntro: door_open_m create FAILED ret=%d", (int)ret);
+
+    // 同步开门（不再异步，避免 DoorOpenTask 提前 MotorPowerOff 断电）
+    if (m2_) {
+        m2_->Forward(MAIN_DOOR_OPEN_SPEED);
+        vTaskDelay(pdMS_TO_TICKS(MAIN_DOOR_TIME_MS));
+        m2_->Stop();
+    }
+    door_open_ = true;
+
     if (dog_servo_) {
         dog_servo_->Sweep(180, 20, (180 - 10) * 15);
     }
@@ -1358,13 +1364,18 @@ uint32_t tick_sec = 0;
             int h = sm->current_hour_;
             int m = sm->current_min_;
 
-            if (m == 0 && sm->current_sec_ == 0 && sm->NeedHourlyChime(h)) {
+            // 报时触发：分钟边沿检测（进入 0 分/30 分即触发），
+            // 不再依赖 sec==0 精确匹配（1 秒窗口 + 1 秒轮询相位漂移会导致漏报时）。
+            // 触发即 Mark 去重，防止同一分钟重复触发。
+            if (m == 0 && sm->NeedHourlyChime(h)) {
                 ESP_LOGI(TAG, "Hourly chime trigger: %02d:00", h);
-                sm->CheckTime(h, m, sm->is_dark_);
+                sm->MarkHourlyChime(h);
+                sm->CheckTime(h, 0, sm->is_dark_);
             }
-            else if (m == 30 && sm->current_sec_ == 0 && sm->NeedHalfHourlyChime(h)) {
+            else if (m == 30 && sm->NeedHalfHourlyChime(h)) {
                 ESP_LOGI(TAG, "Half-hour chime trigger: %02d:30", h);
-                sm->CheckTime(h, m, sm->is_dark_);
+                sm->MarkHalfHourlyChime(h);
+                sm->CheckTime(h, 30, sm->is_dark_);
             }
 
             sm->CheckAlarms(h, m, sm->current_sec_);

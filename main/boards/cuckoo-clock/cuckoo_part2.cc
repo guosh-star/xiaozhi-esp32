@@ -287,10 +287,10 @@ serial_fallback:
         int64_t t0 = esp_timer_get_time(), last_refresh = t0;
         size_t total_dl = 0;
         
- // 播放音乐时音量降至 65%，并开启 AEC 参考采集
+ // 播放音乐时音量降至 80%，并开启 AEC 参考采集
         auto* codec = Board::GetInstance().GetAudioCodec();
         int old_vol = codec ? codec->output_volume() : 90;
-        int music_vol = old_vol * 65 / 100;
+        int music_vol = old_vol * 80 / 100;
         if (music_vol < 10) music_vol = 10;
         if (codec) codec->SetOutputVolume(music_vol);
         ESP_LOGI(TAG, "PlayOpus: volume %d -> %d for AEC", old_vol, music_vol);
