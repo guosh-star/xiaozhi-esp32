@@ -22,8 +22,9 @@ if !errorlevel! equ 1 (
     idf.py build flash
 ) else (
     echo.
-    echo Config files OK - building (fullclean to avoid stale cache)
-    idf.py fullclean build flash
+    echo Config files OK - cleaning build dir only (keep managed_components)
+    if exist "%~dp0build" rmdir /s /q "%~dp0build"
+    idf.py build flash
 )
 
 endlocal

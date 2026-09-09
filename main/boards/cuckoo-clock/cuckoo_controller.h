@@ -71,21 +71,22 @@ public:
 
 /**
  * @brief 2克微型舵机封装
- * 使用 PWM 控制，50Hz，0.5-2.5ms 脉冲，角度 0~180°
+ * 使用 PWM 控制，50Hz，0.5-2.5ms 脉冲，角度 0~145°（上限钳位，避免 DS-M005 顶死）
  */
 class Servo {
 private:
     gpio_num_t pin_;
-    int angle_;                              // 当前角度 0°~180°
+    int angle_;                              // 当前角度 0°~145°
     ledc_channel_t ledc_channel_;
     ledc_mode_t speed_mode_;                 // LOW_SPEED or HIGH_SPEED
 
 public:
     Servo(gpio_num_t pin, ledc_channel_t channel,
           ledc_mode_t speed_mode = LEDC_LOW_SPEED_MODE);
-    void SetAngle(int angle);                // 设置 0°~180°
+    void SetAngle(int angle);                // 设置 0°~145°
     int GetAngle() { return angle_; }
     void Sweep(int from, int to, int duration_ms = 500); // 平滑扫过角度
+    void Release();                          // 归零释放：duty=0 不锁力
 };
 
 /**
@@ -317,11 +318,11 @@ private:
 
     // 狗尾摇摆状态
     struct DogTailState {
-        int angle = 0;
+        int angle = 15;
         int dir = 1;
-        int target = 50;
+        int target = 65;
         int pause = 0;
-        void Reset() { angle = 0; dir = 1; target = 50; pause = 0; }
+        void Reset() { angle = 15; dir = 1; target = 65; pause = 0; }
     };
     DogTailState dog_state_;
     std::atomic<bool> door_open_{false};   // 大门状态
@@ -400,6 +401,7 @@ public:
     // 电机电源控制（P-MOSFET：低=通电，高=断电）
     void MotorPowerOn();
     void MotorPowerOff();
+    void ReleaseServos();   // 空闲归零：释放两个舵机（duty=0）
 
     // 启动报时/演出异步流程
     void StartPerformance(PerformanceType type, int hour = 0);

@@ -85,10 +85,10 @@ void CuckooStateMachine::MusicDanceTick() {
             // 吉他 + 小狗舵机：与同一节奏同步
             // Phase 0-3：正向节拍，Phase 4-7：反向节拍
             static int guitar_angle = 90;
-            static int dog_angle = 40;
+            static int dog_angle = 45;
             bool forward_beat = (phase <= 3);
             int guitar_target = forward_beat ? 110 : 70;   // +/-20
-            int dog_target = forward_beat ? 40 : 10;         // dog wags 10-40
+            int dog_target = forward_beat ? 45 : 15;         // dog wags 15-45
 
             if (violin_servo_) {
                 if (guitar_angle < guitar_target) {
@@ -150,7 +150,7 @@ void CuckooStateMachine::MusicDanceTick() {
 }
 
 /**
- * @brief 小狗出场：同步开门 + 狗尾 180→20→35 度 + 小狗前进
+ * @brief 小狗出场：同步开门 + 狗尾 145→20→35 度 + 小狗前进
  */
 void CuckooStateMachine::MusicDogIntro() {
     ESP_LOGI(TAG, "MusicDogIntro: ENTER");
@@ -166,7 +166,7 @@ void CuckooStateMachine::MusicDogIntro() {
     door_open_ = true;
 
     if (dog_servo_) {
-        dog_servo_->Sweep(180, 20, (180 - 10) * 15);
+        dog_servo_->Sweep(145, 20, (145 - 10) * 15);
     }
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
@@ -185,7 +185,7 @@ void CuckooStateMachine::MusicDogIntro() {
 }
 
 /**
- * @brief 小狗退场：狗尾回 20→180 度、小狗后退、关门、关电机电源
+ * @brief 小狗退场：狗尾回 20→145 度、小狗后退、关门、关电机电源
  */
 void CuckooStateMachine::MusicDogOutro() {
     dog_outro_running_ = true;
@@ -206,7 +206,7 @@ void CuckooStateMachine::MusicDogOutro() {
         m3_->Stop();
     }
     if (dog_servo_) {
-        dog_servo_->Sweep(20, 180, (180 - 30) * 15);
+        dog_servo_->Sweep(20, 145, (145 - 30) * 15);
     }
     if (door_open_.load()) {
         CloseDoor();
@@ -216,6 +216,7 @@ void CuckooStateMachine::MusicDogOutro() {
     MotorPowerOff();
     dog_intro_done_ = false;
     dog_outro_running_ = false;
+    ReleaseServos();   // 空闲归零：小狗退场后释放舵机锁力
 }
 
 
@@ -251,7 +252,7 @@ void CuckooStateMachine::KidsDanceShow() {
             vTaskDelay(pdMS_TO_TICKS(300));
             // 小狗出来
             if (!sm->dog_out_ && sm->dog_servo_) {
-                sm->dog_servo_->Sweep(180, 20, (180 - 10) * 15);
+                sm->dog_servo_->Sweep(145, 20, (145 - 10) * 15);
                 if (sm->m3_) {
                     sm->m3_->Forward(DOG_SPEED_PERCENT);
                     vTaskDelay(pdMS_TO_TICKS(1000));

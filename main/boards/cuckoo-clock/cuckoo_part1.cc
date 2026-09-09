@@ -237,13 +237,13 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
 }
 
 /**
- * @brief 设置舵机角度 (0~180度)
- * @param angle 目标角度，自动钳位到 [0, 180]
- * 将角度转换为50Hz PWM 占空比 (409~2048 对应 0~180度)
+ * @brief 设置舵机角度 (0~145度)
+ * @param angle 目标角度，自动钳位到 [0, 145]
+ * 将角度转换为50Hz PWM 占空比 (409~2048 对应 0~180度，上限钳位到 145 度)
  */
 void Servo::SetAngle(int angle) {
     if (angle < 0) angle = 0;
-    if (angle > 180) angle = 180;
+    if (angle > 145) angle = 145;   // 上限 145°，避免 DS-M005 微型舵机顶死堵转
     angle_ = angle;
     uint32_t duty = (uint32_t)(409 + (float)(angle) / 180.0f * (2048 - 409));
     ledc_set_duty(speed_mode_, ledc_channel_, duty);
@@ -265,6 +265,16 @@ void Servo::Sweep(int from, int to, int duration_ms) {
         SetAngle(from + (int)(delta * i));
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+}
+
+/**
+ * @brief 释放舵机：PWM duty 归零，输出轴不再锁力（空闲省电 + 防堵转）
+ * 归零后舵机停靠位置由机械/重力决定，代码不再保持角度。
+ * 下次 SetAngle/Sweep 会自动恢复 PWM 输出。
+ */
+void Servo::Release() {
+    ledc_set_duty(speed_mode_, ledc_channel_, 0);
+    ledc_update_duty(speed_mode_, ledc_channel_);
 }
 
 // 小鸟跳跃 + 水车驱动的水鸟电机 (DRV8833 电机驱动 IN1/IN2)

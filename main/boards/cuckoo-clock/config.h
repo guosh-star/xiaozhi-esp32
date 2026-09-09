@@ -149,7 +149,7 @@
 #define DOG_WALK_TIME_MS       1200 // 狗行走持续时间
 
 // 狗尾舵机参数
-#define DOG_TAIL_SWEEP_START   180 // 收起步角度
+#define DOG_TAIL_SWEEP_START   145 // 收起步角度
 #define DOG_TAIL_SWEEP_END     20 // 出场终点角度
 #define DOG_TAIL_STEP_MS       15 // 每步持续时间
 

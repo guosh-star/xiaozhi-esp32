@@ -14,8 +14,8 @@ void CuckooStateMachine::DogShow() {
 
 /**
  * @brief 小狗秀任务实现（完整流程）
- * 开门→水车转→狗尾伸出(180→20°)→小狗前进→叫一声→狗尾归0°→
- * 摇尾10秒(0↔60°)→叫一声→狗尾回20°→小狗后退→狗尾归位(20→180°)→停水车→关门
+ * 开门→水车转→狗尾伸出(145→20°)→小狗前进→叫一声→狗尾归15°→
+ * 摇尾10秒(15↔75°)→叫一声→狗尾回20°→小狗后退→狗尾归位(20→145°)→停水车→关门
  * 结束时恢复唤醒词阈值（设备 idle 时）。
  */
 void CuckooStateMachine::DogShowTask() {
@@ -44,9 +44,9 @@ void CuckooStateMachine::DogShowTask() {
     // 2. 水车开启（开门后启动，避免共享电源轨电压跌落）
     if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
 
-    // 3. 狗尾伸出：180→20 度，2000ms（脸朝后→脸朝前，转速约80°/s 保证舵机转到20度再出门）
+    // 3. 狗尾伸出：145→20 度，2000ms（脸朝后→脸朝前，转速约80°/s 保证舵机转到20度再出门）
     if (dog_servo_) {
-        dog_servo_->Sweep(180, 20, 2000);
+        dog_servo_->Sweep(145, 20, 2000);
         dog_state_.angle = 20;
     }
 
@@ -61,13 +61,13 @@ void CuckooStateMachine::DogShowTask() {
     PlayDogBarkDirect();
     if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);  // restart after BirdJumpShort stopped it
 
-    // 6. 狗尾归 0 度
+    // 6. 狗尾归 15 度
     if (dog_servo_) {
-        dog_servo_->Sweep(20, 0, 300);
-        dog_state_.angle = 0;
+        dog_servo_->Sweep(20, 15, 300);
+        dog_state_.angle = 15;
     }
 
-    // 7. 摇尾 10 秒：0↔60 度
+    // 7. 摇尾 10 秒：15↔75 度
     unsigned long start = xTaskGetTickCount() * portTICK_PERIOD_MS;
     unsigned long end_time = start + 10000;
     int sweep_dir = 0;
@@ -75,13 +75,13 @@ void CuckooStateMachine::DogShowTask() {
         if (water_bird_) water_bird_->SetSpeed(WATER_WHEEL_SPEED);
         if (dog_servo_) {
             if (sweep_dir == 0) {
-                dog_servo_->Sweep(0, 60, 900);
-                dog_state_.angle = 60;
+                dog_servo_->Sweep(15, 75, 900);
+                dog_state_.angle = 75;
                 vTaskDelay(pdMS_TO_TICKS(500));
                 sweep_dir = 1;
             } else {
-                dog_servo_->Sweep(60, 0, 900);
-                dog_state_.angle = 0;
+                dog_servo_->Sweep(75, 15, 900);
+                dog_state_.angle = 15;
                 vTaskDelay(pdMS_TO_TICKS(500));
                 sweep_dir = 0;
             }
@@ -105,10 +105,10 @@ void CuckooStateMachine::DogShowTask() {
         vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
-   // 11. 狗尾回退到 180 度
+   // 11. 狗尾回退到 145 度
     if (dog_servo_) {
-        dog_servo_->Sweep(20, 180, 1200);
-        dog_state_.angle = 180;
+        dog_servo_->Sweep(20, 145, 1200);
+        dog_state_.angle = 145;
     }
     // 12. 停水车
     if (water_bird_) water_bird_->Stop();
@@ -551,11 +551,11 @@ void CuckooStateMachine::GardenShow() {
             led_final = true;
         }
 
-        // 小提琴摆动：每50ms移动6度，0~140度左右摆动
+        // 小提琴摆动：每50ms移动6度，20~140度左右摆动
         if (violin_servo_) {
             if (violin_dir == 0) {
                 violin_angle -= 6;
-                if (violin_angle <= 0) { violin_angle = 0; violin_dir = 1; }
+                if (violin_angle <= 20) { violin_angle = 20; violin_dir = 1; }
             } else {
                 violin_angle += 6;
                 if (violin_angle >= 140) { violin_angle = 140; violin_dir = 0; }
@@ -916,6 +916,7 @@ void CuckooStateMachine::StopAll() {
     if (water_bird_) water_bird_->Stop();
     gpio_set_level(LED_A_GPIO, 0);
     gpio_set_level(LED_B_GPIO, 0);
+    ReleaseServos();   // 空闲归零：释放舵机锁力（PWM duty=0）
     // 注意 stop_all+play_url 会重复播放背景音乐
     if (mp3_) {
         auto& audio = Application::GetInstance().GetAudioService();

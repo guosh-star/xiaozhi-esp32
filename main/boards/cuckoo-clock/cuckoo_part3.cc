@@ -22,6 +22,15 @@ void CuckooStateMachine::MotorPowerOff() {
     gpio_set_level(motor_power_pin_, 1);
 }
 
+/**
+ * @brief 空闲归零：释放两个舵机（PWM duty=0），输出轴不再锁力
+ * 用于表演结束后省电 + 防止 DS-M005 微型舵机长期锁力堵转。
+ */
+void CuckooStateMachine::ReleaseServos() {
+    if (violin_servo_) violin_servo_->Release();
+    if (dog_servo_) dog_servo_->Release();
+}
+
 // ============================================
 // ============================================
 
@@ -126,7 +135,7 @@ void CuckooStateMachine::RunDanceIntro() {
     door_open_ = true;
 
     if (dog_servo_) {
-        dog_servo_->Sweep(180, 20, (180 - 20) * 15);
+        dog_servo_->Sweep(145, 20, (145 - 20) * 15);
     }
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
@@ -135,7 +144,8 @@ void CuckooStateMachine::RunDanceIntro() {
     }
     PlayDogBark();
     if (dog_servo_) {
-        dog_servo_->Sweep(20, 0, 20 * 15);
+        dog_servo_->Sweep(20, 15, 5 * 15);
+        dog_state_.angle = 15;
     }
     dog_intro_done_ = true;  // 出场完成，允许 RunDanceLoop 开始摆尾
 }
@@ -208,18 +218,18 @@ void CuckooStateMachine::RunDanceLoop() {
         violin_state_.timer += 50;
         switch (violin_state_.stage) {
             case 0: if (violin_state_.angle < 90) violin_state_.angle+=9; else if (violin_state_.angle > 90) violin_state_.angle-=9; break;
-            case 1: if (violin_state_.angle > 0) violin_state_.angle-=9; break;
-            case 2: if (violin_state_.angle < 180) violin_state_.angle+=9; break;
+            case 1: if (violin_state_.angle > 20) violin_state_.angle-=9; break;
+            case 2: if (violin_state_.angle < 145) violin_state_.angle+=9; break;
             case 3: if (violin_motor_) violin_motor_->Forward(VIOLIN_SPEED_PERCENT); break;
             case 4: if (violin_state_.angle > 90) violin_state_.angle-=9; else if (violin_state_.angle < 90) violin_state_.angle+=9; break;
-            case 5: if (violin_state_.angle < 180) violin_state_.angle+=9; break;
-            case 6: if (violin_state_.angle > 0) violin_state_.angle-=9; break;
+            case 5: if (violin_state_.angle < 145) violin_state_.angle+=9; break;
+            case 6: if (violin_state_.angle > 20) violin_state_.angle-=9; break;
             case 7: if (violin_motor_) violin_motor_->Reverse(VIOLIN_SPEED_PERCENT); break;
             case 8: if (violin_state_.angle < 130) violin_state_.angle+=9; else if (violin_state_.angle > 130) violin_state_.angle-=9; break;
             case 9: if (violin_state_.angle > 90) violin_state_.angle-=9; else if (violin_state_.angle < 90) violin_state_.angle+=9; break;
         }
-        if (violin_state_.angle < 0) violin_state_.angle = 0;
-        if (violin_state_.angle > 180) violin_state_.angle = 180;
+        if (violin_state_.angle < 20) violin_state_.angle = 20;
+        if (violin_state_.angle > 145) violin_state_.angle = 145;
         if (violin_servo_) violin_servo_->SetAngle(violin_state_.angle);
         int st_dur[] = {500,800,1000,1000,600,1000,1200,1000,1500,300};
         if (violin_state_.timer >= st_dur[violin_state_.stage]) {
@@ -239,9 +249,9 @@ void CuckooStateMachine::RunDanceLoop() {
                     dog_state_.dir = -1;
                     dog_state_.pause = 20 + (esp_random() % 40);
                 }
-                if (dog_state_.angle <= 0) {
+                if (dog_state_.angle <= 15) {
                     dog_state_.dir = 1;
-                    dog_state_.target = 40 + (esp_random() % 21);
+                    dog_state_.target = 55 + (esp_random() % 21);
                     dog_state_.pause = 0;
                 }
                 dog_servo_->SetAngle(dog_state_.angle);
@@ -313,8 +323,8 @@ void CuckooStateMachine::RunDanceFinale() {
     }
     if (dog_servo_) {
         int dog_cur = dog_state_.angle;
-        dog_servo_->Sweep(dog_cur, 180, (180 - dog_cur) * 15);
-        dog_state_.angle = 180;
+        dog_servo_->Sweep(dog_cur, 145, (145 - dog_cur) * 15);
+        dog_state_.angle = 145;
     }
     MotorPowerOn();
     if (m2_) {
@@ -619,6 +629,7 @@ perf_cleanup:
     sm->MotorPowerOff();
     sm->is_running_ = false;
     sm->current_performance_ = kPerformanceNone;
+    sm->ReleaseServos();   // 空闲归零：释放舵机锁力
     ESP_LOGI(TAG, "Perf done: kids=%d dog_done=%d dog_run=%d dance_en=%d outro_done=%d timed_out=%d", (int)sm->kids_active_.load(), (int)sm->dog_intro_done_.load(), (int)sm->dog_intro_running_.load(), sm->music_dance_enabled_, (int)sm->dog_outro_done_, (int)perf_timed_out);
     if (app.GetDeviceState() == kDeviceStateIdle) {
         app.GetAudioService().EnableWakeWordDetection(true);
