@@ -316,9 +316,18 @@ void CuckooStateMachine::RunDanceFinale() {
     if (violin_motor_) violin_motor_->Stop();
     if (violin_servo_) violin_servo_->SetAngle(SERVO_CENTER_ANGLE);
 
+    // 回退前：先把狗舵机缓慢转到 20°（门口框避让角），再回退
+    if (dog_servo_ && dog_intro_done_) {
+        int cur = dog_state_.angle;
+        int dist = (cur > 20) ? (cur - 20) : (20 - cur);
+        int dur = dist * 15;
+        if (dur < 100) dur = 100;
+        dog_servo_->Sweep(cur, 20, dur);
+        dog_state_.angle = 20;
+    }
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
-        vTaskDelay(pdMS_TO_TICKS(920));
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     if (dog_servo_) {

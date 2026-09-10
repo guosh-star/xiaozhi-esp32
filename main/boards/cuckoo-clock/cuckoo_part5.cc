@@ -170,7 +170,7 @@ void CuckooStateMachine::MusicDogIntro() {
     }
     if (m3_) {
         m3_->Forward(DOG_SPEED_PERCENT);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     if (dog_servo_) {
@@ -195,18 +195,25 @@ void CuckooStateMachine::MusicDogOutro() {
         return;
     }
     dog_out_ = false;
-    // 先平滑回到 30 度，再回原位
+    // 回退前：先把狗舵机缓慢转到 20°（门口框避让角），再回退
     if (dog_servo_) {
         int cur = dog_state_.angle;
-        if (cur > 30) dog_servo_->Sweep(cur, 20, (cur - 30) * 15);
+        if (cur != 20) {
+            int dist = (cur > 20) ? (cur - 20) : (20 - cur);
+            int dur = dist * 15;
+            if (dur < 100) dur = 100;
+            dog_servo_->Sweep(cur, 20, dur);
+        }
+        dog_state_.angle = 20;
     }
     if (m3_) {
         m3_->Reverse(DOG_SPEED_PERCENT);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
         m3_->Stop();
     }
     if (dog_servo_) {
-        dog_servo_->Sweep(20, 145, (145 - 30) * 15);
+        dog_servo_->Sweep(20, 145, (145 - 20) * 15);
+        dog_state_.angle = 145;
     }
     if (door_open_.load()) {
         CloseDoor();
@@ -255,7 +262,7 @@ void CuckooStateMachine::KidsDanceShow() {
                 sm->dog_servo_->Sweep(145, 20, (145 - 10) * 15);
                 if (sm->m3_) {
                     sm->m3_->Forward(DOG_SPEED_PERCENT);
-                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    vTaskDelay(pdMS_TO_TICKS(DOG_WALK_TIME_MS));
                     sm->m3_->Stop();
                 }
                 sm->dog_servo_->Sweep(20, 35, 25 * 15);

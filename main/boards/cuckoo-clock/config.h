@@ -146,7 +146,7 @@
 
 // 小狗电机参数
 #define DOG_SPEED_PERCENT      30 // 狗行走速度（%）
-#define DOG_WALK_TIME_MS       1200 // 狗行走持续时间
+#define DOG_WALK_TIME_MS       1000 // 狗行走持续时间
 
 // 狗尾舵机参数
 #define DOG_TAIL_SWEEP_START   145 // 收起步角度
