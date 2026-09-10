@@ -145,7 +145,7 @@
 #define VIOLIN_BALANCE_TIME_MS 1200 // 平衡归位时间
 
 // 小狗电机参数
-#define DOG_SPEED_PERCENT      20 // 狗行走速度（%）
+#define DOG_SPEED_PERCENT      30 // 狗行走速度（%）
 #define DOG_WALK_TIME_MS       1200 // 狗行走持续时间
 
 // 狗尾舵机参数
