@@ -1016,16 +1016,16 @@ void CuckooStateMachine::BirdJumpPulse() {
 
 /**
  * @brief 小鸟短促跳跃（AI 说话时模拟插话的鸟鸣）
- * 随机 50-200ms 通电脉冲，冷却 300-700ms 后循环
+ * 随机 100-500ms 通电脉冲，冷却 300-700ms 后循环
  */
 void CuckooStateMachine::BirdJumpShort() {
     // AI 说话时小鸟模拟插话跳跃（随机节奏模式）
-    // 通电时间随机 50-200ms 模拟自然跳跃
+    // 通电时间随机 100-500ms 模拟自然跳跃
     // 冷却时间随机 300-700ms 防止跳跃太频繁
     MotorPowerOn();
     if (water_bird_) water_bird_->Stop();  // 先停水车释放 GPIO39 避免冲突
     gpio_set_level(MOTOR_WATER_BIRD_IN2, 1);  // 电机通电，小鸟弹出
-    int pulse = 50 + (esp_random() % 151);  // 随机 50-200ms 通电脉冲
+    int pulse = 100 + (esp_random() % 401);  // 随机 100-500ms 通电脉冲
     vTaskDelay(pdMS_TO_TICKS(pulse));
     gpio_set_level(MOTOR_WATER_BIRD_IN2, 0);  // 电机断电，小鸟收回
     int cooldown = 300 + (esp_random() % 401);  // 随机 300-700ms 冷却时间
