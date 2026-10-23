@@ -59,49 +59,50 @@ RTC_NOINIT_ATTR struct {
 } rtc_crash_log;
 
 
-// 将 QQ 音乐代理的 /stream 和 /opus 格式 URL 转换为 /pcm 格式，供 ESP32 解码音频使用
+// 将 QQ 音乐代理的 URL 统一成实际传输格式
+// MUSIC_PREFER_OPUS=1：/stream、/pcm 都改写成 /opus（省带宽、抗抖动）
+// MUSIC_PREFER_OPUS=0：/stream、/opus 都改写成 /pcm（原始 s16le）
 static void ConvertToPcmUrl(char* url, size_t url_sz) {
-    // 原位替换，避免字符串长度变化
     size_t url_len = strlen(url);
     if (url_len >= url_sz) return;
 
-    // 将 /stream?q=... 转换为 /pcm?q=...
-    char* pos = strstr(url, "/stream?");
-    if (pos) {
-        // "/stream" = 7个字符, "/pcm" = 4个字符, 剩余 "?..." 在 pos+7 处
-        size_t tail = strlen(pos + 7) + 1;
-        if ((size_t)(pos + 4 + tail - url) > url_sz) return;
-        memmove(pos + 4, pos + 7, tail);
-        memcpy(pos, "/pcm", 4);
+#if MUSIC_PREFER_OPUS
+    const char* target = "/opus?";
+    const size_t target_len = 6;
+#else
+    const char* target = "/pcm?";
+    const size_t target_len = 5;
+#endif
+
+    // 带前导斜杠的完整路径
+    static const char* kSlashed[] = {"/stream?", "/opus?", "/pcm?"};
+    for (size_t i = 0; i < sizeof(kSlashed) / sizeof(kSlashed[0]); i++) {
+        const char* from = kSlashed[i];
+        char* pos = strstr(url, from);
+        if (!pos) continue;
+        size_t from_len = strlen(from);
+        if (strncmp(pos, target, target_len) == 0) return;  // 已是目标格式
+        size_t new_len = url_len - from_len + target_len;
+        if (new_len >= url_sz) return;
+        memmove(pos + target_len, pos + from_len, strlen(pos + from_len) + 1);
+        memcpy(pos, target, target_len);
         return;
     }
-    // 将 /opus?q=... 转换为 /pcm?q=...
-    pos = strstr(url, "/opus?");
-    if (pos) {
-        // "/opus" = 6个字符, "/pcm" = 4个字符, 剩余 "?..." 在 pos+5 处
-        size_t tail = strlen(pos + 5) + 1;
-        if ((size_t)(pos + 4 + tail - url) > url_sz) return;
-        memmove(pos + 4, pos + 5, tail);
-        memcpy(pos, "/pcm", 4);
-        return;
-    }
-    // 也可能没有前导斜杠（处理 AI 生成的 "stream?q= " 和 "opus?q= "）
-    pos = strstr(url, "stream?");
-    if (pos && (pos == url || *(pos-1) != '/')) {
-        // "stream" = 6个字符, "pcm" = 3个字符, 剩余 "?..." 在 pos+6 处
-        size_t tail = strlen(pos + 6) + 1;
-        if ((size_t)(pos + 3 + tail - url) > url_sz) return;
-        memmove(pos + 3, pos + 6, tail);
-        memcpy(pos, "pcm", 3);
-        return;
-    }
-    pos = strstr(url, "opus?");
-    if (pos && (pos == url || *(pos-1) != '/')) {
-        // "opus" = 4个字符, "pcm" = 3个字符, 剩余 "?..." 在 pos+4 处
-        size_t tail = strlen(pos + 4) + 1;
-        if ((size_t)(pos + 3 + tail - url) > url_sz) return;
-        memmove(pos + 3, pos + 4, tail);
-        memcpy(pos, "pcm", 3);
+
+    // 无前导斜杠的简写（AI 可能生成 "pcm?q=" / "stream?q="）
+    static const char* kBare[] = {"stream?", "opus?", "pcm?"};
+    for (size_t i = 0; i < sizeof(kBare) / sizeof(kBare[0]); i++) {
+        const char* from = kBare[i];
+        char* pos = strstr(url, from);
+        if (!pos || (pos != url && *(pos - 1) == '/')) continue;
+        size_t from_len = strlen(from);
+        const char* bare_target = target + 1;
+        size_t bare_len = target_len - 1;
+        if (strncmp(pos, bare_target, bare_len) == 0) return;  // 已是目标格式
+        size_t new_len = url_len - from_len + bare_len;
+        if (new_len >= url_sz) return;
+        memmove(pos + bare_len, pos + from_len, strlen(pos + from_len) + 1);
+        memcpy(pos, bare_target, bare_len);
         return;
     }
 }

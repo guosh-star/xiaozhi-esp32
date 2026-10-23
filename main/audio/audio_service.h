@@ -131,6 +131,9 @@ public:
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    // 在线音乐专用：独立 Opus 解码 + 重采样后写入 bg ring（避免与 AI TTS 共用解码器）
+    bool PushMusicOpusPacket(const uint8_t* data, size_t len, int sample_rate, int frame_duration);
+    void ResetMusicDecoder();
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     void PushRawPcmToPlayback(const int16_t* data, size_t num_samples, int sample_rate);
@@ -170,6 +173,14 @@ private:
     void* opus_encoder_ = nullptr;
     void* opus_decoder_ = nullptr;
     std::mutex decoder_mutex_;
+    // Dedicated music decoder (online Opus music -> bg ring)
+    void* music_opus_decoder_ = nullptr;
+    std::mutex music_decoder_mutex_;
+    int music_decoder_sample_rate_ = 0;
+    int music_decoder_duration_ms_ = 0;
+    int music_decoder_frame_size_ = 0;
+    esp_ae_rate_cvt_handle_t music_output_resampler_ = nullptr;
+    int music_resampler_src_rate_ = 0;
     std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;

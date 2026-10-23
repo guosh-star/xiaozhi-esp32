@@ -146,11 +146,12 @@ void AudioService::Start() {
     }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    // 2026-09-11: 钉到 Core 1（保留）
+    xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_, 1);
 #else
     /* Start the audio input task */
     xTaskCreate([](void* arg) {
@@ -160,19 +161,21 @@ void AudioService::Start() {
     }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);
 
     /* Start the audio output task */
-    xTaskCreate([](void* arg) {
+    // 2026-09-11: 钉到 Core 1（保留）
+    xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+    }, "audio_output", 2048, this, 4, &audio_output_task_handle_, 1);
 #endif
 
     /* Start the opus codec task */
-    xTaskCreate([](void* arg) {
+    // 2026-09-11: 钉到 Core 1（保留）
+    xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, 1);
 }
 
 void AudioService::Stop() {
@@ -937,6 +940,93 @@ void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int 
             bg_audio_read_pos_ = (bg_audio_read_pos_ + 1) % BG_AUDIO_RING_SIZE;
         }
     }
+}
+
+void AudioService::ResetMusicDecoder() {
+    std::lock_guard<std::mutex> lock(music_decoder_mutex_);
+    if (music_opus_decoder_ != nullptr) {
+        esp_opus_dec_close(music_opus_decoder_);
+        music_opus_decoder_ = nullptr;
+    }
+    if (music_output_resampler_ != nullptr) {
+        esp_ae_rate_cvt_reset(music_output_resampler_);
+    }
+    music_decoder_sample_rate_ = 0;
+    music_decoder_duration_ms_ = 0;
+    music_decoder_frame_size_ = 0;
+}
+
+bool AudioService::PushMusicOpusPacket(const uint8_t* data, size_t len, int sample_rate, int frame_duration) {
+    if (data == nullptr || len == 0 || sample_rate <= 0) return false;
+    if (frame_duration <= 0) frame_duration = 60;
+
+    std::lock_guard<std::mutex> lock(music_decoder_mutex_);
+    if (music_opus_decoder_ == nullptr || music_decoder_sample_rate_ != sample_rate ||
+        music_decoder_duration_ms_ != frame_duration) {
+        if (music_opus_decoder_ != nullptr) {
+            esp_opus_dec_close(music_opus_decoder_);
+            music_opus_decoder_ = nullptr;
+        }
+        esp_opus_dec_cfg_t cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
+        auto ret = esp_opus_dec_open(&cfg, sizeof(esp_opus_dec_cfg_t), &music_opus_decoder_);
+        if (music_opus_decoder_ == nullptr) {
+            ESP_LOGE(TAG, "Music decoder open failed: %d (rate=%d dur=%d)", ret, sample_rate, frame_duration);
+            return false;
+        }
+        music_decoder_sample_rate_ = sample_rate;
+        music_decoder_duration_ms_ = frame_duration;
+        music_decoder_frame_size_ = sample_rate / 1000 * frame_duration;
+        ESP_LOGI(TAG, "Music decoder: %d Hz, %d ms, %d samples/frame",
+                 sample_rate, frame_duration, music_decoder_frame_size_);
+    }
+
+    std::vector<int16_t> pcm((size_t)music_decoder_frame_size_);
+    esp_audio_dec_in_raw_t raw = {
+        .buffer = (uint8_t*)data,
+        .len = (uint32_t)len,
+        .consumed = 0,
+        .frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE,
+    };
+    esp_audio_dec_out_frame_t out = {
+        .buffer = (uint8_t*)pcm.data(),
+        .len = (uint32_t)(pcm.size() * sizeof(int16_t)),
+        .decoded_size = 0,
+    };
+    esp_audio_dec_info_t info = {};
+    auto ret = esp_opus_dec_decode(music_opus_decoder_, &raw, &out, &info);
+    if (ret != ESP_AUDIO_ERR_OK || out.decoded_size == 0) {
+        ESP_LOGW(TAG, "Music decode failed: %d", ret);
+        return false;
+    }
+    pcm.resize(out.decoded_size / sizeof(int16_t));
+
+    int out_rate = codec_ ? codec_->output_sample_rate() : 32000;
+    if (sample_rate != out_rate) {
+        if (music_output_resampler_ == nullptr || music_resampler_src_rate_ != sample_rate) {
+            if (music_output_resampler_ != nullptr) {
+                esp_ae_rate_cvt_close(music_output_resampler_);
+                music_output_resampler_ = nullptr;
+            }
+            esp_ae_rate_cvt_cfg_t rcfg = RATE_CVT_CFG(sample_rate, out_rate, ESP_AUDIO_MONO);
+            auto rret = esp_ae_rate_cvt_open(&rcfg, &music_output_resampler_);
+            if (music_output_resampler_ == nullptr) {
+                ESP_LOGE(TAG, "Music resampler open failed: %d", rret);
+                return false;
+            }
+            music_resampler_src_rate_ = sample_rate;
+        }
+        uint32_t target = 0;
+        esp_ae_rate_cvt_get_max_out_sample_num(music_output_resampler_, pcm.size(), &target);
+        std::vector<int16_t> resampled(target);
+        uint32_t actual = target;
+        esp_ae_rate_cvt_process(music_output_resampler_, (esp_ae_sample_t)pcm.data(), pcm.size(),
+                                (esp_ae_sample_t)resampled.data(), &actual);
+        resampled.resize(actual);
+        PushBackgroundAudio(resampled.data(), resampled.size(), out_rate);
+    } else {
+        PushBackgroundAudio(pcm.data(), pcm.size(), out_rate);
+    }
+    return true;
 }
 
 void AudioService::MixIntoBackgroundAudio(const int16_t* data, size_t samples, float gain) {

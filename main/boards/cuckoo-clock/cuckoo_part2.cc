@@ -273,13 +273,9 @@ serial_fallback:
         ESP_LOGI(TAG, "PlayOpus: downloading Opus OGG...");
         
         auto* demuxer = new OggDemuxer();
-        demuxer->OnDemuxerFinished([&app, self](const uint8_t* data, int sample_rate, size_t len) {
-            auto packet = std::make_unique<AudioStreamPacket>();
-            packet->sample_rate = sample_rate;
-            packet->frame_duration = 60;
-            packet->timestamp = 0;
-            packet->payload.assign(data, data + len);
-            app.GetAudioService().PushPacketToDecodeQueue(std::move(packet), true);
+        demuxer->OnDemuxerFinished([&app](const uint8_t* data, int sample_rate, size_t len) {
+            // 音乐走独立 Opus 解码器 -> bg ring，不再和 AI TTS 共用解码队列
+            app.GetAudioService().PushMusicOpusPacket(data, len, sample_rate, 60);
         });
         
         const size_t CHUNK = 4096;
@@ -295,7 +291,13 @@ serial_fallback:
         if (codec) codec->SetOutputVolume(music_vol);
         ESP_LOGI(TAG, "PlayOpus: volume %d -> %d for AEC", old_vol, music_vol);
         
-        bool is_ducking = false;  // true = AI 正在说话，不推送音乐
+        // 音乐走 bg ring：先激活（近静音），预缓冲够再开排空
+        auto& audio_service = app.GetAudioService();
+        audio_service.ResetMusicDecoder();
+        audio_service.SetBackgroundAudioGain(0.001f);
+        bool drain_on = false;
+        bool abort_for_wake = false;
+        int prev_ai_level = -1;
         
         while (self->is_playing_ && !self->stop_requested_) {
             int read = recv(sock, buf, CHUNK, 0);
@@ -312,22 +314,41 @@ serial_fallback:
             auto dev_state = app.GetDeviceState();
             if (dev_state == kDeviceStateConnecting) {
                 ESP_LOGI(TAG, "PlayOpus: auto-stop (wake word)");
+                abort_for_wake = true;
                 break;
             }
-            if (dev_state == kDeviceStateSpeaking) {
-                if (!is_ducking) {
-                    is_ducking = true;
-                    ESP_LOGI(TAG, "PlayOpus: ducking for AI speech...");
-                }
-                demuxer->Process(buf, read);  // 保持解码器状态，跳过输出
-                continue;
-            }
-            if (is_ducking) {
-                ESP_LOGI(TAG, "PlayOpus: resuming music");
-                is_ducking = false;
+
+            // OGG 解复用 → 独立 Opus 解码 → 重采样 → bg ring
+            demuxer->Process(buf, read);
+
+            // 预缓冲约 2 秒（32kHz）后再开排空
+            if (!drain_on && audio_service.GetBgAudioFillLevel() >= 64000) {
+                audio_service.SetBackgroundAudioGain(1.0f);
+                audio_service.EnableBgAudioDrain(true);
+                drain_on = true;
+                ESP_LOGI(TAG, "PlayOpus: bg drain enabled (fill=%d)", (int)audio_service.GetBgAudioFillLevel());
             }
 
-            demuxer->Process(buf, read);
+            // 三档 ducking：空闲/聆听=100%，说话/连接=50%
+            int ai_level = 0;
+            if (dev_state == kDeviceStateSpeaking || dev_state == kDeviceStateConnecting) {
+                ai_level = 2;
+            } else if (dev_state == kDeviceStateListening) {
+                ai_level = 1;
+            }
+            if (ai_level != prev_ai_level) {
+                prev_ai_level = ai_level;
+                float gain = (ai_level == 2) ? 0.5f : 1.0f;
+                if (drain_on) audio_service.SetBackgroundAudioGain(gain);
+                ESP_LOGI(TAG, "PlayOpus: AI %s, music -> %d%%",
+                         ai_level == 2 ? "speaking" : (ai_level == 1 ? "listening" : "idle"),
+                         (int)(gain * 100));
+            }
+
+            // 限制缓冲上限，避免延迟过大
+            while (audio_service.GetBgAudioFillLevel() > 256000 && !self->stop_requested_) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
 
             int64_t now = esp_timer_get_time();
             if (now - last_refresh > 8000000) {
@@ -336,7 +357,13 @@ serial_fallback:
             }
         }
         
-        // 恢复音量
+        // 停止背景音乐前先排空 ring（唤醒词打断/用户停止则立即清）
+        if (!self->stop_requested_ && !abort_for_wake) {
+            for (int i = 0; i < 100 && audio_service.GetBgAudioFillLevel() > 0; i++) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+        audio_service.ClearBackgroundAudio();
         if (codec) codec->SetOutputVolume(old_vol);
         ESP_LOGI(TAG, "PlayOpus: volume restored to %d", old_vol);
         
