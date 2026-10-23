@@ -3,6 +3,7 @@
 # Start: python server.py  |  Listen: http://0.0.0.0:8765
 
 import json
+import hashlib
 import time
 import os
 import subprocess
@@ -464,6 +465,331 @@ def migu_play_url(song):
         return None, f"Migu play URL failed: {e}"
 
 
+# ===========================================================================
+# Bilibili 视频音源（第 4 源，仅在其它平台拿不到时兜底，2026-10-22）
+# 说明：B站 API 需要 WBI 签名 + buvid Cookie，否则搜索返回 412 风控
+# ===========================================================================
+
+BILI_SEARCH_URL = "https://api.bilibili.com/x/web-interface/wbi/search/type"
+BILI_VIEW_URL = "https://api.bilibili.com/x/web-interface/view"
+BILI_PLAYURL_URL = "https://api.bilibili.com/x/player/wbi/playurl"
+BILI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
+BILI_SPI_URL = "https://api.bilibili.com/x/frontend/finger/spi"
+
+_BILI_MIXIN_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+    27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+    37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+]
+_bili_state = {"mixin": None, "mixin_ts": 0.0, "buvid3": "", "buvid4": ""}
+_bili_lock = threading.Lock()
+_bili_rl = {"ts": 0.0}
+
+
+def _bili_headers(with_cookie=True):
+    h = {
+        "User-Agent": UA,
+        "Referer": "https://www.bilibili.com/",
+        "Origin": "https://www.bilibili.com",
+        "Accept": "application/json, text/plain, */*",
+    }
+    if with_cookie:
+        b3, b4 = _bili_cookies()
+        ck = []
+        if b3:
+            ck.append("buvid3=" + b3)
+        if b4:
+            ck.append("buvid4=" + b4)
+        if ck:
+            h["Cookie"] = "; ".join(ck)
+    return h
+
+
+def _bili_cookies():
+    """获取并缓存 buvid3/buvid4（缺失时 B站会返回 -352/412 风控）"""
+    if _bili_state["buvid3"]:
+        return _bili_state["buvid3"], _bili_state["buvid4"]
+    with _bili_lock:
+        if _bili_state["buvid3"]:
+            return _bili_state["buvid3"], _bili_state["buvid4"]
+        try:
+            req = urllib.request.Request(BILI_SPI_URL, headers=_bili_headers(False))
+            with urllib.request.urlopen(req, timeout=8, context=_ssl_ctx()) as resp:
+                data = json.loads(resp.read().decode("utf-8")).get("data") or {}
+            _bili_state["buvid3"] = data.get("b_3", "") or ""
+            _bili_state["buvid4"] = data.get("b_4", "") or ""
+            print(f"[bilibili] buvid3 acquired: {_bili_state['buvid3'][:12]}...")
+        except Exception as e:
+            print(f"[bilibili] finger/spi failed: {e}")
+        return _bili_state["buvid3"], _bili_state["buvid4"]
+
+
+def _bili_get(url, params=None):
+    # 简单限速：B站对同 IP 短时间多次请求会返回 v_voucher 风控
+    with _bili_lock:
+        wait = _bili_rl["ts"] + 1.2 - time.time()
+        if wait > 0:
+            time.sleep(min(wait, 3.0))
+        _bili_rl["ts"] = time.time()
+    if params:
+        url = url + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers=_bili_headers())
+    with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx()) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _bili_mixin_key():
+    """从 nav 接口提取 img/sub key 并做固定表打乱，缓存 12 小时"""
+    if _bili_state["mixin"] and time.time() - _bili_state["mixin_ts"] < 12 * 3600:
+        return _bili_state["mixin"]
+    try:
+        data = _bili_get(BILI_NAV_URL)
+        wbi = (data.get("data") or {}).get("wbi_img") or {}
+        img = wbi.get("img_url", "").rsplit("/", 1)[-1].split(".")[0]
+        sub = wbi.get("sub_url", "").rsplit("/", 1)[-1].split(".")[0]
+        raw = img + sub
+        if len(raw) < 64:
+            return None
+        mixin = "".join(raw[i] for i in _BILI_MIXIN_TAB if i < len(raw))[:32]
+        _bili_state["mixin"] = mixin
+        _bili_state["mixin_ts"] = time.time()
+        print(f"[bilibili] wbi mixin key refreshed")
+        return mixin
+    except Exception as e:
+        print(f"[bilibili] wbi key failed: {e}")
+        return None
+
+
+def _bili_sign(params):
+    """WBI 签名：排序 + 过滤 !'()* + md5(query + mixin)"""
+    mixin = _bili_mixin_key() or ""
+    p = dict(params)
+    p["wts"] = int(time.time())
+    p = dict(sorted(p.items()))
+    tr = str.maketrans("", "", "!'()*")
+    p = {k: str(v).translate(tr) for k, v in p.items()}
+    query = urllib.parse.urlencode(p)
+    p["w_rid"] = hashlib.md5((query + mixin).encode("utf-8")).hexdigest()
+    return p
+
+
+def _bili_duration(text):
+    """'4:38' / '1:02:03' -> 秒"""
+    try:
+        parts = [int(x) for x in str(text).split(":")]
+    except Exception:
+        return 0
+    secs = 0
+    for v in parts:
+        secs = secs * 60 + v
+    return secs
+
+
+def _clean_bili_title(title):
+    """视频标题清洗：去高亮标签/【】前缀/画质词，优先取《歌名》"""
+    t = _re.sub(r"<[^>]+>", "", title or "")
+    t = urllib.parse.unquote(t)
+    m = _re.search(r"《([^》]{1,50})》", t)
+    if m:
+        t = m.group(1)
+    t = _re.sub(r"[【\[（(][^】\]）)]*[】\]）)]", " ", t)
+    t = _re.sub(r"(?i)\b(4k|8k|1080p|720p|60fps|hi-?res|mv|live|official|hd)\b", " ", t)
+    t = _re.sub(r"(官方|高清|完整版|纯享版|纯享|现场版|歌词版|动态歌词|无损|收藏级|超清|翻唱|伴奏|原唱|音乐现场|音乐视频)", " ", t)
+    t = _re.sub(r"\s+", " ", t).strip(" -—_|/·,，")
+    return t[:60]
+
+
+def bilibili_search(keyword, limit=10):
+    """搜索 B站视频，转成歌曲结构（source=bilibili）"""
+    rows = []
+    for attempt in range(2):
+        try:
+            params = _bili_sign({"search_type": "video", "keyword": keyword, "page": 1})
+            data = _bili_get(BILI_SEARCH_URL, params)
+        except Exception as e:
+            return None, f"Bilibili search failed: {e}"
+
+        if data.get("code") != 0:
+            return None, f"Bilibili search code={data.get('code')} {data.get('message','')}"
+
+        payload = data.get("data") or {}
+        rows = payload.get("result") or []
+        if rows:
+            break
+        # v_voucher = 风控挑战，等一会儿重试
+        if payload.get("v_voucher") and attempt < 1:
+            delay = 1.5
+            print(f"[bilibili] risk control (v_voucher), retrying in {delay:.1f}s")
+            time.sleep(delay)
+            continue
+        break
+
+    songs = []
+    for item in rows:
+        bvid = item.get("bvid") or ""
+        if not bvid:
+            continue
+        dur = _bili_duration(item.get("duration", ""))
+        # 只要单曲长度，过滤直播回放/教程/超长合集
+        if dur and not (25 <= dur <= 900):
+            continue
+        name = _clean_bili_title(item.get("title", ""))
+        if not name:
+            continue
+        raw_title = _re.sub(r"<[^>]+>", "", item.get("title", "") or "")
+        songs.append({
+            "id": bvid,
+            "mid": bvid,
+            "bvid": bvid,
+            "name": name,
+            "raw_title": raw_title,
+            "singer": item.get("author", "") or "Unknown",
+            "album": "B站",
+            "duration": dur,
+            "source": "bilibili",
+        })
+        if len(songs) >= limit:
+            break
+    return songs, None
+
+
+def bilibili_play_url(song):
+    """bvid -> cid -> DASH 音频流（最高码率）"""
+    bvid = song.get("bvid") or song.get("mid") or song.get("id") or ""
+    if not bvid:
+        return None, "Missing bvid"
+    try:
+        vdata = _bili_get(BILI_VIEW_URL, {"bvid": bvid})
+        if vdata.get("code") != 0:
+            return None, f"Bilibili view code={vdata.get('code')}"
+        cid = (vdata.get("data") or {}).get("cid")
+        if not cid:
+            return None, "Bilibili no cid"
+        params = _bili_sign({"bvid": bvid, "cid": cid, "fnval": 16, "fnver": 0, "fourk": 1})
+        pdata = _bili_get(BILI_PLAYURL_URL, params)
+    except Exception as e:
+        return None, f"Bilibili play URL failed: {e}"
+
+    if pdata.get("code") != 0:
+        return None, f"Bilibili playurl code={pdata.get('code')} {pdata.get('message','')}"
+
+    dash = (pdata.get("data") or {}).get("dash") or {}
+    audios = dash.get("audio") or []
+    if not audios:
+        return None, "Bilibili no DASH audio"
+    audios.sort(key=lambda a: a.get("bandwidth", 0), reverse=True)
+    best = audios[0]
+    return best.get("baseUrl") or best.get("base_url"), None
+
+
+# ===========================================================================
+# 歌手匹配（严格 token 比较，避免 "周深-/D.M" 这类假账号混过校验）
+# ===========================================================================
+
+def _artist_tokens(s):
+    s = _re.sub(r"(?i)\s+(feat\.?|ft\.?|vs\.?)\s+", "/", str(s))
+    s = s.replace("&", "/").replace("；", "/").replace(";", "/")
+    parts = _re.split(r"[/、,，|]+", s)
+    return [_re.sub(r"\s+", "", p) for p in parts if p.strip()]
+
+
+def _artist_matches(requested, found):
+    """严格匹配：切分后的歌手名必须完全相等（不做子串包含）。
+    仅额外容忍两类安全形式：
+      1) 括号内别名：冯沁苑(买辣椒也用券)
+      2) 官方后缀：洛天依Official / 周深官方
+    "周深-"、"周深版"、"Z.Yeshu" 这类不会被误判。
+    """
+    req = _artist_tokens(requested)
+    got = _artist_tokens(found)
+    if not req or not got:
+        return False
+
+    def _strip_suffix(t):
+        return _re.sub(r"(?i)(official|channel|官方|工作室)$", "", t)
+
+    for r in req:
+        for g in got:
+            if r == g or r == _strip_suffix(g):
+                return True
+            for inner in _re.findall(r"[（(]([^）)]+)[）)]", g):
+                if inner.strip() == r:
+                    return True
+    return False
+
+
+def _bili_artist_match(requested, song):
+    """B站没有歌手字段，只能从视频标题/UP主名里找歌手名"""
+    req = str(requested).strip()
+    if not req:
+        return False
+    hay = (song.get("raw_title", "") or "") + " " + (song.get("singer", "") or "")
+    return req in hay
+
+
+def _song_matches(wanted, found):
+    """歌名一致性校验：防止跨平台重试时拿同歌手的别的歌顶替"""
+    a = _normalize(wanted or "")
+    b = _normalize(found or "")
+    if not a or not b:
+        return False
+    return a in b or b in a
+
+
+def _is_solo(song, artist):
+    """判断是否为该歌手的独唱版本（合唱/对唱优先度更低）"""
+    if song.get("source") == "bilibili":
+        # B站无歌手字段，用标题关键词判断
+        t = song.get("raw_title", "") or ""
+        return not _re.search(r"(合唱|对唱|feat|ft\.|群星|合作|联唱)", t, _re.I)
+    toks = _artist_tokens(song.get("singer", ""))
+    return len(toks) == 1
+
+
+# 解析结果短缓存：ESP32 会先发一次“多版本检查”再发播放请求，
+# 同一个 query 没必要解析两遍（两遍会瞳加到接近 HTTP 超时）
+_resolve_cache = {}
+_resolve_cache_lock = threading.Lock()
+_RESOLVE_TTL = 120.0
+_resolve_inflight = {}
+_resolve_inflight_lock = threading.Lock()
+
+
+def _resolve_get(key):
+    now = time.time()
+    with _resolve_cache_lock:
+        item = _resolve_cache.get(key)
+        if item and now - item[2] < _RESOLVE_TTL:
+            return item[0], item[1]
+        if item:
+            _resolve_cache.pop(key, None)
+    return None
+
+
+def _resolve_put(key, song, url):
+    with _resolve_cache_lock:
+        _resolve_cache[key] = (song, url, time.time())
+        if len(_resolve_cache) > 100:
+            for k, _v in sorted(_resolve_cache.items(), key=lambda kv: kv[1][2])[:20]:
+                _resolve_cache.pop(k, None)
+
+
+def _probe_media_duration(url, headers=None, timeout=25):
+    """用 ffprobe 读真实音频时长（秒）；失败返回 0。
+    用于识别 QQ 音乐无登录时返回的 60 秒试听片段。"""
+    try:
+        cmd = ["/usr/bin/ffprobe", "-v", "error"]
+        if headers:
+            cmd += ["-headers", headers]
+        cmd += ["-show_entries", "format=duration", "-of", "default=nw=1:nk=1", url]
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        out = p.stdout.decode().strip()
+        return float(out) if out else 0.0
+    except Exception:
+        return 0.0
+
+
 def unified_search(keyword, limit=10):
     """Search Netease + QQ + Migu concurrently, merge results (dedup)"""
     import threading
@@ -485,25 +811,63 @@ def unified_search(keyword, limit=10):
     for t in threads:
         t.join(timeout=12)
 
-    all_songs = []
-    songs, err = results["netease"]
-    if songs:
-        all_songs.extend(songs)
-    log_platform(keyword, "netease", "search", "ok" if songs else "fail", f"{len(songs) if songs else 0} results{'; '+str(err) if err else ''}")
-
-    for src in ("qq", "migu"):
+    # 各平台分别去重
+    per_src = {"netease": [], "qq": [], "migu": []}
+    for src in ("netease", "qq", "migu"):
         songs2, err2 = results[src]
-        if songs2:
-            existing = {(s["name"], s["singer"]) for s in all_songs}
-            for s in songs2:
-                if (s["name"], s["singer"]) not in existing:
-                    all_songs.append(s)
-        log_platform(keyword, src, "search", "ok" if songs2 else "fail", f"{len(songs2) if songs2 else 0} results{'; '+str(err2) if err2 else ''}")
+        log_platform(keyword, src, "search", "ok" if songs2 else "fail",
+                     f"{len(songs2) if songs2 else 0} results{'; '+str(err2) if err2 else ''}")
+        seen = set()
+        for s in (songs2 or []):
+            key = (_normalize(s.get("name", "")), _normalize(s.get("singer", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            per_src[src].append(s)
 
-    if not all_songs:
+    # 配额合并：避免网易云把位置占满，导致 QQ/咪咕 永远排不进来
+    if limit >= 6:
+        quota = {"netease": max(3, limit - 4), "qq": 2, "migu": 2}
+    else:
+        quota = {"netease": limit, "qq": 0, "migu": 0}
+
+    merged, seen = [], set()
+    for src in ("netease", "qq", "migu"):
+        for s in per_src[src][:quota[src]]:
+            key = (_normalize(s.get("name", "")), _normalize(s.get("singer", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(s)
+
+    # 配额没填满时补齐
+    for src in ("netease", "qq", "migu"):
+        if len(merged) >= limit:
+            break
+        for s in per_src[src]:
+            if len(merged) >= limit:
+                break
+            key = (_normalize(s.get("name", "")), _normalize(s.get("singer", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(s)
+
+    # 三平台都没有结果 → B站兜底
+    if not merged:
+        try:
+            bsongs, berr = bilibili_search(keyword, min(limit, 5))
+            log_platform(keyword, "bilibili", "search", "ok" if bsongs else "fail",
+                         f"{len(bsongs) if bsongs else 0} results{'; '+str(berr) if berr else ''}")
+            if bsongs:
+                merged = bsongs
+        except Exception as e:
+            print(f"[bilibili] search fallback failed: {e}")
+
+    if not merged:
         return None, "No results from any platform"
 
-    return all_songs[:limit], None
+    return merged[:limit], None
 
 
 def get_play_url_for(song):
@@ -513,17 +877,25 @@ def get_play_url_for(song):
     kw = f"{song.get('name','')} {song.get('singer','')}"
 
     if source == "netease":
-        url = netease_play_url(int(sid))
-        log_platform(kw, "netease", "play", "ok" if url else "fail", f"id={sid}")
-        return url
+        url, err = netease_play_url(int(sid))
+        log_platform(kw, "netease", "play", "ok" if url else "fail",
+                     f"id={sid}{'; '+str(err) if err else ''}")
+        return url, err
     elif source == "migu":
-        url = migu_play_url(song)
-        log_platform(kw, "migu", "play", "ok" if url else "fail", f"sid={sid}")
-        return url
+        url, err = migu_play_url(song)
+        log_platform(kw, "migu", "play", "ok" if url else "fail",
+                     f"sid={sid}{'; '+str(err) if err else ''}")
+        return url, err
+    elif source == "bilibili":
+        url, err = bilibili_play_url(song)
+        log_platform(kw, "bilibili", "play", "ok" if url else "fail",
+                     f"bvid={sid}{'; '+str(err) if err else ''}")
+        return url, err
     else:
-        url = qq_play_url(song.get("mid", sid))
-        log_platform(kw, "qq", "play", "ok" if url else "fail", f"mid={song.get('mid',sid)}")
-        return url
+        url, err = qq_play_url(song.get("mid", sid))
+        log_platform(kw, "qq", "play", "ok" if url else "fail",
+                     f"mid={song.get('mid',sid)}{'; '+str(err) if err else ''}")
+        return url, err
 
 
 # ===========================================================================
@@ -729,6 +1101,17 @@ async function play(el){
             if not sid:
                 return self._json({"error": "Missing param: id"})
             url, err = netease_play_url(int(sid))
+        elif source == "bilibili":
+            mid = params.get("mid", "") or params.get("id", "")
+            if not mid:
+                return self._json({"error": "Missing param: mid"})
+            url, err = bilibili_play_url({"bvid": mid})
+        elif source == "migu":
+            mid = params.get("mid", "") or params.get("id", "")
+            if not mid:
+                return self._json({"error": "Missing param: mid"})
+            url, err = migu_play_url({"id": mid, "contentId": mid,
+                                      "copyrightId": params.get("copyrightId", "")})
         else:
             mid = params.get("mid", "")
             if not mid:
@@ -1014,21 +1397,205 @@ async function play(el){
             return
         self._stream_ffmpeg(keyword, "opus")
 
-    def _find_playable(self, keyword):
-        """Search and find a playable song URL. Returns (song_info, audio_url) or (None, None)."""
-        # 本地曲库优先（命中即直接播本地文件，保底不依赖在线曲库）
+    def _find_playable(self, keyword, artist=None):
+        """单飞（single-flight）包装：ESP32 会先发检查请求再发播放请求，
+        同一个 query 并发解析时，后者直接等前者的结果，避免解析两遍超时。"""
+        cache_key = (keyword, artist or "")
+        cached = _resolve_get(cache_key)
+        if cached:
+            return cached
+
+        owner = False
+        with _resolve_inflight_lock:
+            ev = _resolve_inflight.get(cache_key)
+            if ev is None:
+                ev = threading.Event()
+                _resolve_inflight[cache_key] = ev
+                owner = True
+
+        if not owner:
+            print("[find] waiting for in-flight resolution...")
+            ev.wait(timeout=14)
+            cached = _resolve_get(cache_key)
+            if cached:
+                print("[find] reused in-flight result")
+                return cached
+
+        try:
+            return self._find_playable_body(keyword, artist)
+        finally:
+            if owner:
+                with _resolve_inflight_lock:
+                    _resolve_inflight.pop(cache_key, None)
+                ev.set()
+
+    def _find_playable_body(self, keyword, artist=None):
+        """找到可播放的歌曲。指定 artist 时优先精确匹配该歌手，
+        在该平台失败后继续跨平台重试（网易云→QQ→咪咕→B站），
+        而不是像旧版那样直接判定"不可用"。
+        Returns (song_info, audio_url) or (None, None).
+        """
+        song_name = keyword.split(" ", 1)[0] if " " in keyword else keyword
+
+        # 本地曲库优先（指定歌手时必须匹配歌手，避免放错版本）
         local_hits = local_search(keyword)
         if local_hits:
-            print(f"[local] HIT: {local_hits[0]['name']} - {local_hits[0]['singer']}")
-            return local_hits[0], local_hits[0]["path"]
+            if not artist or _artist_matches(artist, local_hits[0].get("singer", "")):
+                print(f"[local] HIT: {local_hits[0]['name']} - {local_hits[0]['singer']}")
+                return local_hits[0], local_hits[0]["path"]
+
+        cache_key = (keyword, artist or "")
+        cached = _resolve_get(cache_key)
+        if cached:
+            print(f"[find] resolve cache hit: {cached[0].get('name')} - {cached[0].get('singer')}")
+            return cached
+
+        def _hit(song, url):
+            _resolve_put(cache_key, song, url)
+            return song, url
+
         songs, err = unified_search(keyword, 8)
-        if err or not songs:
-            return None, None
-        songs = rank_songs(songs, keyword)
-        for song in songs[:5]:
+        songs = rank_songs(songs or [], keyword)
+
+        def _match(s):
+            return (_bili_artist_match(artist, s) if s.get("source") == "bilibili"
+                    else _artist_matches(artist, s.get("singer", "")))
+
+        def _try_song(song):
+            """取播放地址；无登录试听片段（网易云/QQ）直接判为不可用"""
             url, e = get_play_url_for(song)
+            if not url:
+                return None, e
+            if song.get("source") != "bilibili":
+                dur = _probe_media_duration(url)
+                if dur and dur < 75:
+                    print(f"[find] {song.get('source')} preview detected ({dur:.0f}s), skip: "
+                          f"{song.get('name')} - {song.get('singer')}")
+                    return None, f"preview/truncated {dur:.0f}s"
+            return url, None
+
+        if artist:
+            local_cands = [s for s in songs
+                           if _match(s) and _song_matches(song_name, s.get("name", ""))]
+            print(f"[find] {keyword}: {len(songs)} results, artist-match {len(local_cands)}")
+
+            # 第一轮：本次搜索结果里的独唱版本（最快路径）
+            for song in [s for s in local_cands if _is_solo(s, artist)][:4]:
+                url, e = _try_song(song)
+                if url:
+                    return _hit(song, url)
+                print(f"[find] solo '{song.get('name')}' - {song.get('singer')} unplayable: {e}")
+
+            # 第二轮：跨平台收集候选（独唱优先，合唱放最后）
+            platforms = (("netease", netease_search), ("qq", qq_search),
+                         ("migu", migu_search))
+            pool = []
+            seen_keys = {(s.get("source"), s.get("id")) for s in local_cands}
+            import threading as _th
+            p_results = {}
+
+            # B站搜索与前三平台并发启动，避免串行等待（只在前三平台没有独唱时才用结果）
+            bili_box = {}
+
+            def _run_bili():
+                try:
+                    bili_box["r"] = bilibili_search(f"{song_name} {artist}", 6)
+                except Exception as exc:
+                    bili_box["r"] = (None, exc)
+
+            _bili_t = _th.Thread(target=_run_bili, daemon=True)
+            _bili_t.start()
+
+            def _run_search(src, fn):
+                try:
+                    p_results[src] = fn(f"{song_name} {artist}", 8)
+                except Exception as exc:
+                    p_results[src] = (None, exc)
+
+            _ths = [_th.Thread(target=_run_search, args=(src, fn), daemon=True)
+                    for src, fn in platforms]
+            for _t in _ths:
+                _t.start()
+            for _t in _ths:
+                _t.join(timeout=9)
+
+            for src, _fn in platforms:
+                res, serr = p_results.get(src, (None, "timeout"))
+                if serr:
+                    print(f"[find] {src} retry: {serr}")
+                for s in (res or [])[:6]:
+                    if not _match(s) or not _song_matches(song_name, s.get("name", "")):
+                        continue
+                    key = (s.get("source"), s.get("id"))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    pool.append(s)
+
+            # 2.1 跨平台独唱
+            for song in [s for s in pool if _is_solo(s, artist)][:6]:
+                url, e = _try_song(song)
+                if url:
+                    print(f"[find] cross-platform solo hit: [{song.get('source')}] "
+                          f"{song.get('name')} - {song.get('singer')}")
+                    return _hit(song, url)
+                print(f"[find] cross-platform solo '{song.get('name')}' - {song.get('singer')} unplayable: {e}")
+
+            # 2.2 前三个平台都没独唱，才用 B站结果（已在后台并发搜索）
+            try:
+                _bili_t.join(timeout=7)
+                bres, berr = bili_box.get("r", (None, "bilibili timeout"))
+                if berr:
+                    print(f"[find] bilibili retry: {berr}")
+                for s in (bres or [])[:6]:
+                    if not _match(s) or not _song_matches(song_name, s.get("name", "")):
+                        continue
+                    key = (s.get("source"), s.get("id"))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    pool.append(s)
+            except Exception as e:
+                print(f"[find] bilibili retry failed: {e}")
+
+            for song in [s for s in pool if s.get("source") == "bilibili" and _is_solo(s, artist)][:4]:
+                url, e = _try_song(song)
+                if url:
+                    print(f"[find] bilibili solo hit: {song.get('name')} - {song.get('singer')}")
+                    return _hit(song, url)
+                print(f"[find] bilibili solo unplayable: {e}")
+
+            # 2.3 确实没有独唱，才退回合唱/多歌手版本
+            for song in [s for s in local_cands + pool if not _is_solo(s, artist)][:6]:
+                url, e = _try_song(song)
+                if url:
+                    print(f"[find] duet fallback: [{song.get('source')}] "
+                          f"{song.get('name')} - {song.get('singer')}")
+                    return _hit(song, url)
+
+            # 指定歌手确实无可用版本：不随便拿别人的版本顶替
+            print(f"[find] artist '{artist}' has no playable version on any platform")
+            return None, None
+
+        # 3) 未指定歌手：继续试其余结果
+        for song in songs[:5]:
+            url, e = _try_song(song)
             if url:
-                return song, url
+                return _hit(song, url)
+
+        # 4) 最后兜底：B站按关键词搜索
+        try:
+            bsongs, berr = bilibili_search(keyword, 6)
+            if berr:
+                print(f"[find] bilibili fallback: {berr}")
+            for s in (bsongs or [])[:4]:
+                url, e = _try_song(s)
+                if url:
+                    print(f"[find] bilibili fallback hit: {s.get('name')}")
+                    return _hit(s, url)
+        except Exception as e:
+            print(f"[find] bilibili fallback failed: {e}")
+
         return None, None
 
     def _stream_ffmpeg(self, keyword, fmt="pcm"):
@@ -1089,13 +1656,18 @@ async function play(el){
                 print(f"[{fmt}] multi-artist check skipped: {e}")
     
         # 单版本或无指定歌手，直接播放
-        song_info, audio_url = self._find_playable(keyword)
-        # verify artist match when user specified one
-        if song_info is not None and " " in keyword:
-            requested_artist = keyword.split(" ", 1)[1]
+        requested_artist = None
+        if " " in keyword:
+            requested_artist = keyword.split(" ", 1)[1].strip() or None
+        song_info, audio_url = self._find_playable(keyword, requested_artist)
+        # 二次校验（严格 token，不再用子串包含）
+        if song_info is not None and requested_artist:
             found_singer = song_info.get("singer", "")
-            if _normalize(requested_artist) not in _normalize(found_singer):
-                print(f"[{fmt}] MISMATCH: requested={requested_artist}, got={found_singer}, triggering fallback")
+            ok = (_bili_artist_match(requested_artist, song_info)
+                  if song_info.get("source") == "bilibili"
+                  else _artist_matches(requested_artist, found_singer))
+            if not ok:
+                print(f"[{fmt}] MISMATCH: requested={requested_artist}, got={found_singer}")
                 song_info = None
         if song_info is None:
             # 如果查询含空格（指定了歌手但找不到），回退搜多版本供用户重选
@@ -1118,9 +1690,8 @@ async function play(el){
                                 artists.append(sa)
                         if len(artists) >= 2:
                             requested = keyword.split(" ", 1)[1]
-                            requested_norm = _normalize(requested)
                             # Remove the unavailable artist from the list
-                            filtered = [a for a in artists if _normalize(a) != requested_norm]
+                            filtered = [a for a in artists if not _artist_matches(requested, a)]
                             if len(filtered) < 2:
                                 filtered = artists  # fallback: keep original list
                             song_name2 = songs[0].get("name", keyword)
@@ -1136,7 +1707,7 @@ async function play(el){
                             return
                 except Exception as e:
                     print(f"[{fmt}] unavailable fallback failed: {e}")
-            self.send_error(404, f"No result for: " + "{keyword".encode("ascii","replace").decode())
+            self.send_error(404, f"No result for: {keyword}".encode("ascii", "replace").decode())
             return
         print(f"[{fmt}] Found: {song_info['name']} - {song_info['singer']}")
 
@@ -1145,7 +1716,7 @@ async function play(el){
             if not os.path.exists(ffmpeg_path):
                 ffmpeg_path = "ffmpeg"
 
-            RATE_LIMIT = 65536  # 64KB/s ≈ 2x realtime for 16kHz mono s16le
+            RATE_LIMIT = 262144  # 256KB/s = 4x realtime for 32kHz mono s16le
             SUB_CHUNK = 2048    # 限速粒度
 
             # 先立即返回 200 + 响应头，避免 ESP32 端 HTTP 等待超时
@@ -1169,6 +1740,13 @@ async function play(el){
             if song_info.get("source") == "local":
                 net_opts = []
                 input_src = audio_url
+            elif song_info.get("source") == "bilibili":
+                # B站音源必须带 Referer，否则 CDN 返回 403
+                net_opts = ["-user_agent", UA,
+                            "-headers", "Referer: https://www.bilibili.com/\r\n",
+                            "-reconnect", "1", "-reconnect_streamed", "1",
+                            "-rw_timeout", "10000000"]
+                input_src = audio_url
             else:
                 net_opts = ["-user_agent", UA, "-reconnect", "1", "-reconnect_streamed", "1",
                             "-rw_timeout", "10000000"]
@@ -1178,7 +1756,7 @@ async function play(el){
                 if fmt == "pcm":
                     return [ffmpeg_path, "-nostdin", "-loglevel", "error"] + net_opts + [
                         "-i", inp,
-                        "-af", "aresample=32000:resampler=swr:osf=s16:dither_method=none",
+                        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=32000:resampler=swr:osf=s16:dither_method=none",
                         "-c:a", "pcm_s16le",
                         "-f", "s16le",
                         "-ar", "32000",
@@ -1189,8 +1767,8 @@ async function play(el){
                     return [ffmpeg_path, "-nostdin", "-loglevel", "error"] + net_opts + [
                         "-i", inp,
                         "-c:a", "libopus",
-                        "-b:a", "24k",
-                        "-ar", "32000",
+                        "-b:a", "32k",
+                        "-ar", "48000",
                         "-ac", "1",
                         "-frame_duration", "60",
                         "-application", "audio",
@@ -1264,8 +1842,9 @@ async function play(el){
                     seek_args = _build_ff_args(new_url)
                     # 不用 -ss（MP3 关键帧 seek 不精确），改从歌头播放，
                     # 服务器端精确跳过已发送的 PCM 字节实现字节级对齐。
-                    # PCM: 16000 Hz × 2 bytes/sample = 32000 bytes/second
-                    skip_bytes = int(elapsed * 32000)
+                    # PCM: 32000 Hz × 2 bytes/sample = 64000 bytes/second
+                    bytes_per_sec = 4000 if fmt == "opus" else 64000
+                    skip_bytes = int(elapsed * bytes_per_sec)
                     proc = subprocess.Popen(seek_args, stdout=subprocess.PIPE,
                                             stderr=subprocess.DEVNULL)
                     ffd = proc.stdout.fileno()

@@ -1,0 +1,69 @@
+﻿*** Begin Patch
+--- a/main/boards/cuckoo-clock/cuckoo_part4.cc
++++ b/main/boards/cuckoo-clock/cuckoo_part4.cc
+--REPLACE--PlayShowMusicBg_FUNCTION
+bool CuckooStateMachine::PlayShowMusicBg(int index) {
+    if (!mp3_) return false;
+
+    auto& audio = Application::GetInstance().GetAudioService();
+    audio.SetBackgroundAudioGain(1.0f);
+
+    struct StreamCtx {
+        AudioService* audio;
+        std::atomic<bool>* is_running;
+        size_t total_pushed;
+        bool drain_enabled;
+    } ctx = {&audio, &is_running_, 0, false};
+
+    int ret = mp3_->DecodeStreaming(index, [](const int16_t* pcm, size_t samples, int src_sr, void* user_data) {
+        auto* c = (StreamCtx*)user_data;
+        size_t offset = 0;
+
+        while (offset < samples && c->is_running->load()) {
+            size_t chunk = (samples - offset > 2048) ? 2048 : (samples - offset);
+
+            if (src_sr != 16000) {
+                float ratio = (float)src_sr / 16000;
+                std::vector<int16_t> dst(chunk * 2 / 3 + 2);
+                size_t d = 0;
+                float pos = 0;
+                while (pos < (float)chunk - 1.0f && d < dst.size() - 1) {
+                    size_t idx = (size_t)pos;
+                    float frac = pos - idx;
+                    dst[d++] = (int16_t)((float)pcm[offset + idx] * (1.0f - frac) + (float)pcm[offset + idx + 1] * frac);
+                    pos += ratio;
+                }
+                c->audio->PushBackgroundAudio(dst.data(), d, 16000);
+            } else {
+                c->audio->PushBackgroundAudio(pcm + offset, chunk, 16000);
+            }
+
+            c->total_pushed += chunk;
+            if (!c->drain_enabled && c->total_pushed >= 64000) {
+                c->audio->EnableBgAudioDrain(true);
+                c->drain_enabled = true;
+            }
+            offset += chunk;
+
+            while (c->audio->GetBgAudioFillLevel() > 64000 && c->is_running->load())
+                vTaskDelay(pdMS_TO_TICKS(50));
+        }
+    }, &ctx);
+
+    if (ret < 0) {
+        ESP_LOGE(TAG, "PlayShowMusicBg: decode failed for %04d.mp3", index);
+        return false;
+    }
+
+    int drain_wait = 0;
+    while (is_running_ && audio.GetBgAudioFillLevel() > 0 && drain_wait < 200) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        drain_wait++;
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+    audio.ClearBackgroundAudio();
+    ESP_LOGI(TAG, "PlayShowMusicBg: %04d.mp3 finished, bg audio cleared", index);
+    return true;
+}
+--END--
+*** End Patch
