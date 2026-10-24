@@ -304,6 +304,173 @@ def netease_play_url(song_id, br=320000):
 QQ_SEARCH_URL = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
 QQ_SONG_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 
+QQ_COOKIE_PATH = "/opt/qqmusic-proxy/qq_cookie.txt"
+
+
+def _qq_cookie():
+    """读取本机 QQ 音乐登录 Cookie（由 Windows 端定时上传）"""
+    try:
+        with open(QQ_COOKIE_PATH, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _qq_uin(cookie):
+    m = _re.search(r"(?:^|;\s*)(?:uin|wxuin)=o?(\d+)", cookie or "")
+    return m.group(1) if m else ""
+
+
+
+def qq_refresh_cookie():
+    """用 refresh_token 续期 qm_keyst/qqmusic_key，成功则原子写回 Cookie 文件。"""
+    try:
+        with open(QQ_COOKIE_PATH, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+    except Exception:
+        return False
+    if not raw:
+        return False
+
+    c = {}
+    for part in raw.split(";"):
+        i = part.find("=")
+        if i > 0:
+            c[part[:i].strip()] = part[i + 1:].strip()
+
+    uin = c.get("uin") or c.get("wxuin") or c.get("qqmusic_uin") or ""
+    key = c.get("qm_keyst") or c.get("qqmusic_key") or c.get("music_key") or ""
+    refresh = c.get("psrf_qqrefresh_token") or c.get("wxrefresh_token") or ""
+    if not (uin and key and refresh):
+        print("[qq-refresh] skip: missing uin/key/refresh_token")
+        return False
+
+    try:
+        login_type = int(c.get("tmeLoginType") or 0)
+    except Exception:
+        login_type = 0
+    if login_type <= 0:
+        login_type = 1 if key.startswith("W_X") else 2
+
+    openid = c.get("psrf_qqopenid") or c.get("wxopenid") or ""
+    unionid = c.get("psrf_qqunionid") or c.get("wxunionid") or ""
+    refresh_key = c.get("qm_refresh_key") or ""
+
+    if login_type == 1:
+        param = {
+            "openid": openid,
+            "refresh_token": refresh,
+            "str_musicid": c.get("qm_str_musicid") or uin,
+            "musickey": key,
+            "unionid": unionid,
+            "refresh_key": refresh_key,
+            "loginMode": 2,
+        }
+    else:
+        expires_raw = c.get("psrf_access_token_expiresAt") or "0"
+        expired_in = int(expires_raw) if str(expires_raw).isdigit() else 0
+        param = {
+            "openid": openid,
+            "access_token": c.get("psrf_qqaccess_token") or "",
+            "refresh_token": refresh,
+            "expired_in": expired_in,
+            "musicid": int(uin) if uin.isdigit() else 0,
+            "musickey": key,
+            "refresh_key": refresh_key,
+            "loginMode": 2,
+        }
+
+    body = {
+        "comm": {
+            "uin": uin,
+            "loginUin": uin,
+            "format": "json",
+            "ct": 24,
+            "cv": 4747474,
+            "platform": "yqq.json",
+            "authst": key,
+            "g_tk": 5381,
+            "qq": uin,
+            "tmeLoginType": login_type,
+        },
+        "req_1": {
+            "module": "music.login.LoginServer",
+            "method": "Login",
+            "param": param,
+        },
+    }
+
+    cookie_header = raw if "uin=" in raw else raw + "; uin=" + uin
+    req = urllib.request.Request(
+        QQ_SONG_URL,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "User-Agent": "QQMusic 14090508(android 12)",
+            "Content-Type": "application/json",
+            "Referer": "https://y.qq.com/",
+            "Origin": "https://y.qq.com",
+            "Cookie": cookie_header,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print("[qq-refresh] request failed:", e)
+        return False
+
+    inner = data.get("req_1") or data.get("request") or {}
+    d = inner.get("data") or {}
+    if data.get("code") != 0 or inner.get("code") != 0 or not d.get("musickey"):
+        print("[qq-refresh] rejected top=%s req1=%s" % (data.get("code"), inner.get("code")))
+        return False
+
+    merged = dict(c)
+    newkey = d["musickey"]
+    merged["qm_keyst"] = newkey
+    merged["qqmusic_key"] = newkey
+    if d.get("str_musicid") or d.get("musicid"):
+        merged["uin"] = str(d.get("str_musicid") or d.get("musicid")).lstrip("o")
+    if d.get("encryptUin"):
+        merged["euin"] = d["encryptUin"]
+    if d.get("openid"):
+        merged["wxopenid" if login_type == 1 else "psrf_qqopenid"] = d["openid"]
+    if d.get("unionid"):
+        merged["wxunionid" if login_type == 1 else "psrf_qqunionid"] = d["unionid"]
+    if d.get("refresh_token"):
+        merged["wxrefresh_token" if login_type == 1 else "psrf_qqrefresh_token"] = d["refresh_token"]
+    if d.get("access_token"):
+        merged["psrf_qqaccess_token"] = d["access_token"]
+    if d.get("expired_at"):
+        merged["psrf_access_token_expiresAt"] = str(d["expired_at"])
+    if d.get("musickeyCreateTime"):
+        merged["psrf_musickey_createtime"] = str(d["musickeyCreateTime"])
+    if d.get("refresh_key"):
+        merged["qm_refresh_key"] = d["refresh_key"]
+    merged["tmeLoginType"] = str(d.get("loginType") or login_type)
+
+    new_cookie = "; ".join("%s=%s" % (k, v) for k, v in merged.items() if k and v)
+    tmp = QQ_COOKIE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(new_cookie)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, QQ_COOKIE_PATH)
+    print("[qq-refresh] ok key_len=%d prefix=%s" % (len(newkey), newkey[:6]))
+    return True
+
+
+def qq_cookie_refresh_loop():
+    """每 12 小时续期一次；qm_keyst 有效期约 3 天，留足余量。"""
+    time.sleep(10)
+    while True:
+        try:
+            qq_refresh_cookie()
+        except Exception as e:
+            print("[qq-refresh] loop error:", e)
+        time.sleep(12 * 3600)
+
 
 def qq_search(keyword, limit=10):
     """Search QQ Music"""
@@ -345,6 +512,8 @@ def qq_search(keyword, limit=10):
 def qq_play_url(song_mid):
     """Get QQ Music play URL"""
     guid = str(int(time.time() * 1000)) + "0" * 8
+    _qq_ck = _qq_cookie()
+    _qq_u = _qq_uin(_qq_ck)
     payload = json.dumps({
         "req_0": {
             "module": "vkey.GetVkeyServer",
@@ -353,7 +522,7 @@ def qq_play_url(song_mid):
                 "guid": guid,
                 "songmid": [song_mid],
                 "songtype": [0],
-                "uin": "0",
+                "uin": _qq_u or "0",
                 "loginflag": 1,
                 "platform": "20",
             }
@@ -361,10 +530,13 @@ def qq_play_url(song_mid):
     }).encode()
 
     try:
-        req = urllib.request.Request(QQ_SONG_URL, data=payload, headers={
+        _qq_headers = {
             "User-Agent": UA, "Referer": "https://y.qq.com",
             "Content-Type": "application/json",
-        })
+        }
+        if _qq_ck:
+            _qq_headers["Cookie"] = _qq_ck
+        req = urllib.request.Request(QQ_SONG_URL, data=payload, headers=_qq_headers)
         with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -813,7 +985,7 @@ def unified_search(keyword, limit=10):
 
     # 各平台分别去重
     per_src = {"netease": [], "qq": [], "migu": []}
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         songs2, err2 = results[src]
         log_platform(keyword, src, "search", "ok" if songs2 else "fail",
                      f"{len(songs2) if songs2 else 0} results{'; '+str(err2) if err2 else ''}")
@@ -827,12 +999,12 @@ def unified_search(keyword, limit=10):
 
     # 配额合并：避免网易云把位置占满，导致 QQ/咪咕 永远排不进来
     if limit >= 6:
-        quota = {"netease": max(3, limit - 4), "qq": 2, "migu": 2}
+        quota = {"qq": max(4, limit - 4), "netease": 2, "migu": 2}
     else:
-        quota = {"netease": limit, "qq": 0, "migu": 0}
+        quota = {"qq": limit, "netease": 0, "migu": 0}
 
     merged, seen = [], set()
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         for s in per_src[src][:quota[src]]:
             key = (_normalize(s.get("name", "")), _normalize(s.get("singer", "")))
             if key in seen:
@@ -841,7 +1013,7 @@ def unified_search(keyword, limit=10):
             merged.append(s)
 
     # 配额没填满时补齐
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         if len(merged) >= limit:
             break
         for s in per_src[src]:
@@ -1487,7 +1659,7 @@ async function play(el){
                 print(f"[find] solo '{song.get('name')}' - {song.get('singer')} unplayable: {e}")
 
             # 第二轮：跨平台收集候选（独唱优先，合唱放最后）
-            platforms = (("netease", netease_search), ("qq", qq_search),
+            platforms = (("qq", qq_search), ("netease", netease_search),
                          ("migu", migu_search))
             pool = []
             seen_keys = {(s.get("source"), s.get("id")) for s in local_cands}
@@ -1919,6 +2091,8 @@ async function play(el){
 # ===========================================================================
 
 def main():
+    threading.Thread(target=qq_cookie_refresh_loop, daemon=True).start()
+
     server = socketserver.ThreadingTCPServer(("0.0.0.0", PORT), MusicProxyHandler)
     server.allow_reuse_address = True
 

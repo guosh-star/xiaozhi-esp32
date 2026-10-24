@@ -378,6 +378,12 @@ public:
     void SaveHourlyPerf();
     void LoadHourlyPerf();
 
+    // 最近一次成功播放的在线歌曲（idle/重启后仍可重唱）
+    std::string last_song_name_;
+    std::string last_song_url_;
+    void SaveLastSong(const std::string& name, const std::string& url);
+    void LoadLastSong();
+
     void SetAlarm(int hour, int minute, bool repeat_daily);
     std::string GetAlarmsJson();
     bool DeleteAlarm(int index);  // 1-based 索引

@@ -17,8 +17,13 @@
 #include <driver/i2c_master.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <vector>
 
 #define TAG "CuckooBoard"
+
+// BOOT 唤醒提示音（CMake EMBED_FILES 嵌入）
+extern const uint8_t ask_pcm_start[] asm("_binary_ask_pcm_start");
+extern const uint8_t ask_pcm_end[] asm("_binary_ask_pcm_end");
 
 // ============================================
 // 布谷鸟钟主板驱动类
@@ -168,6 +173,39 @@ private:
                 state_machine_->PlayCuckooSound();
                 state_machine_->BirdJumpPulse();
                 state_machine_->PlayCuckooSound();
+                // 布谷鸟叫完，再问一句“请问需要我干什么事吗？”
+                {
+                    auto& audio = app.GetAudioService();
+                    size_t ask_bytes = static_cast<size_t>(ask_pcm_end - ask_pcm_start);
+                    const int16_t* ask_data = reinterpret_cast<const int16_t*>(ask_pcm_start);
+                    size_t ask_samples = ask_bytes / sizeof(int16_t);
+                    if (audio.IsBgAudioActive() && audio.GetBgAudioFillLevel() > 0) {
+                        // 放歌时：16k -> 32k 重采样后叠加进背景音乐，避免直出打断歌声
+                        constexpr float ratio = 32000.0f / 16000.0f;
+                        size_t out_samples = (size_t)(ask_samples * ratio) + 2;
+                        std::vector<int16_t> resampled(out_samples);
+                        size_t d = 0;
+                        for (size_t i = 0; i < out_samples; i++) {
+                            float src_pos = (float)i / ratio;
+                            size_t idx = (size_t)src_pos;
+                            float frac = src_pos - (float)idx;
+                            if (idx + 1 < ask_samples) {
+                                resampled[d++] = (int16_t)((float)ask_data[idx] * (1.0f - frac) +
+                                                           (float)ask_data[idx + 1] * frac);
+                            } else if (idx < ask_samples) {
+                                resampled[d++] = ask_data[idx];
+                            } else {
+                                resampled[d++] = 0;
+                            }
+                        }
+                        audio.MixIntoBackgroundAudio(resampled.data(), d, 0.9f);
+                        ESP_LOGI(TAG, "BOOT: ask prompt mixed into bg audio (%d samples)", (int)d);
+                        // 等提示音播完再切换对话，避免和 AI 回复叠在一起
+                        vTaskDelay(pdMS_TO_TICKS(2500));
+                    } else {
+                        audio.OutputRawPcm(ask_data, ask_samples, 16000);
+                    }
+                }
                 // 布谷鸟叫完成，继续切换对话状态
             }
             app.ToggleChatState();

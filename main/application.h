@@ -1,4 +1,4 @@
-#ifndef _APPLICATION_H_
+﻿#ifndef _APPLICATION_H_
 #define _APPLICATION_H_
 
 #include <freertos/FreeRTOS.h>
@@ -65,7 +65,7 @@ public:
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
-    
+
     /**
      * Request state transition
      * Returns true if transition was successful
@@ -112,7 +112,11 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
-    
+
+    // 在线音乐：播放期间保持聆听，歌末追问是否继续点歌
+    void NotifyMusicPlaying();
+    void NotifyMusicEnded();
+    void NotifyMusicStopped();
     /**
      * Reset protocol resources (thread-safe)
      * Can be called from any task to release resources allocated after network connected
@@ -141,6 +145,10 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool tts_restart_listening_ = false;    // Flag to send StartListening on TTS restart (multi-turn fix)
+    bool music_playing_ = false;             // 在线音乐正在播放
+    bool music_prompt_pending_ = false;      // 歌末提问已发出，等待回答
+    int64_t music_prompt_deadline_us_ = 0;   // 等待回答的截止时间（us）
+    bool music_reopen_in_progress_ = false;  // 正在重开音乐会话
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -167,6 +175,11 @@ private:
     // Activation task (runs in background)
     void ActivationTask();
 
+    // 音乐播放期间保持/恢复聆听会话
+    void EnsureMusicListening();
+    void StartMusicEndPrompt();
+    void PlayMusicPrompt();
+
     // Helper methods
     void CheckAssetsVersion();
     void CheckNewVersion();
@@ -174,7 +187,7 @@ private:
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
-    
+
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);
 };

@@ -834,6 +834,42 @@ void CuckooStateMachine::LoadHourlyPerf() {
     }
 }
 
+/**
+ * @brief 保存最近一次成功播放的在线歌曲（RAM + NVS）
+ * @param name URL 解码后的歌名/歌手
+ * @param url 实际播放的 URL，用于重唱
+ */
+void CuckooStateMachine::SaveLastSong(const std::string& name, const std::string& url) {
+    last_song_name_ = name;
+    last_song_url_ = url;
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_str(nvs, "last_song_name", name.c_str());
+        nvs_set_str(nvs, "last_song_url", url.c_str());
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    ESP_LOGI(TAG, "LastSong: saved name=%s", name.c_str());
+}
+
+/**
+ * @brief 从 NVS 加载最近一次成功播放的在线歌曲
+ */
+void CuckooStateMachine::LoadLastSong() {
+    nvs_handle_t nvs;
+    if (nvs_open("cuckoo", NVS_READONLY, &nvs) == ESP_OK) {
+        char buf[512];
+        size_t len = sizeof(buf);
+        if (nvs_get_str(nvs, "last_song_name", buf, &len) == ESP_OK) last_song_name_ = buf;
+        len = sizeof(buf);
+        if (nvs_get_str(nvs, "last_song_url", buf, &len) == ESP_OK) last_song_url_ = buf;
+        nvs_close(nvs);
+    }
+    if (!last_song_name_.empty()) {
+        ESP_LOGI(TAG, "LastSong: loaded name=%s", last_song_name_.c_str());
+    }
+}
+
 
 // ============================================
 // ============================================

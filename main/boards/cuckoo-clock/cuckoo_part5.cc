@@ -1,5 +1,62 @@
 // ===== Part 5: MCP注册、clock_task (L4413-4991) =====
 
+static int CuckooHexVal(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static std::string CuckooUrlDecode(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            int hi = CuckooHexVal(in[i + 1]);
+            int lo = CuckooHexVal(in[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back((char)((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i] == '+' ? ' ' : in[i]);
+    }
+    return out;
+}
+
+static std::string CuckooExtractSongName(const std::string& url) {
+    size_t q = url.find("q=");
+    if (q == std::string::npos) return "";
+    std::string value = url.substr(q + 2);
+    size_t amp = value.find('&');
+    if (amp != std::string::npos) value = value.substr(0, amp);
+    return CuckooUrlDecode(value);
+}
+
+static std::string CuckooJsonEscape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 16);
+    for (unsigned char c : in) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)c);
+                    out += buf;
+                } else {
+                    out.push_back((char)c);
+                }
+        }
+    }
+    return out;
+}
+
 /**
  * @brief 音乐舞蹈 tick（250ms 主循环调用）
  * 音乐播放且小朋友们活跃时：M1 正反转脉冲 + 吉他/狗尾舵机摆动；
@@ -1074,18 +1131,22 @@ void CuckooTools::RegisterAll() {
 
     // === 状态查询 ===
     mcp.AddTool("cuckoo.get_status",
-        "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放）。\n"
+        "查询设备状态：running（是否正在表演），music_playing（音乐是否正在播放），last_song（最近播放的歌名/歌手），last_song_url（重播用 URL）。\n"
         "【强制规则】回复用户任何关于演出/表演/音乐/歌舞的问题前，必须先调用本工具。不得凭记忆或上下文猜测状态。\n"
-        "如果 running 是 false 但用户提到演出，直接说演出已经结束，不要说还在进行。",
+        "如果 running 是 false 但用户提到演出，直接说演出已经结束，不要说还在进行。\n"
+        "用户问‘刚才那首是什么/谁唱的/之前放的什么歌’时，必须调用本工具读 last_song，不要凭记忆猜。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
             auto& audio = Application::GetInstance().GetAudioService();
             bool music_on = audio.IsBgAudioActive();
-            char json[192];
+            std::string last_name = CuckooJsonEscape(state_machine_->last_song_name_);
+            std::string last_url = CuckooJsonEscape(state_machine_->last_song_url_);
+            char json[1024];
             snprintf(json, sizeof(json),
-                "{\"running\": %s, \"music_playing\": %s}",
+                "{\"running\": %s, \"music_playing\": %s, \"last_song\": \"%s\", \"last_song_url\": \"%s\"}",
                 state_machine_->IsRunning() ? "true" : "false",
-                music_on ? "true" : "false");
+                music_on ? "true" : "false",
+                last_name.c_str(), last_url.c_str());
             return std::string(json);
         });
 
@@ -1098,10 +1159,19 @@ void CuckooTools::RegisterAll() {
         PropertyList pl;
         pl.AddProperty(Property("url", kPropertyTypeString));
         mcp.AddTool("cuckoo.play_url",
-            "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【歌手规则】如果用户明确指定了歌手（如'放苏芮的奉献'），url格式为'/pcm?q=歌名 歌手'，系统直接播该歌手版本。如果用户只说歌名没指定歌手（如'放《奉献》'），url只用'/pcm?q=歌名'，让系统自动展示多版本供选择。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：'放酒干倘卖无'→play_url('/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0')。'放苏芮的奉献'→play_url('/pcm?q=%E5%A5%89%E7%8C%AE%%20%E8%8B%8F%E8%8A%AE')。\n""本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
+            "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【歌手规则】如果用户明确指定了歌手（如'放苏芮的奉献'），url格式为'/pcm?q=歌名 歌手'，系统直接播该歌手版本。如果用户只说歌名没指定歌手（如'放《奉献》'），url只用'/pcm?q=歌名'，让系统自动展示多版本供选择。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：'放酒干倘卖无'→play_url('/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0')。'放苏芮的奉献'→play_url('/pcm?q=%E5%A5%89%E7%8C%AE%%20%E8%8B%8F%E8%8A%AE')。\n""【重播规则】用户说‘再唱一遍/重放刚才那首/再放一遍’时，直接调用本工具，url传'/pcm?q=__last__'，不要问歌名，也不要凭记忆猜；设备会用最近一次成功播放的歌曲重播。\n"
+            "如果用户问‘刚才那首是什么/谁唱的’，先调用cuckoo.get_status读取last_song。\n"
+            "本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 std::string url = props["url"].value<std::string>();
+                // 重播最近一首：使用设备保存的 URL，不依赖 AI 上下文
+                if (url == "__last__" || url.find("__last__") != std::string::npos) {
+                    if (state_machine_->last_song_url_.empty()) {
+                        return std::string("{\"status\": \"error\", \"hint\": \"No previous song. Ask the user which song to play.\"}");
+                    }
+                    url = state_machine_->last_song_url_;
+                }
                 // 先检查多版本：如果服务器返回歌手列表JSON，直接返回给AI念（不播歌）
                 std::string multi = state_machine_->CheckMultiArtist(url.c_str());
                 if (!multi.empty()) {
@@ -1109,6 +1179,9 @@ void CuckooTools::RegisterAll() {
                 }
                 int ret = state_machine_->PlayOnlineMusic(url.c_str());
                 if (ret >= 0) {
+                    std::string song_name = CuckooExtractSongName(url);
+                    if (song_name.empty()) song_name = url;
+                    state_machine_->SaveLastSong(song_name, url);
                     return std::string("{\"status\": \"ok\", \"playing\": true}");
                 } else {
                     char json[160];
@@ -1240,6 +1313,7 @@ void cuckoo_clock_task(void* params) {
     sm->LoadAlarmsFromNvs();
     sm->LoadQuietMode();
     sm->LoadKidsActive();
+    sm->LoadLastSong();
 
 uint32_t tick_sec = 0;
 
