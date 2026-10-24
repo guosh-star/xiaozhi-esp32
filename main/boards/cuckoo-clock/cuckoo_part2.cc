@@ -322,11 +322,8 @@ serial_fallback:
  // 若先清除数据会使播放器前端丢一小段（5-15ms），AI 重复中间内容
  // 先等 3-5 秒的音频，再 5-15 秒 AI 重复中间内容
             auto dev_state = app.GetDeviceState();
-            if (dev_state == kDeviceStateConnecting) {
-                ESP_LOGI(TAG, "PlayOpus: auto-stop (wake word)");
-                abort_for_wake = true;
-                break;
-            }
+            // 2026-10-24: 唤醒 AI 不再自动停歌（原 connecting 窗口仅 ~300ms，播放循环是否撞上属竞态）
+            // 音乐继续播放；AI 说话时仍按三档 ducking 处理，只有明确说“停止播放”才停。
 
             // OGG 解复用 → 独立 Opus 解码 → 重采样 → bg ring
             demuxer->Process(buf, read);
