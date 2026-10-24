@@ -301,7 +301,6 @@ serial_fallback:
         int8_t orig_tx_power = 84;
         esp_wifi_get_max_tx_power(&orig_tx_power);
         int8_t cur_tx_power = orig_tx_power;
-        int64_t last_voice_seen = 0;
         ESP_LOGI(TAG, "WIFI-TX: original %d", (int)orig_tx_power);
         
         // 音乐走 bg ring：先激活（近静音），预缓冲够再开排空
@@ -362,18 +361,13 @@ serial_fallback:
             }
 
             int64_t now = esp_timer_get_time();
-            // 自适应 WiFi 发射功率：服务器识别到说话后 5s 内保持 20dBm，其余时间降到 6dBm
+            // 自适应 WiFi 发射功率：仅服务器说话/连接时 20dBm；idle 与 listening 都保持 6dBm
             {
                 auto st_tx = app.GetDeviceState();
-                if (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting) {
-                    last_voice_seen = now;  // 服务器识别到说话/连接中，保持高功率
-                }
-                if (audio_service.IsVoiceDetected()) last_voice_seen = now;
-                int64_t since_voice = now - last_voice_seen;
-                int8_t want_tx = (since_voice < 5000000) ? 80 : 24;  // 说话后保持 5 秒；24=6dBm
-                const char* tx_reason = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting)
-                                            ? "server speaking"
-                                            : (want_tx >= 80 ? "voice" : "silent");
+                bool server_talking = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting);
+                // 仅服务器说话/连接时 20dBm；listening 与 idle 一样保持 6dBm，不再 5 秒高功率保持
+                int8_t want_tx = server_talking ? 80 : 24;
+                const char* tx_reason = server_talking ? "server speaking" : "idle";
                 // 与硬件实际值同步（VAD 回调可能已经改过功率）
                 int8_t actual_tx = cur_tx_power;
                 if (esp_wifi_get_max_tx_power(&actual_tx) == ESP_OK) cur_tx_power = actual_tx;
