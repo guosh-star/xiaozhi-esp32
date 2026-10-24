@@ -322,6 +322,156 @@ def _qq_uin(cookie):
 
 
 
+def qq_refresh_cookie():
+    """用 refresh_token 续期 qm_keyst/qqmusic_key，成功则原子写回 Cookie 文件。"""
+    try:
+        with open(QQ_COOKIE_PATH, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+    except Exception:
+        return False
+    if not raw:
+        return False
+
+    c = {}
+    for part in raw.split(";"):
+        i = part.find("=")
+        if i > 0:
+            c[part[:i].strip()] = part[i + 1:].strip()
+
+    uin = c.get("uin") or c.get("wxuin") or c.get("qqmusic_uin") or ""
+    key = c.get("qm_keyst") or c.get("qqmusic_key") or c.get("music_key") or ""
+    refresh = c.get("psrf_qqrefresh_token") or c.get("wxrefresh_token") or ""
+    if not (uin and key and refresh):
+        print("[qq-refresh] skip: missing uin/key/refresh_token")
+        return False
+
+    try:
+        login_type = int(c.get("tmeLoginType") or 0)
+    except Exception:
+        login_type = 0
+    if login_type <= 0:
+        login_type = 1 if key.startswith("W_X") else 2
+
+    openid = c.get("psrf_qqopenid") or c.get("wxopenid") or ""
+    unionid = c.get("psrf_qqunionid") or c.get("wxunionid") or ""
+    refresh_key = c.get("qm_refresh_key") or ""
+
+    if login_type == 1:
+        param = {
+            "openid": openid,
+            "refresh_token": refresh,
+            "str_musicid": c.get("qm_str_musicid") or uin,
+            "musickey": key,
+            "unionid": unionid,
+            "refresh_key": refresh_key,
+            "loginMode": 2,
+        }
+    else:
+        expires_raw = c.get("psrf_access_token_expiresAt") or "0"
+        expired_in = int(expires_raw) if str(expires_raw).isdigit() else 0
+        param = {
+            "openid": openid,
+            "access_token": c.get("psrf_qqaccess_token") or "",
+            "refresh_token": refresh,
+            "expired_in": expired_in,
+            "musicid": int(uin) if uin.isdigit() else 0,
+            "musickey": key,
+            "refresh_key": refresh_key,
+            "loginMode": 2,
+        }
+
+    body = {
+        "comm": {
+            "uin": uin,
+            "loginUin": uin,
+            "format": "json",
+            "ct": 24,
+            "cv": 4747474,
+            "platform": "yqq.json",
+            "authst": key,
+            "g_tk": 5381,
+            "qq": uin,
+            "tmeLoginType": login_type,
+        },
+        "req_1": {
+            "module": "music.login.LoginServer",
+            "method": "Login",
+            "param": param,
+        },
+    }
+
+    cookie_header = raw if "uin=" in raw else raw + "; uin=" + uin
+    req = urllib.request.Request(
+        QQ_SONG_URL,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "User-Agent": "QQMusic 14090508(android 12)",
+            "Content-Type": "application/json",
+            "Referer": "https://y.qq.com/",
+            "Origin": "https://y.qq.com",
+            "Cookie": cookie_header,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        print("[qq-refresh] request failed:", e)
+        return False
+
+    inner = data.get("req_1") or data.get("request") or {}
+    d = inner.get("data") or {}
+    if data.get("code") != 0 or inner.get("code") != 0 or not d.get("musickey"):
+        print("[qq-refresh] rejected top=%s req1=%s" % (data.get("code"), inner.get("code")))
+        return False
+
+    merged = dict(c)
+    newkey = d["musickey"]
+    merged["qm_keyst"] = newkey
+    merged["qqmusic_key"] = newkey
+    if d.get("str_musicid") or d.get("musicid"):
+        merged["uin"] = str(d.get("str_musicid") or d.get("musicid")).lstrip("o")
+    if d.get("encryptUin"):
+        merged["euin"] = d["encryptUin"]
+    if d.get("openid"):
+        merged["wxopenid" if login_type == 1 else "psrf_qqopenid"] = d["openid"]
+    if d.get("unionid"):
+        merged["wxunionid" if login_type == 1 else "psrf_qqunionid"] = d["unionid"]
+    if d.get("refresh_token"):
+        merged["wxrefresh_token" if login_type == 1 else "psrf_qqrefresh_token"] = d["refresh_token"]
+    if d.get("access_token"):
+        merged["psrf_qqaccess_token"] = d["access_token"]
+    if d.get("expired_at"):
+        merged["psrf_access_token_expiresAt"] = str(d["expired_at"])
+    if d.get("musickeyCreateTime"):
+        merged["psrf_musickey_createtime"] = str(d["musickeyCreateTime"])
+    if d.get("refresh_key"):
+        merged["qm_refresh_key"] = d["refresh_key"]
+    merged["tmeLoginType"] = str(d.get("loginType") or login_type)
+
+    new_cookie = "; ".join("%s=%s" % (k, v) for k, v in merged.items() if k and v)
+    tmp = QQ_COOKIE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(new_cookie)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, QQ_COOKIE_PATH)
+    print("[qq-refresh] ok key_len=%d prefix=%s" % (len(newkey), newkey[:6]))
+    return True
+
+
+def qq_cookie_refresh_loop():
+    """每 12 小时续期一次；qm_keyst 有效期约 3 天，留足余量。"""
+    time.sleep(10)
+    while True:
+        try:
+            qq_refresh_cookie()
+        except Exception as e:
+            print("[qq-refresh] loop error:", e)
+        time.sleep(12 * 3600)
+
+
 def qq_search(keyword, limit=10):
     """Search QQ Music"""
     params = urllib.parse.urlencode({
@@ -1941,6 +2091,8 @@ async function play(el){
 # ===========================================================================
 
 def main():
+    threading.Thread(target=qq_cookie_refresh_loop, daemon=True).start()
+
     server = socketserver.ThreadingTCPServer(("0.0.0.0", PORT), MusicProxyHandler)
     server.allow_reuse_address = True
 
