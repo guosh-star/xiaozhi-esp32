@@ -358,7 +358,7 @@ serial_fallback:
             }
 
             int64_t now = esp_timer_get_time();
-            // 自适应 WiFi 发射功率：服务器识别到说话后 5s 内保持 20dBm，其余时间降到 3dBm
+            // 自适应 WiFi 发射功率：服务器识别到说话后 5s 内保持 20dBm，其余时间降到 6dBm
             {
                 auto st_tx = app.GetDeviceState();
                 if (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting) {
@@ -366,7 +366,7 @@ serial_fallback:
                 }
                 if (audio_service.IsVoiceDetected()) last_voice_seen = now;
                 int64_t since_voice = now - last_voice_seen;
-                int8_t want_tx = (since_voice < 5000000) ? 80 : 12;  // 说话后保持 5 秒
+                int8_t want_tx = (since_voice < 5000000) ? 80 : 24;  // 说话后保持 5 秒；24=6dBm
                 const char* tx_reason = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting)
                                             ? "server speaking"
                                             : (want_tx > 20 ? "voice" : "silent");
