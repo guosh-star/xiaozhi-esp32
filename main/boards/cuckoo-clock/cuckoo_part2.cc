@@ -369,7 +369,7 @@ serial_fallback:
                 int8_t want_tx = (since_voice < 5000000) ? 80 : 24;  // 说话后保持 5 秒；24=6dBm
                 const char* tx_reason = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting)
                                             ? "server speaking"
-                                            : (want_tx > 20 ? "voice" : "silent");
+                                            : (want_tx >= 80 ? "voice" : "silent");
                 // 与硬件实际值同步（VAD 回调可能已经改过功率）
                 int8_t actual_tx = cur_tx_power;
                 if (esp_wifi_get_max_tx_power(&actual_tx) == ESP_OK) cur_tx_power = actual_tx;
