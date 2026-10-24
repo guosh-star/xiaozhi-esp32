@@ -288,6 +288,10 @@ serial_fallback:
         int64_t t0 = esp_timer_get_time(), last_refresh = t0;
         size_t total_dl = 0;
         uint32_t last_uf = 0, last_us = 0, last_mf = 0;  // 诊断：上次打印时的欠载/混音计数
+        // 诊断：CPU 负载（IDLE0/IDLE1 运行时间差值 / 墙钟时间）
+        uint32_t cpu_prev_idle0 = 0, cpu_prev_idle1 = 0;
+        int64_t cpu_prev_us = 0;
+        bool cpu_prev_valid = false;
         
  // 2026-10-24: 放歌不再降音量，保持当前硬件音量（原为 old_vol*80/100）
         auto* codec = Board::GetInstance().GetAudioCodec();
@@ -396,7 +400,40 @@ serial_fallback:
                                      (st == kDeviceStateConnecting) ? "connect" :
                                      (st == kDeviceStateIdle) ? "idle" : "other";
                 float dl_rate = total_dl * 1000000.0f / (float)(now - t0);
-                ESP_LOGI(TAG, "PlayOpus STAT: state=%s up=%d fill=%d underrun=%u/%u samp mix=%u late=%u max_gap=%ums wait_late=%u max_wait=%ums write_late=%u max_write=%ums clip=%u music_peak=%u out_peak=%u dl=%dKB rate=%.1fKB/s heap=%dKB sram=%d",
+                // 诊断：两个核的负载（IDLE0/IDLE1 差值 / 墙钟时间）
+                int cpu0 = -1, cpu1 = -1;
+                {
+                    TaskStatus_t tasks[64];
+                    UBaseType_t got = uxTaskGetSystemState(tasks, 64, nullptr);
+                    uint32_t idle0 = 0, idle1 = 0;
+                    bool has0 = false, has1 = false;
+                    for (UBaseType_t i = 0; i < got; i++) {
+                        if (strcmp(tasks[i].pcTaskName, "IDLE0") == 0) {
+                            idle0 = (uint32_t)tasks[i].ulRunTimeCounter; has0 = true;
+                        } else if (strcmp(tasks[i].pcTaskName, "IDLE1") == 0) {
+                            idle1 = (uint32_t)tasks[i].ulRunTimeCounter; has1 = true;
+                        }
+                    }
+                    int64_t cpu_now = esp_timer_get_time();
+                    if (cpu_prev_valid && has0 && has1 && cpu_now > cpu_prev_us) {
+                        uint32_t d0 = idle0 - cpu_prev_idle0;
+                        uint32_t d1 = idle1 - cpu_prev_idle1;
+                        int64_t dt = cpu_now - cpu_prev_us;
+                        cpu0 = 100 - (int)((int64_t)d0 * 100 / dt);
+                        cpu1 = 100 - (int)((int64_t)d1 * 100 / dt);
+                        if (cpu0 < 0) cpu0 = 0;
+                        if (cpu0 > 100) cpu0 = 100;
+                        if (cpu1 < 0) cpu1 = 0;
+                        if (cpu1 > 100) cpu1 = 100;
+                    }
+                    if (has0 && has1) {
+                        cpu_prev_idle0 = idle0;
+                        cpu_prev_idle1 = idle1;
+                        cpu_prev_us = cpu_now;
+                        cpu_prev_valid = true;
+                    }
+                }
+                ESP_LOGI(TAG, "PlayOpus STAT: state=%s up=%d fill=%d underrun=%u/%u samp mix=%u late=%u max_gap=%ums wait_late=%u max_wait=%ums write_late=%u max_write=%ums clip=%u music_peak=%u out_peak=%u dl=%dKB rate=%.1fKB/s heap=%dKB sram=%d cpu0=%d%% cpu1=%d%%",
                          stname, as.IsUplinkMuted() ? 0 : 1, (int)as.GetBgAudioFillLevel(), (unsigned)duf, (unsigned)dus,
                          (unsigned)dmf, (unsigned)as.GetBgLateFrames(), (unsigned)as.GetBgMaxGapMs(),
                          (unsigned)as.GetBgWaitLateFrames(), (unsigned)as.GetBgMaxWaitMs(),
@@ -404,7 +441,7 @@ serial_fallback:
                          (unsigned)as.GetBgClipSamples(), (unsigned)as.GetBgMusicPeak(), (unsigned)as.GetBgOutPeak(),
                          (int)(total_dl / 1024), dl_rate / 1024.0f,
                          heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024,
-                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL), cpu0, cpu1);
                 as.ResetBgWindowStats();  // 下一个窗口重新统计峰值/削波
                 app.GetAudioService().RefreshInputTimestamp();
                 last_refresh = now;
