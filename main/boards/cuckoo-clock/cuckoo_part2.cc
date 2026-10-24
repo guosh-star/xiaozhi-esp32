@@ -407,10 +407,13 @@ serial_fallback:
                     UBaseType_t got = uxTaskGetSystemState(tasks, 64, nullptr);
                     uint32_t idle0 = 0, idle1 = 0;
                     bool has0 = false, has1 = false;
+                    // 按核心取 idle task handle，不依赖任务名 IDLE0/IDLE1
+                    TaskHandle_t idle0_handle = xTaskGetIdleTaskHandleForCore(0);
+                    TaskHandle_t idle1_handle = xTaskGetIdleTaskHandleForCore(1);
                     for (UBaseType_t i = 0; i < got; i++) {
-                        if (strcmp(tasks[i].pcTaskName, "IDLE0") == 0) {
+                        if (idle0_handle != nullptr && tasks[i].xHandle == idle0_handle) {
                             idle0 = (uint32_t)tasks[i].ulRunTimeCounter; has0 = true;
-                        } else if (strcmp(tasks[i].pcTaskName, "IDLE1") == 0) {
+                        } else if (idle1_handle != nullptr && tasks[i].xHandle == idle1_handle) {
                             idle1 = (uint32_t)tasks[i].ulRunTimeCounter; has1 = true;
                         }
                     }
