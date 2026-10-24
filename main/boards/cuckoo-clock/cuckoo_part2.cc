@@ -361,13 +361,17 @@ serial_fallback:
             }
 
             int64_t now = esp_timer_get_time();
-            // 自适应 WiFi 发射功率：仅服务器说话/连接时 20dBm；idle 与 listening 都保持 6dBm
+            // 自适应 WiFi 发射功率：speaking/connecting/listening 都 20dBm；idle 6dBm
             {
                 auto st_tx = app.GetDeviceState();
-                bool server_talking = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting);
-                // 仅服务器说话/连接时 20dBm；listening 与 idle 一样保持 6dBm，不再 5 秒高功率保持
-                int8_t want_tx = server_talking ? 80 : 24;
-                const char* tx_reason = server_talking ? "server speaking" : "idle";
+                bool high_power = (st_tx == kDeviceStateSpeaking ||
+                                   st_tx == kDeviceStateConnecting ||
+                                   st_tx == kDeviceStateListening);
+                // speaking/connecting/listening 都 20dBm；idle 6dBm
+                int8_t want_tx = high_power ? 80 : 24;
+                const char* tx_reason = (st_tx == kDeviceStateListening) ? "listening" :
+                                        (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting)
+                                            ? "server speaking" : "idle";
                 // 与硬件实际值同步（VAD 回调可能已经改过功率）
                 int8_t actual_tx = cur_tx_power;
                 if (esp_wifi_get_max_tx_power(&actual_tx) == ESP_OK) cur_tx_power = actual_tx;
