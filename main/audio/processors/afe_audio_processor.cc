@@ -40,7 +40,7 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), NULL, AFE_TYPE_FD, AFE_MODE_LOW_COST);
     afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;  // FD+HIGH: full-duplex linear filter + NLP residual suppression
-    afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;  // 强压制残余音乐回声，避免歌词触发服务器 VAD
+    afe_config->aec_nlp_level = AEC_NLP_LEVEL_AGGR;  // 降一档：VERYAGGR->AGGR，减少非线性伪影；比 NORMAL 保留更多回声压制
     afe_config->aec_filter_length = 8;  // 256ms echo tail (6->8, 进一步压音乐回声)
     ESP_LOGI(TAG, "AEC filter length: %d frames (%.0fms echo tail)", afe_config->aec_filter_length, afe_config->aec_filter_length * 32.0f);
     afe_config->vad_mode = VAD_MODE_0;
