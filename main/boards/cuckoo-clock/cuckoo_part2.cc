@@ -7,6 +7,7 @@
  * - PCM 路径：legacy 模式 PushBackgroundAudio（高保真音频 ring buffer）
  * - Ducking：AI 说话时暂停推送数据，让出带宽给语音，说完恢复
  * - 自动将音乐音量降到 65%，用于 AEC 参考采集降噪
+ * - 2026-10-24: 放歌时不再降硬件音量（保持当前音量），仅保留 AEC 参考采集
  * - 网络不通时，降级到串口回退模式
  */
 int Mp3Player::PlayOpus(const char* url) {
@@ -259,9 +260,13 @@ serial_fallback:
         ESP_LOGE(TAG, "PlayOpus: HTTP error %d", status);
         close(sock);
         self->is_playing_ = false;
+        app.NotifyMusicStopped();
         vTaskDelete(NULL);
         return;
     }
+
+    // 流已就绪，进入"音乐播放中"状态（保持聆听）
+    app.NotifyMusicPlaying();
 
  // === 检测格式：/opus 使用 OGG 解复用器 + 主音频管线 ===
  // === /pcm 使用原始字节推入后台环形缓冲 ===
@@ -282,18 +287,23 @@ serial_fallback:
         uint8_t buf[CHUNK];
         int64_t t0 = esp_timer_get_time(), last_refresh = t0;
         size_t total_dl = 0;
+        uint32_t last_uf = 0, last_us = 0, last_mf = 0;  // 诊断：上次打印时的欠载/混音计数
         
- // 播放音乐时音量降至 80%，并开启 AEC 参考采集
+ // 2026-10-24: 放歌不再降音量，保持当前硬件音量（原为 old_vol*80/100）
         auto* codec = Board::GetInstance().GetAudioCodec();
         int old_vol = codec ? codec->output_volume() : 90;
-        int music_vol = old_vol * 80 / 100;
-        if (music_vol < 10) music_vol = 10;
-        if (codec) codec->SetOutputVolume(music_vol);
-        ESP_LOGI(TAG, "PlayOpus: volume %d -> %d for AEC", old_vol, music_vol);
+        ESP_LOGI(TAG, "PlayOpus: keep volume %d (no AEC reduction)", old_vol);
+        // WiFi 自适应发射功率：保存当前值，歌末恢复
+        int8_t orig_tx_power = 84;
+        esp_wifi_get_max_tx_power(&orig_tx_power);
+        int8_t cur_tx_power = orig_tx_power;
+        int64_t last_voice_seen = 0;
+        ESP_LOGI(TAG, "WIFI-TX: original %d", (int)orig_tx_power);
         
         // 音乐走 bg ring：先激活（近静音），预缓冲够再开排空
         auto& audio_service = app.GetAudioService();
         audio_service.ResetMusicDecoder();
+        audio_service.ResetBgAudioStats();  // 诊断：每首歌从零开始统计
         audio_service.SetBackgroundAudioGain(0.001f);
         bool drain_on = false;
         bool abort_for_wake = false;
@@ -351,7 +361,54 @@ serial_fallback:
             }
 
             int64_t now = esp_timer_get_time();
+            // 自适应 WiFi 发射功率：服务器识别到说话后 5s 内保持 20dBm，其余时间降到 3dBm
+            {
+                auto st_tx = app.GetDeviceState();
+                if (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting) {
+                    last_voice_seen = now;  // 服务器识别到说话/连接中，保持高功率
+                }
+                if (audio_service.IsVoiceDetected()) last_voice_seen = now;
+                int64_t since_voice = now - last_voice_seen;
+                int8_t want_tx = (since_voice < 5000000) ? 80 : 12;  // 说话后保持 5 秒
+                const char* tx_reason = (st_tx == kDeviceStateSpeaking || st_tx == kDeviceStateConnecting)
+                                            ? "server speaking"
+                                            : (want_tx > 20 ? "voice" : "silent");
+                // 与硬件实际值同步（VAD 回调可能已经改过功率）
+                int8_t actual_tx = cur_tx_power;
+                if (esp_wifi_get_max_tx_power(&actual_tx) == ESP_OK) cur_tx_power = actual_tx;
+                if (want_tx != cur_tx_power) {
+                    if (esp_wifi_set_max_tx_power(want_tx) == ESP_OK) {
+                        ESP_LOGI(TAG, "WIFI-TX: %d -> %d (%s)", (int)cur_tx_power, (int)want_tx, tx_reason);
+                        cur_tx_power = want_tx;
+                    }
+                }
+            }
             if (now - last_refresh > 8000000) {
+                // 诊断：每 8 秒打印一次缓冲/欠载/状态
+                auto& as = app.GetAudioService();
+                uint32_t uf = as.GetBgUnderrunFrames();
+                uint32_t us = as.GetBgUnderrunSamples();
+                uint32_t mf = as.GetBgMixFrames();
+                uint32_t duf = uf - last_uf;
+                uint32_t dus = us - last_us;
+                uint32_t dmf = mf - last_mf;
+                last_uf = uf; last_us = us; last_mf = mf;
+                auto st = app.GetDeviceState();
+                const char* stname = (st == kDeviceStateListening) ? "listen" :
+                                     (st == kDeviceStateSpeaking) ? "speak" :
+                                     (st == kDeviceStateConnecting) ? "connect" :
+                                     (st == kDeviceStateIdle) ? "idle" : "other";
+                float dl_rate = total_dl * 1000000.0f / (float)(now - t0);
+                ESP_LOGI(TAG, "PlayOpus STAT: state=%s up=%d fill=%d underrun=%u/%u samp mix=%u late=%u max_gap=%ums wait_late=%u max_wait=%ums write_late=%u max_write=%ums clip=%u music_peak=%u out_peak=%u dl=%dKB rate=%.1fKB/s heap=%dKB sram=%d",
+                         stname, as.IsUplinkMuted() ? 0 : 1, (int)as.GetBgAudioFillLevel(), (unsigned)duf, (unsigned)dus,
+                         (unsigned)dmf, (unsigned)as.GetBgLateFrames(), (unsigned)as.GetBgMaxGapMs(),
+                         (unsigned)as.GetBgWaitLateFrames(), (unsigned)as.GetBgMaxWaitMs(),
+                         (unsigned)as.GetBgWriteLateFrames(), (unsigned)as.GetBgMaxWriteMs(),
+                         (unsigned)as.GetBgClipSamples(), (unsigned)as.GetBgMusicPeak(), (unsigned)as.GetBgOutPeak(),
+                         (int)(total_dl / 1024), dl_rate / 1024.0f,
+                         heap_caps_get_free_size(MALLOC_CAP_8BIT) / 1024,
+                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                as.ResetBgWindowStats();  // 下一个窗口重新统计峰值/削波
                 app.GetAudioService().RefreshInputTimestamp();
                 last_refresh = now;
             }
@@ -363,6 +420,9 @@ serial_fallback:
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
         }
+        audio_service.SetUplinkMuted(false);  // 退歌恢复上行
+        esp_wifi_set_max_tx_power(orig_tx_power);
+        ESP_LOGI(TAG, "WIFI-TX: restored to %d", (int)orig_tx_power);
         audio_service.ClearBackgroundAudio();
         if (codec) codec->SetOutputVolume(old_vol);
         ESP_LOGI(TAG, "PlayOpus: volume restored to %d", old_vol);
@@ -373,6 +433,11 @@ serial_fallback:
         
         delete demuxer;
         close(sock);
+        if (!self->stop_requested_ && !abort_for_wake) {
+            app.NotifyMusicEnded();
+        } else {
+            app.NotifyMusicStopped();
+        }
         self->is_playing_ = false;
         int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
         ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB (Opus)", (int)total_ms, (int)(total_dl / 1024));
@@ -519,6 +584,11 @@ serial_fallback:
         app.GetAudioService().ClearBackgroundAudio();
     }
     close(sock);
+    if (!self->stop_requested_) {
+        app.NotifyMusicEnded();
+    } else {
+        app.NotifyMusicStopped();
+    }
     self->is_playing_ = false;
     int64_t total_ms = (esp_timer_get_time() - t0) / 1000;
     ESP_LOGI(TAG, "PlayOpus: done %dms, dl=%dKB", (int)total_ms, (int)(total_dl / 1024));

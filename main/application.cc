@@ -1,4 +1,4 @@
-#include "application.h"
+﻿#include "application.h"
 #include "board.h"
 #include "display.h"
 #include "system_info.h"
@@ -16,12 +16,19 @@
 
 #include <cstring>
 #include <esp_log.h>
+#include <esp_wifi.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
 
 #define TAG "Application"
+
+// 本地提示音（CMake EMBED_FILES 嵌入）
+extern const uint8_t more_music_pcm_start[] asm("_binary_more_music_pcm_start");
+extern const uint8_t more_music_pcm_end[] asm("_binary_more_music_pcm_end");
+extern const uint8_t bye_pcm_start[] asm("_binary_bye_pcm_start");
+extern const uint8_t bye_pcm_end[] asm("_binary_bye_pcm_end");
 
 
 Application::Application() {
@@ -91,6 +98,11 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
     };
     callbacks.on_vad_change = [this](bool speaking) {
+        // 放歌期间：一旦检测到人声，立即把 WiFi 发射功率拉高（聆听静音时由播放循环降回）
+        if (speaking && music_playing_) {
+            esp_wifi_set_max_tx_power(80);  // 20 dBm
+            ESP_LOGI(TAG, "WIFI-TX: boost 80 (vad)");
+        }
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
     };
     audio_service_.SetCallbacks(callbacks);
@@ -286,6 +298,33 @@ void Application::Run() {
                     listening_diag_logged_ = true;
                     ESP_LOGW(TAG, "LISTENING-TIMEOUT: no server response after %d ms, state=%d", (int)elapsed_ms, (int)GetDeviceState());
                 }
+            }
+
+            // 在线音乐播放期间：掉回 idle 就重新进入聆听（必要时重开会话）
+            if (music_playing_ && GetDeviceState() == kDeviceStateIdle) {
+                EnsureMusicListening();
+            }
+
+            // 歌末提问超时（15 秒无回答）→ 说“拜拜” → 小鸟回退关门 → 退出
+            if (music_prompt_pending_ && music_prompt_deadline_us_ > 0 &&
+                esp_timer_get_time() > music_prompt_deadline_us_) {
+                music_prompt_pending_ = false;
+                music_prompt_deadline_us_ = 0;
+                ESP_LOGI(TAG, "MUSIC-END: no answer in 15s, say bye and close");
+                if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                    protocol_->SendStopListening();
+                }
+                // 暂停上传，避免服务器把本地“拜拜”当成用户说话
+                audio_service_.EnableVoiceProcessing(false);
+                size_t bye_bytes = static_cast<size_t>(bye_pcm_end - bye_pcm_start);
+                audio_service_.OutputRawPcm(reinterpret_cast<const int16_t*>(bye_pcm_start),
+                                            bye_bytes / sizeof(int16_t), 16000);
+                ESP_LOGI(TAG, "MUSIC-END: bye played, closing door");
+                if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                    // 关会话 → 板级休眠 → 小鸟回退、关门
+                    protocol_->CloseAudioChannel();
+                }
+                SetDeviceState(kDeviceStateIdle);
             }
         }
     }
@@ -588,6 +627,11 @@ void Application::InitializeProtocol() {
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
+                if (music_prompt_pending_) {
+                    // 提问播完，开始 15 秒回答窗口
+                    music_prompt_deadline_us_ = esp_timer_get_time() + 15LL * 1000 * 1000;
+                    ESP_LOGI(TAG, "MUSIC-END: prompt spoken, wait 15s for answer");
+                }
                 ESP_LOGI(TAG, "TTS-STOP received");
                 Schedule([this]() {
                     ESP_LOGI(TAG, "TTS-STOP scheduled, state=%d", (int)GetDeviceState());
@@ -603,13 +647,29 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
-                    ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([display, message = std::string(text->valuestring)]() {
-                        display->SetChatMessage("assistant", message.c_str());
-                    });
+                    const char* sentence = text->valuestring;
+                    // 服务端偶尔把 MCP 工具调用文本（如 "% cuckoo.play_url..."）
+                    // 当作普通句子下发，只记日志、不显示到屏幕
+                    const char* p = sentence;
+                    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+                        ++p;
+                    }
+                    if (*p == '%') {
+                        ESP_LOGI(TAG, "<< [tool] %s", sentence);
+                    } else {
+                        ESP_LOGI(TAG, "<< %s", sentence);
+                        Schedule([display, message = std::string(sentence)]() {
+                            display->SetChatMessage("assistant", message.c_str());
+                        });
+                    }
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
+            if (music_prompt_pending_) {
+                music_prompt_pending_ = false;
+                music_prompt_deadline_us_ = 0;
+                ESP_LOGI(TAG, "MUSIC-END: user answered, stay listening");
+            }
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
@@ -1248,6 +1308,136 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
+}
+
+void Application::NotifyMusicPlaying() {
+    Schedule([this]() {
+        music_playing_ = true;
+        music_prompt_pending_ = false;
+        music_prompt_deadline_us_ = 0;
+        ESP_LOGI(TAG, "MUSIC-LISTEN: music started, state=%d", (int)GetDeviceState());
+        // 音乐如果是在 idle 状态启动的（未经 TTS），主动进入聆听并保持会话
+        if (GetDeviceState() == kDeviceStateIdle) {
+            tts_restart_listening_ = true;
+            SetListeningMode(kListeningModeAutoStop);
+            SetDeviceState(kDeviceStateListening);
+        }
+    });
+}
+
+void Application::NotifyMusicStopped() {
+    Schedule([this]() {
+        music_playing_ = false;
+        music_prompt_pending_ = false;
+        music_prompt_deadline_us_ = 0;
+        ESP_LOGI(TAG, "MUSIC-LISTEN: music stopped by user/AI");
+    });
+}
+
+void Application::EnsureMusicListening() {
+    if (!music_playing_) {
+        return;
+    }
+    // 只处理“会话还在、状态掉了”的情况；会话被服务器关掉时就让它退，歌末再重开提问
+    if (protocol_ && protocol_->IsAudioChannelOpened() &&
+        GetDeviceState() == kDeviceStateIdle) {
+        ESP_LOGI(TAG, "MUSIC-LISTEN: re-enter listening during music");
+        tts_restart_listening_ = true;
+        SetListeningMode(kListeningModeAutoStop);
+        SetDeviceState(kDeviceStateListening);
+    }
+}
+
+void Application::StartMusicEndPrompt() {
+    if (!protocol_) {
+        return;
+    }
+
+    // 会话已开：鸟门应该已经开着，直接播提问
+    if (protocol_->IsAudioChannelOpened()) {
+        PlayMusicPrompt();
+        return;
+    }
+
+    // 会话被服务器 goodbye 关掉：先重开会话（板级唤醒会打开鸟门），
+    // 等鸟门动作完成后再播提问，避免“鸟在门里说话”。
+    if (music_reopen_in_progress_) {
+        return;
+    }
+    music_reopen_in_progress_ = true;
+    ESP_LOGW(TAG, "MUSIC-END: channel closed, reopening before prompt...");
+    xTaskCreate([](void* arg) {
+        auto* app = static_cast<Application*>(arg);
+        bool ok = app->protocol_ && app->protocol_->OpenAudioChannel();
+        ESP_LOGI(TAG, "MUSIC-END: answer session open %s", ok ? "ok" : "failed");
+        if (!ok) {
+            app->Schedule([app]() {
+                app->music_reopen_in_progress_ = false;
+                app->music_prompt_pending_ = false;
+                app->music_prompt_deadline_us_ = 0;
+            });
+            vTaskDelete(NULL);
+            return;
+        }
+        // 鸟门电机动作 BIRD_DOOR_TIME_MS=600ms，留 900ms 余量
+        vTaskDelay(pdMS_TO_TICKS(900));
+        app->Schedule([app]() {
+            app->music_reopen_in_progress_ = false;
+            app->PlayMusicPrompt();
+        });
+        vTaskDelete(NULL);
+    }, "music_prompt", 8192, this, 2, NULL);
+}
+
+void Application::PlayMusicPrompt() {
+    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+        ESP_LOGW(TAG, "MUSIC-END: channel closed, give up prompt");
+        music_prompt_pending_ = false;
+        music_prompt_deadline_us_ = 0;
+        return;
+    }
+
+    // 如果当前在聆听，先暂停上传，避免服务器把本地提问当成用户说话
+    bool was_listening = (GetDeviceState() == kDeviceStateListening);
+    SetListeningMode(kListeningModeAutoStop);
+    if (was_listening) {
+        protocol_->SendStopListening();
+        audio_service_.EnableVoiceProcessing(false);
+    } else {
+        // 关键：先切 listening，钟控任务看到 idle->非idle 才会开鸟门；
+        // 主循环此时被 vTaskDelay 占住，状态处理器还没开麦克风，正好先等门。
+        tts_restart_listening_ = true;
+        SetDeviceState(kDeviceStateListening);
+        ESP_LOGI(TAG, "MUSIC-END: waiting for bird door to open (1.1s)");
+        vTaskDelay(pdMS_TO_TICKS(1100));
+    }
+
+    size_t bytes = static_cast<size_t>(more_music_pcm_end - more_music_pcm_start);
+    ESP_LOGI(TAG, "MUSIC-END: play local prompt (%u bytes)", (unsigned)bytes);
+    audio_service_.OutputRawPcm(reinterpret_cast<const int16_t*>(more_music_pcm_start),
+                                bytes / sizeof(int16_t), 16000);
+    ESP_LOGI(TAG, "MUSIC-END: local prompt done");
+
+    if (was_listening) {
+        audio_service_.EnableVoiceProcessing(true);
+        protocol_->SendStartListening(kListeningModeAutoStop);
+    }
+    // else: SetDeviceState 入队的监听处理器会在返回主循环后开麦 + SendStartListening
+
+    music_prompt_pending_ = true;
+    music_prompt_deadline_us_ = esp_timer_get_time() + 15LL * 1000 * 1000;
+    ESP_LOGI(TAG, "MUSIC-END: listening for answer (15s)");
+}
+
+void Application::NotifyMusicEnded() {
+    Schedule([this]() {
+        if (!music_playing_) {
+            return;
+        }
+        music_playing_ = false;
+        ESP_LOGI(TAG, "MUSIC-END: song finished, preparing prompt");
+        StartMusicEndPrompt();
+    });
 }
 
 void Application::ResetProtocol() {

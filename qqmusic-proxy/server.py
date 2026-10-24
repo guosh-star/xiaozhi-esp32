@@ -304,6 +304,23 @@ def netease_play_url(song_id, br=320000):
 QQ_SEARCH_URL = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
 QQ_SONG_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 
+QQ_COOKIE_PATH = "/opt/qqmusic-proxy/qq_cookie.txt"
+
+
+def _qq_cookie():
+    """读取本机 QQ 音乐登录 Cookie（由 Windows 端定时上传）"""
+    try:
+        with open(QQ_COOKIE_PATH, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _qq_uin(cookie):
+    m = _re.search(r"(?:^|;\s*)(?:uin|wxuin)=o?(\d+)", cookie or "")
+    return m.group(1) if m else ""
+
+
 
 def qq_search(keyword, limit=10):
     """Search QQ Music"""
@@ -345,6 +362,8 @@ def qq_search(keyword, limit=10):
 def qq_play_url(song_mid):
     """Get QQ Music play URL"""
     guid = str(int(time.time() * 1000)) + "0" * 8
+    _qq_ck = _qq_cookie()
+    _qq_u = _qq_uin(_qq_ck)
     payload = json.dumps({
         "req_0": {
             "module": "vkey.GetVkeyServer",
@@ -353,7 +372,7 @@ def qq_play_url(song_mid):
                 "guid": guid,
                 "songmid": [song_mid],
                 "songtype": [0],
-                "uin": "0",
+                "uin": _qq_u or "0",
                 "loginflag": 1,
                 "platform": "20",
             }
@@ -361,10 +380,13 @@ def qq_play_url(song_mid):
     }).encode()
 
     try:
-        req = urllib.request.Request(QQ_SONG_URL, data=payload, headers={
+        _qq_headers = {
             "User-Agent": UA, "Referer": "https://y.qq.com",
             "Content-Type": "application/json",
-        })
+        }
+        if _qq_ck:
+            _qq_headers["Cookie"] = _qq_ck
+        req = urllib.request.Request(QQ_SONG_URL, data=payload, headers=_qq_headers)
         with urllib.request.urlopen(req, timeout=10, context=_ssl_ctx()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
@@ -813,7 +835,7 @@ def unified_search(keyword, limit=10):
 
     # 各平台分别去重
     per_src = {"netease": [], "qq": [], "migu": []}
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         songs2, err2 = results[src]
         log_platform(keyword, src, "search", "ok" if songs2 else "fail",
                      f"{len(songs2) if songs2 else 0} results{'; '+str(err2) if err2 else ''}")
@@ -827,12 +849,12 @@ def unified_search(keyword, limit=10):
 
     # 配额合并：避免网易云把位置占满，导致 QQ/咪咕 永远排不进来
     if limit >= 6:
-        quota = {"netease": max(3, limit - 4), "qq": 2, "migu": 2}
+        quota = {"qq": max(4, limit - 4), "netease": 2, "migu": 2}
     else:
-        quota = {"netease": limit, "qq": 0, "migu": 0}
+        quota = {"qq": limit, "netease": 0, "migu": 0}
 
     merged, seen = [], set()
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         for s in per_src[src][:quota[src]]:
             key = (_normalize(s.get("name", "")), _normalize(s.get("singer", "")))
             if key in seen:
@@ -841,7 +863,7 @@ def unified_search(keyword, limit=10):
             merged.append(s)
 
     # 配额没填满时补齐
-    for src in ("netease", "qq", "migu"):
+    for src in ("qq", "netease", "migu"):
         if len(merged) >= limit:
             break
         for s in per_src[src]:
@@ -1487,7 +1509,7 @@ async function play(el){
                 print(f"[find] solo '{song.get('name')}' - {song.get('singer')} unplayable: {e}")
 
             # 第二轮：跨平台收集候选（独唱优先，合唱放最后）
-            platforms = (("netease", netease_search), ("qq", qq_search),
+            platforms = (("qq", qq_search), ("netease", netease_search),
                          ("migu", migu_search))
             pool = []
             seen_keys = {(s.get("source"), s.get("id")) for s in local_cands}

@@ -1,6 +1,7 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include <cmath>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
     (esp_ae_rate_cvt_cfg_t)                                  \
@@ -37,6 +38,26 @@
 
 #define TAG "AudioService"
 
+// 开机阶段 codec/PSRAM 可能尚未完全就绪，创建解码器偶发失败（ret -1）。
+// 失败后短暂重试，避免开机首条 E 日志和偶发「第一声没声」。
+static bool OpenOpusDecoderWithRetry(esp_opus_dec_cfg_t* cfg,
+                                     void** handle,
+                                     int attempts = 3, int delay_ms = 50) {
+    for (int i = 0; i < attempts; ++i) {
+        if (i > 0) {
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        }
+        *handle = nullptr;
+        esp_audio_err_t err = esp_opus_dec_open(
+            cfg, sizeof(esp_opus_dec_cfg_t), handle);
+        if (*handle != nullptr) {
+            return true;
+        }
+        ESP_LOGW(TAG, "esp_opus_dec_open failed (attempt %d/%d), ret=%d", i + 1, attempts, (int)err);
+    }
+    return false;
+}
+
 AudioService::AudioService() {
     event_group_ = xEventGroupCreate();
 }
@@ -66,17 +87,35 @@ void AudioService::Initialize(AudioCodec* codec) {
     codec_ = codec;
     codec_->Start();
 
-    esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(codec->output_sample_rate(), OPUS_FRAME_DURATION_MS);
-    auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
-    if (opus_decoder_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
+    // Opus 解码器只支持 8/12/16/24/48kHz；设备输出 32kHz 不是合法解码率，
+    // 直接用 output_sample_rate() 建解码器必然失败（ret -1）。
+    // 默认按服务器常用的 24kHz 建，收到实际包时由 SetDecodeSampleRate() 重建。
+    int default_decode_rate = codec->output_sample_rate();
+    if (default_decode_rate != 8000 && default_decode_rate != 12000 &&
+        default_decode_rate != 16000 && default_decode_rate != 24000 &&
+        default_decode_rate != 48000) {
+        default_decode_rate = 24000;
+    }
+    esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(default_decode_rate, OPUS_FRAME_DURATION_MS);
+    if (!OpenOpusDecoderWithRetry(&opus_dec_cfg, &opus_decoder_)) {
+        ESP_LOGE(TAG, "Failed to create audio decoder after retries");
     } else {
-        decoder_sample_rate_ = codec->output_sample_rate();
+        decoder_sample_rate_ = default_decode_rate;
         decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
         decoder_frame_size_ = decoder_sample_rate_ / 1000 * OPUS_FRAME_DURATION_MS;
+        // 默认解码率与设备输出率不同，先建好重采样器，避免首包同率时
+        // SetDecodeSampleRate() 提前返回而忘了建重采样器
+        if (decoder_sample_rate_ != codec->output_sample_rate()) {
+            esp_ae_rate_cvt_cfg_t output_resampler_cfg = RATE_CVT_CFG(
+                decoder_sample_rate_, codec->output_sample_rate(), ESP_AUDIO_MONO);
+            auto resampler_ret = esp_ae_rate_cvt_open(&output_resampler_cfg, &output_resampler_);
+            if (output_resampler_ == nullptr) {
+                ESP_LOGE(TAG, "Failed to create output resampler, error code: %d", resampler_ret);
+            }
+        }
     }
     esp_opus_enc_config_t opus_enc_cfg = AS_OPUS_ENC_CONFIG();
-    ret = esp_opus_enc_open(&opus_enc_cfg, sizeof(esp_opus_enc_config_t), &opus_encoder_);
+    auto ret = esp_opus_enc_open(&opus_enc_cfg, sizeof(esp_opus_enc_config_t), &opus_encoder_);
     if (opus_encoder_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create audio encoder, error code: %d", ret);
     } else {
@@ -107,6 +146,9 @@ void AudioService::Initialize(AudioCodec* codec) {
 
     audio_processor_->OnVadStateChange([this](bool speaking) {
         voice_detected_ = speaking;
+        if (speaking) {
+            last_voice_time_us_.store(esp_timer_get_time(), std::memory_order_relaxed);
+        }
         if (callbacks_.on_vad_change) {
             callbacks_.on_vad_change(speaking);
         }
@@ -147,11 +189,13 @@ void AudioService::Start() {
 
     /* Start the audio output task */
     // 2026-09-11: 钉到 Core 1（保留）
+    // 2026-10-24: 优先级 4 -> 19。Core 1 上 lwIP 任务是 18，聆听时上行/服务器
+    // 消息会抢占输出任务，导致输出帧晚 ~19ms（I2S DMA 欠载、音乐变差）。
     xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_, 1);
+    }, "audio_output", 2048 * 2, this, 19, &audio_output_task_handle_, 1);
 #else
     /* Start the audio input task */
     xTaskCreate([](void* arg) {
@@ -162,11 +206,12 @@ void AudioService::Start() {
 
     /* Start the audio output task */
     // 2026-09-11: 钉到 Core 1（保留）
+    // 2026-10-24: 优先级 4 -> 19（理由同上）
     xTaskCreatePinnedToCore([](void* arg) {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->AudioOutputTask();
         vTaskDelete(NULL);
-    }, "audio_output", 2048, this, 4, &audio_output_task_handle_, 1);
+    }, "audio_output", 2048, this, 19, &audio_output_task_handle_, 1);
 #endif
 
     /* Start the opus codec task */
@@ -347,6 +392,8 @@ void AudioService::AudioOutputTask() {
             MixBackgroundAudio(task->pcm);
             codec_->OutputData(task->pcm);
 
+            bg_out_have_last_ = false;  // TTS 帧不参与 bg 帧间隔统计
+
             /* Update the last output time */
             last_output_time_ = std::chrono::steady_clock::now();
             debug_statistics_.playback_count++;
@@ -383,8 +430,43 @@ void AudioService::AudioOutputTask() {
             static constexpr int kBgFrameSamples = 32000 * 20 / 1000;
             static std::vector<int16_t> bg_silence(kBgFrameSamples);
             std::fill(bg_silence.begin(), bg_silence.end(), 0);
+
+            // 诊断：把帧间隔拆成 A（等待/调度）+ 混音 + B（I2S 写入）
+            auto t_start = std::chrono::steady_clock::now();
+            if (bg_out_have_last_) {
+                auto gap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  t_start - bg_out_last_time_).count();
+                if (gap_ms > 30) {
+                    bg_late_frames_.fetch_add(1, std::memory_order_relaxed);
+                    if ((uint32_t)gap_ms > bg_max_gap_ms_.load(std::memory_order_relaxed)) {
+                        bg_max_gap_ms_.store((uint32_t)gap_ms, std::memory_order_relaxed);
+                    }
+                }
+                auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   t_start - bg_out_last_end_).count();
+                if (wait_ms > 30) {
+                    bg_wait_late_frames_.fetch_add(1, std::memory_order_relaxed);
+                    if ((uint32_t)wait_ms > bg_max_wait_ms_.load(std::memory_order_relaxed)) {
+                        bg_max_wait_ms_.store((uint32_t)wait_ms, std::memory_order_relaxed);
+                    }
+                }
+            }
+
             MixBackgroundAudio(bg_silence);
+            auto t_write_start = std::chrono::steady_clock::now();
             codec_->OutputData(bg_silence);
+            auto t_end = std::chrono::steady_clock::now();
+            auto write_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                t_end - t_write_start).count();
+            if (write_ms > 25) {
+                bg_write_late_frames_.fetch_add(1, std::memory_order_relaxed);
+                if ((uint32_t)write_ms > bg_max_write_ms_.load(std::memory_order_relaxed)) {
+                    bg_max_write_ms_.store((uint32_t)write_ms, std::memory_order_relaxed);
+                }
+            }
+            bg_out_last_time_ = t_start;
+            bg_out_last_end_ = t_end;
+            bg_out_have_last_ = true;
 
             /* Prevent power management from disabling output */
             last_output_time_ = std::chrono::steady_clock::now();
@@ -493,12 +575,15 @@ void AudioService::OpusCodecTask() {
                     packet->payload.assign(buf.data(), buf.data() + out.encoded_bytes);
 
                     if (task->type == kAudioTaskTypeEncodeToSendQueue) {
-                        {
-                            std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
-                            audio_send_queue_.push_back(std::move(packet));
-                        }
-                        if (callbacks_.on_send_queue_available) {
-                            callbacks_.on_send_queue_available();
+                        // 诊断：uplink_muted_ 为真时只丢弃上行包，麦克风采集/AFE 照常运行
+                        if (!uplink_muted_.load(std::memory_order_relaxed)) {
+                            {
+                                std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
+                                audio_send_queue_.push_back(std::move(packet));
+                            }
+                            if (callbacks_.on_send_queue_available) {
+                                callbacks_.on_send_queue_available();
+                            }
                         }
                     } else if (task->type == kAudioTaskTypeEncodeToTestingQueue) {
                         std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
@@ -530,9 +615,8 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
     }
     decoder_lock.unlock();
     esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
-    auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
-    if (opus_decoder_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
+    if (!OpenOpusDecoderWithRetry(&opus_dec_cfg, &opus_decoder_)) {
+        ESP_LOGE(TAG, "Failed to create audio decoder after retries");
         return;
     }
     decoder_sample_rate_ = sample_rate;
@@ -757,6 +841,15 @@ void AudioService::WaitForPlaybackQueueEmpty() {
         audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
 }
 
+
+void AudioService::SetUplinkMuted(bool muted) {
+    uplink_muted_.store(muted, std::memory_order_relaxed);
+    if (muted) {
+        // 立即丢掉已排队的上行包，让 OFF 窗口马上生效（不等队列排空）
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        audio_send_queue_.clear();
+    }
+}
 
 void AudioService::SetOutputMuted(bool muted) {
     ESP_LOGI(TAG, "SET-MUTED: %d (dq=%d pq=%d pushed=%d dropped=%d)", muted,
@@ -1086,6 +1179,7 @@ size_t AudioService::GetBgAudioFillLevel() {
 void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
     if (!bg_audio_active_ && bg_audio_gain_ <= 0.0f) return;
     std::lock_guard<std::mutex> lock(bg_audio_mutex_);
+    bg_mix_frames_.fetch_add(1, std::memory_order_relaxed);
     
     size_t available;
     if (bg_audio_write_pos_ >= bg_audio_read_pos_) {
@@ -1095,6 +1189,9 @@ void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
     }
     
     if (available == 0) {
+        // 诊断：这一帧完全没数据 → 欠载（听感上就是短暂塌陷）
+        bg_underrun_frames_.fetch_add(1, std::memory_order_relaxed);
+        bg_underrun_samples_.fetch_add(pcm.size(), std::memory_order_relaxed);
         // Still ramp gain toward target even with no data
         if (bg_audio_gain_ != bg_audio_target_gain_) {
             constexpr float kFadeStep = 0.7f / 4800.0f;  // 300ms ramp at 16kHz
@@ -1115,6 +1212,9 @@ void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
     constexpr float kFadeStep = 0.7f / 16000.0f;
     float gain = bg_audio_gain_;
     float target = bg_audio_target_gain_;
+
+    // 诊断：本窗口的音乐/输出峰值与硬钳位数量
+    uint32_t music_peak = 0, out_peak = 0, clip_count = 0;
     
     for (size_t i = 0; i < mix_count; i++) {
         if (gain < target) {
@@ -1125,17 +1225,40 @@ void AudioService::MixBackgroundAudio(std::vector<int16_t>& pcm) {
             if (gain < target) gain = target;
         }
         
-        int32_t mixed = (int32_t)pcm[i] + (int32_t)(bg_audio_ring_[bg_audio_read_pos_] * gain);
-        if (mixed > 32767) mixed = 32767;
-        else if (mixed < -32768) mixed = -32768;
+        int32_t music = (int32_t)(bg_audio_ring_[bg_audio_read_pos_] * gain);
+        uint32_t am = (uint32_t)(music >= 0 ? music : -music);
+        if (am > music_peak) music_peak = am;
+        int32_t mixed = (int32_t)pcm[i] + music;
+        if (mixed > 32767) {
+            mixed = 32767;
+            clip_count++;
+        } else if (mixed < -32768) {
+            mixed = -32768;
+            clip_count++;
+        }
+        uint32_t ao = (uint32_t)(mixed >= 0 ? mixed : -mixed);
+        if (ao > out_peak) out_peak = ao;
         pcm[i] = (int16_t)mixed;
         bg_audio_read_pos_ = (bg_audio_read_pos_ + 1) % BG_AUDIO_RING_SIZE;
+    }
+
+    if (clip_count > 0) {
+        bg_clip_samples_.fetch_add(clip_count, std::memory_order_relaxed);
+    }
+    if (music_peak > bg_music_peak_.load(std::memory_order_relaxed)) {
+        bg_music_peak_.store(music_peak, std::memory_order_relaxed);
+    }
+    if (out_peak > bg_out_peak_.load(std::memory_order_relaxed)) {
+        bg_out_peak_.store(out_peak, std::memory_order_relaxed);
     }
     
     // Underrun protection: if ring buffer ran dry mid-frame,
     // crossfade the last mixed sample to zero instead of a hard cut
     // (which would produce an audible click/pop)
     if (mix_count < pcm.size() && mix_count > 0) {
+        // 诊断：半帧欠载（本帧后半段无数据，交叉淡出掩盖）
+        bg_underrun_frames_.fetch_add(1, std::memory_order_relaxed);
+        bg_underrun_samples_.fetch_add(pcm.size() - mix_count, std::memory_order_relaxed);
         int16_t last_val = pcm[mix_count - 1];
         size_t remaining = pcm.size() - mix_count;
         for (size_t i = 0; i < remaining; i++) {

@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <deque>
+#include <atomic>
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
@@ -79,6 +80,7 @@ struct AudioServiceCallbacks {
     std::function<void(void)> on_send_queue_available;
     std::function<void(const std::string&)> on_wake_word_detected;
     std::function<void(bool)> on_vad_change;
+    std::function<void(int)> on_voice_energy;  // AEC 后麦克风能量超阈值（rms）
     std::function<void(void)> on_audio_testing_queue_full;
 };
 
@@ -114,7 +116,8 @@ public:
     void EncodeWakeWord();
     std::unique_ptr<AudioStreamPacket> PopWakeWordPacket();
     const std::string& GetLastWakeWord() const;
-    bool IsVoiceDetected() const { return voice_detected_; }
+    bool IsVoiceDetected() const { return voice_detected_.load(std::memory_order_relaxed); }
+    int64_t GetLastVoiceTimeUs() const { return last_voice_time_us_.load(std::memory_order_relaxed); }
     bool IsIdle();
     void WaitForPlaybackQueueEmpty();
     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
@@ -143,6 +146,39 @@ public:
     void SetBackgroundAudioGain(float gain);
     void ClearBackgroundAudio();
     size_t GetBgAudioFillLevel();
+    // 诊断：背景音乐混音/欠载统计（累积值，调用方自行做差分）
+    uint32_t GetBgMixFrames() const { return bg_mix_frames_.load(std::memory_order_relaxed); }
+    uint32_t GetBgUnderrunFrames() const { return bg_underrun_frames_.load(std::memory_order_relaxed); }
+    uint32_t GetBgUnderrunSamples() const { return bg_underrun_samples_.load(std::memory_order_relaxed); }
+    uint32_t GetBgLateFrames() const { return bg_late_frames_.load(std::memory_order_relaxed); }
+    uint32_t GetBgMaxGapMs() const { return bg_max_gap_ms_.load(std::memory_order_relaxed); }
+    uint32_t GetBgWaitLateFrames() const { return bg_wait_late_frames_.load(std::memory_order_relaxed); }
+    uint32_t GetBgMaxWaitMs() const { return bg_max_wait_ms_.load(std::memory_order_relaxed); }
+    uint32_t GetBgWriteLateFrames() const { return bg_write_late_frames_.load(std::memory_order_relaxed); }
+    uint32_t GetBgMaxWriteMs() const { return bg_max_write_ms_.load(std::memory_order_relaxed); }
+    void SetUplinkMuted(bool muted);
+    bool IsUplinkMuted() const { return uplink_muted_.load(std::memory_order_relaxed); }
+
+    uint32_t GetBgClipSamples() const { return bg_clip_samples_.load(std::memory_order_relaxed); }
+    uint32_t GetBgMusicPeak() const { return bg_music_peak_.load(std::memory_order_relaxed); }
+    uint32_t GetBgOutPeak() const { return bg_out_peak_.load(std::memory_order_relaxed); }
+    // 每个 STAT 窗口结束后清零，保证下一行只统计该窗口
+    void ResetBgWindowStats() {
+        bg_clip_samples_.store(0, std::memory_order_relaxed);
+        bg_music_peak_.store(0, std::memory_order_relaxed);
+        bg_out_peak_.store(0, std::memory_order_relaxed);
+    }
+    void ResetBgAudioStats() {
+        bg_mix_frames_.store(0, std::memory_order_relaxed);
+        bg_underrun_frames_.store(0, std::memory_order_relaxed);
+        bg_underrun_samples_.store(0, std::memory_order_relaxed);
+        bg_late_frames_.store(0, std::memory_order_relaxed);
+        bg_max_gap_ms_.store(0, std::memory_order_relaxed);
+        bg_wait_late_frames_.store(0, std::memory_order_relaxed);
+        bg_max_wait_ms_.store(0, std::memory_order_relaxed);
+        bg_write_late_frames_.store(0, std::memory_order_relaxed);
+        bg_max_write_ms_.store(0, std::memory_order_relaxed);
+    }
     bool IsBgAudioActive() { return bg_audio_active_ && bg_audio_drain_enabled_; }
     void EnableBgAudioDrain(bool enable);
     void SetBgAudioActive(bool active) { bg_audio_active_ = active; }
@@ -216,7 +252,9 @@ private:
 
     bool wake_word_initialized_ = false;
     bool audio_processor_initialized_ = false;
-    bool voice_detected_ = false;
+    std::atomic<bool> voice_detected_{false};
+    std::atomic<int64_t> last_voice_time_us_{0};  // 最近一次检测到人声的时间
+    std::atomic<int64_t> last_energy_cb_us_{0};   // 能量回调限频
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
     bool output_muted_ = false;
@@ -249,6 +287,24 @@ private:
     bool bg_audio_active_ = false;
     bool bg_audio_drain_enabled_ = false;
     std::mutex bg_audio_mutex_;
+
+    // 诊断：背景音乐欠载计数（音频输出任务写，其他任务读）
+    std::atomic<uint32_t> bg_mix_frames_{0};
+    std::atomic<uint32_t> bg_underrun_frames_{0};
+    std::atomic<uint32_t> bg_underrun_samples_{0};
+    std::atomic<uint32_t> bg_late_frames_{0};   // 输出帧间隔 >30ms 的次数（调度抖动）
+    std::atomic<uint32_t> bg_max_gap_ms_{0};
+    std::atomic<uint32_t> bg_wait_late_frames_{0};  // A：上一帧写完 -> 本帧开始 >30ms
+    std::atomic<uint32_t> bg_max_wait_ms_{0};
+    std::atomic<uint32_t> bg_write_late_frames_{0}; // B：OutputData 内部 >25ms
+    std::atomic<uint32_t> bg_max_write_ms_{0};
+    std::atomic<bool> uplink_muted_{false};          // 诊断：只停上行发送，采集/AFE 照常
+    std::atomic<uint32_t> bg_clip_samples_{0};       // 混音后被硬钳位的样本数
+    std::atomic<uint32_t> bg_music_peak_{0};        // 本窗口音乐（乘增益后）最大绝对值
+    std::atomic<uint32_t> bg_out_peak_{0};          // 本窗口混音后最大绝对值
+    std::chrono::steady_clock::time_point bg_out_last_time_;
+    std::chrono::steady_clock::time_point bg_out_last_end_;
+    bool bg_out_have_last_ = false;
 };
 
 #endif
