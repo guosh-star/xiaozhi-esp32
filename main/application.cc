@@ -657,28 +657,12 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         // 音乐播放中不自动进 listening，避免对白被当成用户指令
                         if (kMusicWakeGate && audio_service_.IsBgAudioActive()) {
+                            // 统一固定 7 秒窗口，每次任务完成都重新计时（不限次数）
                             int64_t now_us = esp_timer_get_time();
-                            if (now_us < listen_hold_until_us_) {
-                                // 唤醒窗口内：AI 回复完再补 8 秒给用户说话
-                                if (listen_hold_until_us_ < now_us + 8LL * 1000 * 1000) {
-                                    listen_hold_until_us_ = now_us + 8LL * 1000 * 1000;
-                                }
-                                ESP_LOGI(TAG, "MUSIC-GATE: inside wake hold, stay listening (+8s after reply)");
-                                tts_restart_listening_ = true;
-                                SetDeviceState(kDeviceStateListening);
-                            } else if (!music_hold_granted_) {
-                                // 5 秒窗口每次音乐只给一次，避免“对白触发 → 回复 → 再开窗口”循环
-                                music_hold_granted_ = true;
-                                if (listen_hold_until_us_ < now_us + 5LL * 1000 * 1000) {
-                                    listen_hold_until_us_ = now_us + 5LL * 1000 * 1000;
-                                }
-                                ESP_LOGI(TAG, "MUSIC-GATE: grant 5s listening window (once per song)");
-                                tts_restart_listening_ = true;
-                                SetDeviceState(kDeviceStateListening);
-                            } else {
-                                ESP_LOGI(TAG, "MUSIC-GATE: music playing, back to idle (wake word required)");
-                                SetDeviceState(kDeviceStateIdle);
-                            }
+                            listen_hold_until_us_ = now_us + 7LL * 1000 * 1000;
+                            ESP_LOGI(TAG, "MUSIC-GATE: task done, +7s listening");
+                            tts_restart_listening_ = true;
+                            SetDeviceState(kDeviceStateListening);
                         } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
@@ -1061,8 +1045,8 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
-    // 唤醒后至少保持 10 秒 listening，避免用户还没开口就被退回 idle
-    listen_hold_until_us_ = esp_timer_get_time() + 10LL * 1000 * 1000;
+    // 唤醒后开启 7 秒窗口：每完成一个任务后从那一刻重新计时
+    listen_hold_until_us_ = esp_timer_get_time() + 7LL * 1000 * 1000;
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
@@ -1106,6 +1090,7 @@ void Application::HandleStateChangedEvent() {
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+            // 会话结束：门控保持状态复位
             // Clear listening diagnostics to prevent stale timeout on next listen
             listening_start_us_ = 0;
             listening_diag_logged_ = false;
@@ -1363,9 +1348,8 @@ void Application::NotifyMusicPlaying() {
         ESP_LOGI(TAG, "MUSIC-LISTEN: music started, state=%d", (int)GetDeviceState());
         // 音乐如果是在 idle 状态启动的（未经 TTS），门控开启时保持 idle，等唤醒词
         if (kMusicWakeGate) {
-            music_hold_granted_ = false;
-            listen_hold_until_us_ = esp_timer_get_time() + 5LL * 1000 * 1000;
-            ESP_LOGI(TAG, "MUSIC-GATE: music started, stay idle (wake word required)");
+            listen_hold_until_us_ = esp_timer_get_time() + 7LL * 1000 * 1000;
+            ESP_LOGI(TAG, "MUSIC-GATE: music started, 7s window");
         } else if (GetDeviceState() == kDeviceStateIdle) {
             tts_restart_listening_ = true;
             SetListeningMode(kListeningModeAutoStop);

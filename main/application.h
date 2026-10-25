@@ -149,7 +149,6 @@ private:
     bool music_prompt_pending_ = false;      // 歌末提问已发出，等待回答
     int64_t music_prompt_deadline_us_ = 0;   // 等待回答的截止时间（us）
     int64_t listen_hold_until_us_ = 0;       // 播放音乐时的 listening 保持截止时间（us）
-    bool music_hold_granted_ = false;        // 5 秒 listening 窗口是否已发放（每次音乐开始只给一次）
     bool music_reopen_in_progress_ = false;  // 正在重开音乐会话
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
