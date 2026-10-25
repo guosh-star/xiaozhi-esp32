@@ -24,6 +24,9 @@
 
 #define TAG "Application"
 
+// 播放音乐时要求唤醒词门控（true=开启：音乐播放中不自动进 listening，必须先喊唤醒词）
+static constexpr bool kMusicWakeGate = true;
+
 // 本地提示音（CMake EMBED_FILES 嵌入）
 extern const uint8_t more_music_pcm_start[] asm("_binary_more_music_pcm_start");
 extern const uint8_t more_music_pcm_end[] asm("_binary_more_music_pcm_end");
@@ -66,6 +69,14 @@ Application::~Application() {
 }
 
 bool Application::SetDeviceState(DeviceState state) {
+    // 音乐播放中：超出保持窗口的 listening 请求一律拒绝，强制回 idle
+    // （服务器也会主动下发 listening 指令，必须在状态机入口拦截）
+    if (kMusicWakeGate && state == kDeviceStateListening &&
+        music_playing_ && audio_service_.IsBgAudioActive() &&
+        esp_timer_get_time() >= listen_hold_until_us_) {
+        ESP_LOGI(TAG, "MUSIC-GATE: reject listening (hold expired), go idle");
+        state = kDeviceStateIdle;
+    }
     return state_machine_.TransitionTo(state);
 }
 
@@ -303,6 +314,14 @@ void Application::Run() {
             // 在线音乐播放期间：掉回 idle 就重新进入聆听（必要时重开会话）
             if (music_playing_ && GetDeviceState() == kDeviceStateIdle) {
                 EnsureMusicListening();
+            }
+
+            // 门控：音乐播放中，超过保持窗口就强制回 idle（不依赖当前是否已 idle）
+            if (kMusicWakeGate && music_playing_ &&
+                GetDeviceState() == kDeviceStateListening &&
+                esp_timer_get_time() >= listen_hold_until_us_) {
+                ESP_LOGI(TAG, "MUSIC-GATE: hold expired, back to idle");
+                SetDeviceState(kDeviceStateIdle);
             }
 
             // 歌末提问超时（15 秒无回答）→ 说“拜拜” → 小鸟回退关门 → 退出
@@ -636,7 +655,31 @@ void Application::InitializeProtocol() {
                 Schedule([this]() {
                     ESP_LOGI(TAG, "TTS-STOP scheduled, state=%d", (int)GetDeviceState());
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        // 音乐播放中不自动进 listening，避免对白被当成用户指令
+                        if (kMusicWakeGate && audio_service_.IsBgAudioActive()) {
+                            int64_t now_us = esp_timer_get_time();
+                            if (now_us < listen_hold_until_us_) {
+                                // 唤醒窗口内：AI 回复完再补 8 秒给用户说话
+                                if (listen_hold_until_us_ < now_us + 8LL * 1000 * 1000) {
+                                    listen_hold_until_us_ = now_us + 8LL * 1000 * 1000;
+                                }
+                                ESP_LOGI(TAG, "MUSIC-GATE: inside wake hold, stay listening (+8s after reply)");
+                                tts_restart_listening_ = true;
+                                SetDeviceState(kDeviceStateListening);
+                            } else if (!music_hold_granted_) {
+                                // 5 秒窗口每次音乐只给一次，避免“对白触发 → 回复 → 再开窗口”循环
+                                music_hold_granted_ = true;
+                                if (listen_hold_until_us_ < now_us + 5LL * 1000 * 1000) {
+                                    listen_hold_until_us_ = now_us + 5LL * 1000 * 1000;
+                                }
+                                ESP_LOGI(TAG, "MUSIC-GATE: grant 5s listening window (once per song)");
+                                tts_restart_listening_ = true;
+                                SetDeviceState(kDeviceStateListening);
+                            } else {
+                                ESP_LOGI(TAG, "MUSIC-GATE: music playing, back to idle (wake word required)");
+                                SetDeviceState(kDeviceStateIdle);
+                            }
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             tts_restart_listening_ = true;
@@ -1018,6 +1061,8 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
+    // 唤醒后至少保持 10 秒 listening，避免用户还没开口就被退回 idle
+    listen_hold_until_us_ = esp_timer_get_time() + 10LL * 1000 * 1000;
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
@@ -1316,8 +1361,12 @@ void Application::NotifyMusicPlaying() {
         music_prompt_pending_ = false;
         music_prompt_deadline_us_ = 0;
         ESP_LOGI(TAG, "MUSIC-LISTEN: music started, state=%d", (int)GetDeviceState());
-        // 音乐如果是在 idle 状态启动的（未经 TTS），主动进入聆听并保持会话
-        if (GetDeviceState() == kDeviceStateIdle) {
+        // 音乐如果是在 idle 状态启动的（未经 TTS），门控开启时保持 idle，等唤醒词
+        if (kMusicWakeGate) {
+            music_hold_granted_ = false;
+            listen_hold_until_us_ = esp_timer_get_time() + 5LL * 1000 * 1000;
+            ESP_LOGI(TAG, "MUSIC-GATE: music started, stay idle (wake word required)");
+        } else if (GetDeviceState() == kDeviceStateIdle) {
             tts_restart_listening_ = true;
             SetListeningMode(kListeningModeAutoStop);
             SetDeviceState(kDeviceStateListening);
@@ -1335,6 +1384,9 @@ void Application::NotifyMusicStopped() {
 }
 
 void Application::EnsureMusicListening() {
+    if (kMusicWakeGate) {
+        return;  // 门控开启：不主动进 listening（到期回 idle 由主循环检查）
+    }
     if (!music_playing_) {
         return;
     }

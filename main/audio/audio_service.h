@@ -259,6 +259,13 @@ private:
     bool audio_input_need_warmup_ = false;
     bool output_muted_ = false;
 
+    // AEC 效果统计（前后电平对比，估算 ERLE）
+    std::atomic<uint64_t> aec_in_sq_{0};
+    std::atomic<uint64_t> aec_out_sq_{0};
+    std::atomic<uint32_t> aec_in_n_{0};
+    std::atomic<uint32_t> aec_out_n_{0};
+    uint32_t aec_stat_frames_ = 0;
+
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
     std::chrono::steady_clock::time_point last_output_time_;

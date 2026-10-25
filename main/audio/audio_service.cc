@@ -141,6 +141,13 @@ void AudioService::Initialize(AudioCodec* codec) {
 #endif
 
     audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
+        // AEC 后电平统计（用于估算 ERLE）
+        uint64_t sq = 0;
+        for (auto s : data) {
+            sq += (uint64_t)((int32_t)s * (int32_t)s);
+        }
+        aec_out_sq_.fetch_add(sq, std::memory_order_relaxed);
+        aec_out_n_.fetch_add((uint32_t)data.size(), std::memory_order_relaxed);
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
 
@@ -331,6 +338,34 @@ void AudioService::AudioInputTask() {
                 for (auto& s : data) {
                     int32_t v = (int32_t)s * 2;
                     s = (v > 32767) ? 32767 : (v < -32768) ? -32768 : (int16_t)v;
+                }
+                // AEC 前后电平统计：每秒打印一行 ERLE（取麦克风声道）
+                {
+                    const int channels = codec_->input_channels() > 0 ? codec_->input_channels() : 1;
+                    const size_t frames = data.size() / channels;
+                    uint64_t sq = 0;
+                    for (size_t i = 0; i < frames; i++) {
+                        int32_t v = data[i * channels];
+                        sq += (uint64_t)((int32_t)v * v);
+                    }
+                    aec_in_sq_.fetch_add(sq, std::memory_order_relaxed);
+                    aec_in_n_.fetch_add((uint32_t)frames, std::memory_order_relaxed);
+                    aec_stat_frames_ += (uint32_t)frames;
+                    if (aec_stat_frames_ >= 16000) {
+                        aec_stat_frames_ = 0;
+                        uint64_t isq = aec_in_sq_.exchange(0);
+                        uint32_t in_n = aec_in_n_.exchange(0);
+                        uint64_t osq = aec_out_sq_.exchange(0);
+                        uint32_t out_n = aec_out_n_.exchange(0);
+                        if (in_n > 0 && out_n > 0) {
+                            float in_rms = sqrtf((float)isq / (float)in_n);
+                            // 扣除 AFE 输出端的 1.5x 数字增益（AFE_DIGITAL_GAIN）
+                            float out_rms = sqrtf((float)osq / (float)out_n) / 1.5f;
+                            float erle = (out_rms > 1.0f) ? 20.0f * log10f(in_rms / out_rms) : 0.0f;
+                            ESP_LOGW(TAG, "AEC ERLE: in_rms=%.0f out_rms=%.0f erle=%.1f dB",
+                                     in_rms, out_rms, erle);
+                        }
+                    }
                 }
                 if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
                     wake_word_->Feed(data);
