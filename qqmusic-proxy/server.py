@@ -1133,6 +1133,82 @@ def _cache_put(song_id, data):
 # HTTP Service
 # ===========================================================================
 
+def qq_cookie_status(live=False):
+    """QQ 音乐账号/cookie 有效性 + 会员可用性（供设备 MCP 查询）。"""
+    out = {"ok": True, "server_time": time.strftime("%Y-%m-%d %H:%M:%S")}
+    try:
+        cookie = _qq_cookie()
+    except Exception as e:
+        out.update({"ok": False, "cookie_valid": False, "status": "no_cookie",
+                    "message": "没有读到 cookie 文件: %s" % e})
+        return out
+    if not cookie:
+        out.update({"cookie_valid": False, "status": "no_cookie",
+                    "message": "cookie 文件为空，需要重新扫码登录"})
+        return out
+
+    c = {}
+    for part in cookie.split(";"):
+        i = part.find("=")
+        if i > 0:
+            c[part[:i].strip()] = part[i + 1:].strip()
+
+    key = c.get("qm_keyst") or c.get("qqmusic_key") or ""
+    cre = str(c.get("psrf_musickey_createtime") or "0")
+    has_refresh = bool(c.get("wxrefresh_token") or c.get("psrf_qqrefresh_token"))
+    try:
+        login_type = int(c.get("tmeLoginType") or 0)
+    except Exception:
+        login_type = 0
+
+    out["login_type"] = login_type
+    out["has_key"] = bool(key)
+    out["has_refresh_token"] = has_refresh
+    out["account"] = ("微信登录" if login_type == 1 else "QQ登录" if login_type == 2 else "未知登录方式")
+
+    if not key or not cre.isdigit() or int(cre) <= 0:
+        out.update({"cookie_valid": False, "status": "invalid",
+                    "message": "cookie 里没有有效音乐 key，需要重新扫码登录"})
+        return out
+
+    cre_i = int(cre)
+    exp_i = cre_i + 3 * 86400          # qm_keyst 有效期约 3 天
+    now = time.time()
+    left_h = (exp_i - now) / 3600.0
+    out["key_issued_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cre_i))
+    out["key_expires_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp_i))
+    out["key_age_hours"] = round((now - cre_i) / 3600.0, 1)
+    out["key_hours_left"] = round(left_h, 1)
+    out["last_refresh_at"] = out["key_issued_at"]
+
+    if left_h <= 0:
+        out["cookie_valid"] = False
+        out["status"] = "expired"
+        out["message"] = "音乐 key 已过期（%s 签发，约 3 天有效），需要重新扫码登录" % out["key_issued_at"]
+    elif left_h <= 12:
+        out["cookie_valid"] = True
+        out["status"] = "expiring_soon"
+        out["message"] = "音乐 key 即将到期，剩余约 %.1f 小时，等待自动续期" % left_h
+    else:
+        out["cookie_valid"] = True
+        out["status"] = "valid"
+        out["message"] = "音乐账号正常：key 有效，剩余约 %.1f 小时（%s 签发），自动续期正常" % (
+            left_h, out["key_issued_at"])
+
+    if live:
+        try:
+            songs = qq_search("稻香", 1)
+            mid = songs[0].get("mid") if songs else ""
+            url = qq_play_url(mid) if mid else ""
+            out["live_playable"] = bool(url)
+            out["live_note"] = "实测可取播放地址" if url else "实测取不到播放地址（可能是版权/会员限制）"
+        except Exception as e:
+            out["live_playable"] = False
+            out["live_note"] = "实测失败: %s" % e
+
+    return out
+
+
 class MusicProxyHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
@@ -1162,6 +1238,8 @@ class MusicProxyHandler(http.server.BaseHTTPRequestHandler):
                 self._handle_opus(params)
             elif path == "/status":
                 self._json({"status": "ok", "version": "3.0"})
+            elif path == "/qq_status":
+                self._json(qq_cookie_status(params.get("live") == "1"))
             elif path == "/cache-info":
                 self._cache_info()
             else:

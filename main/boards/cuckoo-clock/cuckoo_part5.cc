@@ -732,6 +732,96 @@ std::string CuckooStateMachine::CheckMultiArtist(const char* url_or_path) {
 }
 
 /**
+ * @brief 查询在线音乐账号状态（会员/订阅/cookie 是否有效）
+ * 走代理 /qq_status?live=1，把服务器生成的 JSON 摘要原样返回给 AI
+ * @return JSON 字符串，含 status/cookie_valid/message 等字段
+ */
+std::string CuckooStateMachine::GetMusicAccountStatus() {
+    if (music_proxy_host_.empty()) {
+        return std::string("{\"status\":\"error\",\"message\":\"音乐代理未配置，无法查询账号状态\"}");
+    }
+
+    struct hostent* he = gethostbyname(music_proxy_host_.c_str());
+    if (!he) {
+        return std::string("{\"status\":\"error\",\"message\":\"代理域名解析失败\"}");
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(music_proxy_port_);
+    addr.sin_addr.s_addr = *(uint32_t*)he->h_addr;
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return std::string("{\"status\":\"error\",\"message\":\"socket 创建失败\"}");
+    }
+
+    // live=1 时服务器会现场搜歌取播放地址，给足 15 秒
+    int timeout_ms = 15000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        closesocket(sock);
+        return std::string("{\"status\":\"error\",\"message\":\"连不上音乐代理服务器\"}");
+    }
+
+    const char* path = "/qq_status?live=1";
+    char req[512];
+    snprintf(req, sizeof(req),
+        "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
+        path, music_proxy_host_.c_str(), music_proxy_port_);
+    send(sock, req, strlen(req), 0);
+
+    // 读响应头
+    char header_buf[1024] = {};
+    int hdr_pos = 0;
+    while (hdr_pos < (int)sizeof(header_buf) - 1) {
+        int r = recv(sock, header_buf + hdr_pos, 1, 0);
+        if (r <= 0) break;
+        hdr_pos += r;
+        if (hdr_pos >= 4 && memcmp(header_buf + hdr_pos - 4, "\r\n\r\n", 4) == 0) break;
+    }
+    header_buf[hdr_pos] = '\0';
+
+    int status = 0;
+    sscanf(header_buf, "HTTP/1.%*d %d", &status);
+
+    int content_len = 0;
+    const char* cl = strstr(header_buf, "Content-Length:");
+    if (!cl) cl = strstr(header_buf, "content-length:");
+    if (cl) sscanf(cl + 15, "%d", &content_len);
+    if (content_len <= 0 || content_len > 4096) {
+        closesocket(sock);
+        return std::string("{\"status\":\"error\",\"message\":\"代理返回内容异常\"}");
+    }
+
+    char* resp = (char*)calloc(1, content_len + 1);
+    if (!resp) {
+        closesocket(sock);
+        return std::string("{\"status\":\"error\",\"message\":\"内存不足\"}");
+    }
+    int total = 0;
+    while (total < content_len) {
+        int n = recv(sock, resp + total, content_len - total, 0);
+        if (n <= 0) break;
+        total += n;
+    }
+    closesocket(sock);
+    resp[total] = '\0';
+
+    if (status != 200 || total <= 0 || resp[0] != '{') {
+        free(resp);
+        return std::string("{\"status\":\"error\",\"message\":\"账号状态查询失败\"}");
+    }
+
+    ESP_LOGI(TAG, "MusicAccount: status=%d bytes=%d", status, total);
+    std::string result(resp);
+    free(resp);
+    return result;
+}
+
+/**
  * @brief 播放在线音乐（走 PlayOpus：/opus 或 /pcm 双路径）
  * @param url_or_path 完整 URL 或代理路径（/pcm?q=歌名 等）
  * @return >=0 成功；-1 播放器未初始化；-10 代理未配置
@@ -879,14 +969,14 @@ void CuckooTools::RegisterAll() {
                 return std::string("{\"status\": \"started\", \"hour\": " + std::to_string(hour) + "}");
             });
     }
-    // === LED 闪烁 (2026-07-29) ===
-    mcp.AddTool("cuckoo.flash_leds",
-        "让两串LED灯串交替闪烁（300ms间隔）。触发词: 闪灯/灯闪起来/灯光闪烁。"
-        "关灯用 cuckoo.set_led state=0。",
+    // === 在线音乐账号状态 (2026-10-25 新增；原 cuckoo.flash_leds 已并入 cuckoo.set_led state=2) ===
+    mcp.AddTool("cuckoo.music_account",
+        "查询在线音乐账号状态：会员/订阅是否到期、cookie 是否有效、音乐 key 还剩多久。"
+        "触发词：会员到期了吗/订阅还有效吗/cookie过期没/账号还能用吗/还能听歌吗。"
+        "调用后按返回 JSON 里的 message 直接回答用户，不要自己编造日期。",
         PropertyList(),
         [this](const PropertyList& props) -> ReturnValue {
-            state_machine_->StartFlashLeds();
-            return std::string("{\"status\": \"leds_flashing\"}");
+            return state_machine_->GetMusicAccountStatus();
         });
 
     {
@@ -1018,12 +1108,16 @@ void CuckooTools::RegisterAll() {
 
     {
         PropertyList pl;
-        pl.AddProperty(Property("state", kPropertyTypeInteger, 0, 1));
+        pl.AddProperty(Property("state", kPropertyTypeInteger, 0, 2));
         mcp.AddTool("cuckoo.set_led",
-            "Turn both LED strings on (state=1) or off (state=0).",
+            "两串LED灯串控制：state=0 关灯；state=1 常亮；state=2 交替闪烁(300ms，触发词 闪灯/灯闪起来/灯光闪烁)。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 int state = props["state"].value<int>();
+                if (state >= 2) {                 // 交替闪烁（原 cuckoo.flash_leds）
+                    state_machine_->StartFlashLeds();
+                    return std::string("{\"status\":\"ok\",\"led\":\"flashing\"}");
+                }
                 int v = (state != 0) ? 1 : 0;
                 state_machine_->StopFlashLeds();  // stop flashing
                 gpio_set_level(LED_A_GPIO, v);

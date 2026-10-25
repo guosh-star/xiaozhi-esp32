@@ -472,6 +472,8 @@ public:
     // 在线音乐
     int PlayOnlineMusic(const char* url);
     std::string CheckMultiArtist(const char* url_or_path);
+    /// 查询在线音乐账号状态（会员/订阅/cookie 是否有效），返回服务端 JSON 摘要
+    std::string GetMusicAccountStatus();
 
     // 粤语查询（通过代理的 /cantonese 端点同步查询）
     std::string CantoneseLookup(const char* word);
