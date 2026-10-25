@@ -941,6 +941,28 @@ def _song_matches(wanted, found):
     return a in b or b in a
 
 
+# 对白/录音类版本（电影录音、配音片段等）会让人声被当成语音指令，直接排除
+_SPOKEN_WORD_RE = _re.compile(
+    r"(对白|台词|配音|解说|朗诵|广播剧|访谈|新闻|片花|实况录音|现场实录|"
+    r"录音剪辑|电影录音|原声对白|录音片段|片段剪辑)", _re.I)
+
+
+def _is_spoken_word(song):
+    text = (song.get("name") or "") + " " + (song.get("singer") or "")
+    return bool(_SPOKEN_WORD_RE.search(text))
+
+
+def _longer_first(songs):
+    """只做"剔除对白/录音类版本"，保持原有相关性排序。
+
+    历史教训（2026-10-25）：按时长排序会优先选到网友剪辑的电影录音版，
+    里面全是人物对白，设备 ASR 会把对白当成用户指令，因此不再按时长重排。
+    真正需要修的是"硬切收尾"，已由 _decide_fade() 的 2 秒淡出处理。
+    """
+    items = [s for s in songs if not _is_spoken_word(s)]
+    return items if items else list(songs)
+
+
 def _is_solo(song, artist):
     """判断是否为该歌手的独唱版本（合唱/对唱优先度更低）"""
     if song.get("source") == "bilibili":
@@ -992,6 +1014,54 @@ def _probe_media_duration(url, headers=None, timeout=25):
         return float(out) if out else 0.0
     except Exception:
         return 0.0
+
+
+# 硬切淡出：只对"片尾电平仍然很高"的歌曲补 2 秒淡出
+_fade_cache = {}
+_FADE_THRESHOLD_DB = -25.0   # 末尾 2 秒平均电平高于此值 => 判定为硬切
+_FADE_SECONDS = 2.0
+
+
+def _probe_tail_db(url, seconds=2.0, timeout=20):
+    """解码最后 N 秒并返回平均电平（dBFS）；失败返回 None"""
+    try:
+        cmd = ["/usr/bin/ffmpeg", "-nostdin", "-hide_banner",
+               "-sseof", "-%d" % int(seconds), "-i", url,
+               "-t", str(seconds), "-af", "volumedetect", "-f", "null", "-"]
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        err = proc.stderr.decode(errors="replace")
+        for line in err.splitlines():
+            if "mean_volume:" in line:
+                return float(line.split("mean_volume:")[1].split("dB")[0].strip())
+    except Exception:
+        return None
+    return None
+
+
+def _decide_fade(song, url):
+    """返回 (是否需要淡出, 歌曲时长秒)。结果按歌曲缓存 15 分钟。"""
+    key = str(song.get("mid") or song.get("id") or song.get("name") or url)[:120]
+    now = time.time()
+    hit = _fade_cache.get(key)
+    if hit and now - hit[0] < 900:
+        return hit[1], hit[2]
+    dur = float(song.get("duration") or 0)
+    if dur <= 0:
+        dur = _probe_media_duration(url)
+    need = False
+    if dur and dur > 10:
+        tail_db = _probe_tail_db(url, _FADE_SECONDS)
+        need = (tail_db is not None and tail_db > _FADE_THRESHOLD_DB)
+        print("[fade] %s - %s: dur=%.0fs tail=%.1f dBFS -> %s" % (
+            song.get("name"), song.get("singer"), dur,
+            tail_db if tail_db is not None else 0.0,
+            ("fade %.1fs" % _FADE_SECONDS) if need else "no fade"))
+    _fade_cache[key] = (now, need, dur)
+    if len(_fade_cache) > 200:
+        for k, _v in sorted(_fade_cache.items(), key=lambda kv: kv[1][0])[:50]:
+            _fade_cache.pop(k, None)
+    return need, dur
+
 
 
 def unified_search(keyword, limit=10):
@@ -1762,7 +1832,7 @@ async function play(el){
             print(f"[find] {keyword}: {len(songs)} results, artist-match {len(local_cands)}")
 
             # 第一轮：本次搜索结果里的独唱版本（最快路径）
-            for song in [s for s in local_cands if _is_solo(s, artist)][:4]:
+            for song in _longer_first([s for s in local_cands if _is_solo(s, artist)])[:4]:
                 url, e = _try_song(song)
                 if url:
                     return _hit(song, url)
@@ -1815,7 +1885,7 @@ async function play(el){
                     pool.append(s)
 
             # 2.1 跨平台独唱
-            for song in [s for s in pool if _is_solo(s, artist)][:6]:
+            for song in _longer_first([s for s in pool if _is_solo(s, artist)])[:6]:
                 url, e = _try_song(song)
                 if url:
                     print(f"[find] cross-platform solo hit: [{song.get('source')}] "
@@ -1840,7 +1910,7 @@ async function play(el){
             except Exception as e:
                 print(f"[find] bilibili retry failed: {e}")
 
-            for song in [s for s in pool if s.get("source") == "bilibili" and _is_solo(s, artist)][:4]:
+            for song in _longer_first([s for s in pool if s.get("source") == "bilibili" and _is_solo(s, artist)])[:4]:
                 url, e = _try_song(song)
                 if url:
                     print(f"[find] bilibili solo hit: {song.get('name')} - {song.get('singer')}")
@@ -1848,7 +1918,7 @@ async function play(el){
                 print(f"[find] bilibili solo unplayable: {e}")
 
             # 2.3 确实没有独唱，才退回合唱/多歌手版本
-            for song in [s for s in local_cands + pool if not _is_solo(s, artist)][:6]:
+            for song in _longer_first([s for s in local_cands + pool if not _is_solo(s, artist)])[:6]:
                 url, e = _try_song(song)
                 if url:
                     print(f"[find] duet fallback: [{song.get('source')}] "
@@ -1860,7 +1930,7 @@ async function play(el){
             return None, None
 
         # 3) 未指定歌手：继续试其余结果
-        for song in songs[:5]:
+        for song in _longer_first(songs[:5]):
             url, e = _try_song(song)
             if url:
                 return _hit(song, url)
@@ -1998,6 +2068,17 @@ async function play(el){
             if not os.path.exists(ffmpeg_path):
                 ffmpeg_path = "ffmpeg"
 
+            # 硬切检测：末尾电平仍高 => 补 2 秒淡出（只影响这类歌）
+            fade_filter = ""
+            try:
+                _need_fade, _song_dur = _decide_fade(song_info, audio_url)
+                if _need_fade and _song_dur > _FADE_SECONDS + 1:
+                    _fade_st = max(0.0, _song_dur - _FADE_SECONDS)
+                    fade_filter = ",afade=t=out:st=%.2f:d=%.1f" % (_fade_st, _FADE_SECONDS)
+                    print("[fade] applied: st=%.2f d=%.1f" % (_fade_st, _FADE_SECONDS))
+            except Exception as _fe:
+                print("[fade] skipped:", _fe)
+
             RATE_LIMIT = 262144  # 256KB/s = 4x realtime for 32kHz mono s16le
             SUB_CHUNK = 2048    # 限速粒度
 
@@ -2038,7 +2119,7 @@ async function play(el){
                 if fmt == "pcm":
                     return [ffmpeg_path, "-nostdin", "-loglevel", "error"] + net_opts + [
                         "-i", inp,
-                        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=32000:resampler=swr:osf=s16:dither_method=none",
+                        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=32000:resampler=swr:osf=s16:dither_method=none" + fade_filter,
                         "-c:a", "pcm_s16le",
                         "-f", "s16le",
                         "-ar", "32000",
@@ -2048,6 +2129,7 @@ async function play(el){
                 else:
                     return [ffmpeg_path, "-nostdin", "-loglevel", "error"] + net_opts + [
                         "-i", inp,
+                    ] + (["-af", fade_filter[1:]] if fade_filter else []) + [
                         "-c:a", "libopus",
                         "-b:a", "32k",
                         "-ar", "48000",
@@ -2203,8 +2285,14 @@ async function play(el){
 def main():
     threading.Thread(target=qq_cookie_refresh_loop, daemon=True).start()
 
-    server = socketserver.ThreadingTCPServer(("0.0.0.0", PORT), MusicProxyHandler)
-    server.allow_reuse_address = True
+    # 注意：allow_reuse_address 必须在 bind 之前生效。
+    # 原来在构造函数之后赋值是无效的（构造时就已 bind），
+    # 导致重启时撞上 TIME_WAIT 报 "Address already in use"。
+    class ReusableTCPServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    server = ReusableTCPServer(("0.0.0.0", PORT), MusicProxyHandler)
 
     import socket
     try:
