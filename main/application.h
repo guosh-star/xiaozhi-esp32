@@ -146,6 +146,7 @@ private:
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool tts_restart_listening_ = false;    // Flag to send StartListening on TTS restart (multi-turn fix)
     bool music_playing_ = false;             // 在线音乐正在播放
+    bool music_session_active_ = false;      // 音乐会话（含歌末追问/后续对话）尚未结束
     bool music_prompt_pending_ = false;      // 歌末提问已发出，等待回答
     int64_t music_prompt_deadline_us_ = 0;   // 等待回答的截止时间（us）
     int64_t listen_hold_until_us_ = 0;       // 播放音乐时的 listening 保持截止时间（us）
@@ -180,6 +181,7 @@ private:
     void EnsureMusicListening();
     void StartMusicEndPrompt();
     void PlayMusicPrompt();
+    void PlayMusicByeAndClose();  // 歌末会话超时：先道别再回退
 
     // Helper methods
     void CheckAssetsVersion();
