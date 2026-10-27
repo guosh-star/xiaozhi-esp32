@@ -29,6 +29,7 @@ static constexpr bool kMusicWakeGate = true;
 
 // 2026-10-26: 在线音乐聆听保持窗口：最后一句结束后再停留 5 秒，另加 0.5 秒退出宽限
 static constexpr int64_t MUSIC_LISTEN_HOLD_US = 5LL * 1000 * 1000;
+static constexpr int64_t MUSIC_TASK_HOLD_US = 15LL * 1000 * 1000;  // 音乐任务完成后等待 15 秒
 static constexpr int64_t LISTEN_EXIT_GRACE_US = 500LL * 1000;
 static constexpr int64_t MUSIC_PROMPT_HOLD_US = 20LL * 1000 * 1000;  // 歌末 15 秒提问窗口，门控至少放行 20 秒
 
@@ -655,10 +656,10 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         // 音乐播放中不自动进 listening，避免对白被当成用户指令
                         if (kMusicWakeGate && (audio_service_.IsBgAudioActive() || music_session_active_)) {
-                            // 统一固定 5 秒窗口，每次任务完成都重新计时（不限次数）
+                            // 音乐任务完成后固定 15 秒窗口，每次任务完成都重新计时（不限次数）
                             int64_t now_us = esp_timer_get_time();
-                            listen_hold_until_us_ = now_us + MUSIC_LISTEN_HOLD_US;
-                            ESP_LOGI(TAG, "MUSIC-GATE: task done, +5s listening");
+                            listen_hold_until_us_ = now_us + MUSIC_TASK_HOLD_US;
+                            ESP_LOGI(TAG, "MUSIC-GATE: task done, +15s listening");
                             tts_restart_listening_ = true;
                             SetDeviceState(kDeviceStateListening);
                         } else if (listening_mode_ == kListeningModeManualStop) {
@@ -690,9 +691,9 @@ void Application::InitializeProtocol() {
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
-            // 2026-10-26: 用户说完一句（服务器识别到）就重新计 5 秒
+            // 2026-10-26: 用户说完一句（服务器识别到）就重新计 15 秒
             if (music_session_active_ && listen_hold_until_us_ > 0) {
-                listen_hold_until_us_ = esp_timer_get_time() + MUSIC_LISTEN_HOLD_US;
+                listen_hold_until_us_ = esp_timer_get_time() + MUSIC_TASK_HOLD_US;
             }
             if (music_prompt_pending_) {
                 music_prompt_pending_ = false;

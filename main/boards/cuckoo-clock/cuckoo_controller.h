@@ -471,9 +471,26 @@ public:
 
     // 在线音乐
     int PlayOnlineMusic(const char* url);
+    std::string IdentifySong();
     std::string CheckMultiArtist(const char* url_or_path);
     /// 查询在线音乐账号状态（会员/订阅/cookie 是否有效），返回服务端 JSON 摘要
     std::string GetMusicAccountStatus();
+    // 云端曲库/歌单
+    std::string LibrarySaveLast(const std::string& playlist);
+    std::string LibraryListPlaylists();
+    std::string LibraryPlaylistInfo(const std::string& playlist);
+    std::string LibraryDeletePlaylist(const std::string& playlist);
+    std::string LibraryCopyTrack(const std::string& src, int index,
+                                 const std::string& dst);
+    std::string LibraryRenamePlaylist(const std::string& old_name,
+                                      const std::string& new_name);
+    std::string LibraryUndoDeletePlaylist(const std::string& playlist);
+    std::string LibraryRemoveFromPlaylist(const std::string& playlist,
+                                          const std::string& song,
+                                          const std::string& artist,
+                                          int index);
+    int PlayPlaylist(const std::string& playlist);
+    int PlayPlaylistTrack(const std::string& playlist, int index);
 
     // 粤语查询（通过代理的 /cantonese 端点同步查询）
     std::string CantoneseLookup(const char* word);

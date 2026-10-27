@@ -34,6 +34,166 @@ static std::string CuckooExtractSongName(const std::string& url) {
     return CuckooUrlDecode(value);
 }
 
+static std::string CuckooUrlEncode(const std::string& in) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(in.size() * 3);
+    for (size_t i = 0; i < in.size(); ++i) {
+        unsigned char c = (unsigned char)in[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back((char)c);
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
+// Synchronous GET for the proxy's JSON library endpoints
+static std::string CuckooHttpGetJson(const std::string& host, int port,
+                                     const std::string& path, int timeout_ms) {
+    if (host.empty()) {
+        return "{\"ok\":false,\"error\":\"music proxy not configured\"}";
+    }
+    char url[1280];
+    snprintf(url, sizeof(url), "http://%s:%d%s", host.c_str(), port, path.c_str());
+
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_GET;
+    cfg.timeout_ms = timeout_ms;
+    cfg.buffer_size = 1024;
+    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
+    if (!cli) {
+        return "{\"ok\":false,\"error\":\"http init failed\"}";
+    }
+
+    esp_err_t e = esp_http_client_open(cli, 0);
+    if (e != ESP_OK) {
+        esp_http_client_cleanup(cli);
+        char err[128];
+        snprintf(err, sizeof(err), "{\"ok\":false,\"error\":\"http open failed: %d\"}", (int)e);
+        return std::string(err);
+    }
+
+    esp_http_client_fetch_headers(cli);
+    int status = esp_http_client_get_status_code(cli);
+    std::string body;
+    char buf[512];
+    while (true) {
+        int n = esp_http_client_read(cli, buf, sizeof(buf));
+        if (n <= 0) break;
+        body.append(buf, n);
+        if (body.size() > 16384) break;
+    }
+    esp_http_client_close(cli);
+    esp_http_client_cleanup(cli);
+
+    if (body.empty()) {
+        char err[128];
+        snprintf(err, sizeof(err), "{\"ok\":false,\"error\":\"http status %d\"}", status);
+        return std::string(err);
+    }
+    return body;
+}
+
+static int CuckooJsonGetInt(const std::string& json, const char* key) {
+    std::string pat = std::string("\"") + key + "\"";
+    size_t p = json.find(pat);
+    if (p == std::string::npos) return 0;
+    p = json.find(':', p + pat.size());
+    if (p == std::string::npos) return 0;
+    ++p;
+    while (p < json.size() && (json[p] == ' ' || json[p] == '"')) {
+        if (json[p] == '"') break;
+        ++p;
+    }
+    return atoi(json.c_str() + p);
+}
+
+static std::string CuckooJsonGetString(const std::string& json, const char* key) {
+    std::string pat = std::string("\"") + key + "\"";
+    size_t p = json.find(pat);
+    if (p == std::string::npos) return "";
+    p = json.find(':', p + pat.size());
+    if (p == std::string::npos) return "";
+    p = json.find('"', p + 1);
+    if (p == std::string::npos) return "";
+    std::string out;
+    bool esc = false;
+    for (++p; p < json.size(); ++p) {
+        char c = json[p];
+        if (esc) {
+            switch (c) {
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                default: out.push_back(c); break;
+            }
+            esc = false;
+        } else if (c == '\\') {
+            esc = true;
+        } else if (c == '"') {
+            break;
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+static std::string CuckooHttpPostJson(const std::string& host, int port,
+                                      const std::string& path,
+                                      const std::string& body, int timeout_ms) {
+    if (host.empty()) {
+        return "{\"ok\":false,\"error\":\"music proxy not configured\"}";
+    }
+    char url[1280];
+    snprintf(url, sizeof(url), "http://%s:%d%s", host.c_str(), port, path.c_str());
+    esp_http_client_config_t cfg = {};
+    cfg.url = url;
+    cfg.method = HTTP_METHOD_POST;
+    cfg.timeout_ms = timeout_ms;
+    cfg.buffer_size = 1024;
+    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
+    if (!cli) return "{\"ok\":false,\"error\":\"http init failed\"}";
+    esp_http_client_set_header(cli, "Content-Type", "application/octet-stream");
+    esp_err_t e = esp_http_client_open(cli, (int)body.size());
+    if (e != ESP_OK) {
+        esp_http_client_cleanup(cli);
+        return "{\"ok\":false,\"error\":\"http open failed\"}";
+    }
+    size_t sent = 0;
+    while (sent < body.size()) {
+        int n = esp_http_client_write(cli, body.data() + sent,
+                                      (int)(body.size() - sent));
+        if (n <= 0) break;
+        sent += (size_t)n;
+    }
+    esp_http_client_fetch_headers(cli);
+    int status = esp_http_client_get_status_code(cli);
+    std::string resp;
+    char buf[512];
+    while (resp.size() < 8192) {
+        int n = esp_http_client_read(cli, buf, sizeof(buf));
+        if (n <= 0) break;
+        resp.append(buf, n);
+    }
+    esp_http_client_close(cli);
+    esp_http_client_cleanup(cli);
+    if (resp.empty()) {
+        char err[96];
+        snprintf(err, sizeof(err), "{\"ok\":false,\"error\":\"http status %d\"}", status);
+        return std::string(err);
+    }
+    return resp;
+}
+
 static std::string CuckooJsonEscape(const std::string& in) {
     std::string out;
     out.reserve(in.size() + 16);
@@ -933,6 +1093,96 @@ int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     return mp3_->PlayOpus(full_url);
 }
 
+std::string CuckooStateMachine::IdentifySong() {
+    auto& app = Application::GetInstance();
+    auto& audio = app.GetAudioService();
+    // MCP 工具可能在 AI 说话阶段被调用，此时音频处理器默认是关闭的。
+    // 主动打开，否则 AudioInputTask 不会采样，表现为“没有录到声音”。
+    audio.EnableVoiceProcessing(true);
+    // AbortSpeaking 是异步的；只调用一次，避免连续 abort 把协议/音频状态搞乱。
+    if (app.GetDeviceState() == kDeviceStateSpeaking) {
+        app.AbortSpeaking(kAbortReasonNone);
+    }
+    for (int i = 0; i < 30 && app.GetDeviceState() == kDeviceStateSpeaking; ++i) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    bool muted_for_capture = false;
+    if (app.GetDeviceState() == kDeviceStateSpeaking) {
+        // 仍然卡在说话状态时，临时静音扬声器，避免录到 AI 自己的 TTS。
+        audio.SetOutputMuted(true);
+        muted_for_capture = true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+    ESP_LOGI(TAG, "IdentifySong: capture start, state=%d", (int)app.GetDeviceState());
+    audio.StartSongCapture(8000);
+    std::vector<int16_t> pcm;
+    bool got = false;
+    for (int i = 0; i < 120; ++i) {
+        if (audio.GetSongCapture(pcm)) {
+            got = true;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (!got) {
+        audio.StopSongCapture();
+        got = audio.GetSongCapture(pcm);
+    }
+    if (muted_for_capture) {
+        audio.SetOutputMuted(false);
+    }
+    if (!got || pcm.empty()) {
+        ESP_LOGW(TAG, "IdentifySong: no audio captured (%u samples)",
+                 (unsigned)pcm.size());
+        return "{\"status\":\"error\",\"hint\":\"没有录到声音\"}";
+    }
+    if (pcm.size() > 32000) {
+        // 丢掉开头约 1 秒，避开 TTS 尾音/切换噪声
+        pcm.erase(pcm.begin(), pcm.begin() + 32000);
+    }
+    ESP_LOGI(TAG, "IdentifySong: captured %u samples", (unsigned)pcm.size());
+    std::string body(reinterpret_cast<const char*>(pcm.data()),
+                     pcm.size() * sizeof(int16_t));
+    std::string resp = CuckooHttpPostJson(music_proxy_host_, music_proxy_port_,
+                                          "/recognize?rate=16000", body, 20000);
+    std::string title = CuckooJsonGetString(resp, "title");
+    std::string artist = CuckooJsonGetString(resp, "artist");
+    std::string album = CuckooJsonGetString(resp, "album");
+    int duration_ms = CuckooJsonGetInt(resp, "duration_ms");
+    if (title.empty()) {
+        return "{\"status\":\"error\",\"hint\":\"没识别出来，请靠近声源再试\"}";
+    }
+    std::string pick_path = "/identify_play?title=" + CuckooUrlEncode(title) +
+                            "&artist=" + CuckooUrlEncode(artist) +
+                            "&album=" + CuckooUrlEncode(album) +
+                            "&duration_ms=" + std::to_string(duration_ms);
+    std::string pick = CuckooHttpGetJson(music_proxy_host_, music_proxy_port_,
+                                         pick_path, 15000);
+    std::string message = CuckooJsonGetString(pick, "message");
+    if (!message.empty()) {
+        char out[1024];
+        snprintf(out, sizeof(out),
+                 "{\"status\":\"need_choice\",\"title\":\"%s\",\"hint\":\"%s\"}",
+                 CuckooJsonEscape(title).c_str(),
+                 CuckooJsonEscape(message).c_str());
+        return std::string(out);
+    }
+    std::string query = CuckooJsonGetString(pick, "query");
+    if (query.empty()) {
+        return "{\"status\":\"error\",\"hint\":\"没找到匹配版本\"}";
+    }
+    int ret = PlayOnlineMusic(("/pcm?q=" + query).c_str());
+    if (ret < 0) {
+        return "{\"status\":\"error\",\"hint\":\"识别到了但播放失败\"}";
+    }
+    char out[768];
+    snprintf(out, sizeof(out),
+             "{\"status\":\"ok\",\"playing\":true,\"title\":\"%s\",\"artist\":\"%s\"}",
+             CuckooJsonEscape(title).c_str(),
+             CuckooJsonEscape(artist).c_str());
+    return std::string(out);
+}
+
 /**
  * @brief 设置 QQ 音乐代理服务器（MCP 工具）
  */
@@ -940,6 +1190,118 @@ void CuckooStateMachine::SetMusicProxy(const char* host, int port) {
     music_proxy_host_ = host;
     music_proxy_port_ = port;
     ESP_LOGI(TAG, "Music proxy set to %s:%d", host, port);
+}
+
+std::string CuckooStateMachine::LibrarySaveLast(const std::string& playlist) {
+    if (playlist.empty()) {
+        return "{\"ok\":false,\"error\":\"playlist is empty\"}";
+    }
+    std::string path = "/library/save_last?playlist=" + CuckooUrlEncode(playlist);
+    ESP_LOGI(TAG, "LibrarySaveLast: %s", playlist.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 120000);
+}
+
+std::string CuckooStateMachine::LibraryListPlaylists() {
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_,
+                             "/library/playlists", 8000);
+}
+
+std::string CuckooStateMachine::LibraryPlaylistInfo(const std::string& playlist) {
+    if (playlist.empty()) {
+        return "{\"ok\":false,\"error\":\"playlist is empty\"}";
+    }
+    std::string path = "/library/info?name=" + CuckooUrlEncode(playlist);
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 8000);
+}
+
+std::string CuckooStateMachine::LibraryDeletePlaylist(const std::string& playlist) {
+    if (playlist.empty()) {
+        return "{\"ok\":false,\"error\":\"playlist is empty\"}";
+    }
+    std::string path = "/library/delete_playlist?name=" + CuckooUrlEncode(playlist);
+    ESP_LOGI(TAG, "LibraryDeletePlaylist: %s", playlist.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 8000);
+}
+
+std::string CuckooStateMachine::LibraryCopyTrack(const std::string& src, int index,
+                                                 const std::string& dst) {
+    if (src.empty() || dst.empty() || index <= 0) {
+        return "{\"ok\":false,\"error\":\"src, dst and index are required\"}";
+    }
+    char idxbuf[32];
+    snprintf(idxbuf, sizeof(idxbuf), "%d", index);
+    std::string path = "/library/copy_track?from=" + CuckooUrlEncode(src) +
+                       "&index=" + idxbuf + "&to=" + CuckooUrlEncode(dst);
+    ESP_LOGI(TAG, "LibraryCopyTrack: %s", path.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 8000);
+}
+
+std::string CuckooStateMachine::LibraryRenamePlaylist(const std::string& old_name,
+                                                      const std::string& new_name) {
+    if (old_name.empty() || new_name.empty()) {
+        return "{\"ok\":false,\"error\":\"old and new names are required\"}";
+    }
+    std::string path = "/library/rename_playlist?from=" + CuckooUrlEncode(old_name) +
+                       "&to=" + CuckooUrlEncode(new_name);
+    ESP_LOGI(TAG, "LibraryRenamePlaylist: %s -> %s",
+             old_name.c_str(), new_name.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 8000);
+}
+
+std::string CuckooStateMachine::LibraryUndoDeletePlaylist(const std::string& playlist) {
+    std::string path = "/library/undo_delete";
+    if (!playlist.empty()) {
+        path += "?name=" + CuckooUrlEncode(playlist);
+    }
+    ESP_LOGI(TAG, "LibraryUndoDeletePlaylist: %s",
+             playlist.empty() ? "(latest)" : playlist.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 8000);
+}
+
+std::string CuckooStateMachine::LibraryRemoveFromPlaylist(
+        const std::string& playlist, const std::string& song,
+        const std::string& artist, int index) {
+    if (playlist.empty()) {
+        return "{\"ok\":false,\"error\":\"playlist is empty\"}";
+    }
+    if (song.empty() && index <= 0) {
+        return "{\"ok\":false,\"error\":\"need song name or index\"}";
+    }
+    std::string path = "/library/remove?playlist=" + CuckooUrlEncode(playlist);
+    if (!song.empty()) {
+        path += "&song=" + CuckooUrlEncode(song);
+    }
+    if (!artist.empty()) {
+        path += "&artist=" + CuckooUrlEncode(artist);
+    }
+    if (index > 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "&index=%d", index);
+        path += buf;
+    }
+    ESP_LOGI(TAG, "LibraryRemove: %s", path.c_str());
+    return CuckooHttpGetJson(music_proxy_host_, music_proxy_port_, path, 12000);
+}
+
+int CuckooStateMachine::PlayPlaylist(const std::string& playlist) {
+    if (playlist.empty()) {
+        return -1;
+    }
+    std::string path = "/opus?playlist=" + CuckooUrlEncode(playlist);
+    ESP_LOGI(TAG, "PlayPlaylist: %s", playlist.c_str());
+    return PlayOnlineMusic(path.c_str());
+}
+
+int CuckooStateMachine::PlayPlaylistTrack(const std::string& playlist, int index) {
+    if (playlist.empty() || index <= 0) {
+        return -1;
+    }
+    char idxbuf[32];
+    std::string path = "/opus?playlist=" + CuckooUrlEncode(playlist);
+    snprintf(idxbuf, sizeof(idxbuf), "&index=%d", index);
+    path += idxbuf;
+    ESP_LOGI(TAG, "PlayPlaylistTrack: %s", path.c_str());
+    return PlayOnlineMusic(path.c_str());
 }
 
 // ============================================
@@ -1251,14 +1613,102 @@ void CuckooTools::RegisterAll() {
 
     {
         PropertyList pl;
-        pl.AddProperty(Property("url", kPropertyTypeString));
+        pl.AddProperty(Property("url", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("action", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("playlist", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("target", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("song", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("artist", kPropertyTypeString, std::string("")));
+        pl.AddProperty(Property("index", kPropertyTypeInteger, 0));
         mcp.AddTool("cuckoo.play_url",
             "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【歌手规则】如果用户明确指定了歌手（如'放苏芮的奉献'），url格式为'/pcm?q=歌名 歌手'，系统直接播该歌手版本。如果用户只说歌名没指定歌手（如'放《奉献》'），url只用'/pcm?q=歌名'，让系统自动展示多版本供选择。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：'放酒干倘卖无'→play_url('/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0')。'放苏芮的奉献'→play_url('/pcm?q=%E5%A5%89%E7%8C%AE%%20%E8%8B%8F%E8%8A%AE')。\n""【重播规则】用户说‘再唱一遍/重放刚才那首/再放一遍’时，直接调用本工具，url传'/pcm?q=__last__'，不要问歌名，也不要凭记忆猜；设备会用最近一次成功播放的歌曲重播。\n"
             "如果用户问‘刚才那首是什么/谁唱的’，先调用cuckoo.get_status读取last_song。\n"
-            "本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。",
+            "本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。\n【歌单】收藏最近一首：action=save_last, playlist=歌单名；播放歌单：action=playlist_play, playlist=歌单名；播放歌单第N首：action=playlist_track, playlist=歌单名, index=N；复制歌单第N首到另一歌单：action=playlist_copy_track, playlist=源歌单, index=N, target=目标歌单；歌单改名：action=playlist_rename, playlist=旧名, target=新名；撤销删除歌单：action=playlist_undo, playlist=歌单名（可留空，默认最近一次）；听歌识曲：action=identify（设备录5秒，自动识别并在多版本时让用户选择）；列出歌单：action=playlist_list；查询歌单：action=playlist_info, playlist=歌单名；删除歌单：action=playlist_delete, playlist=歌单名；从歌单删歌：action=playlist_remove, playlist=歌单名, song=歌名（或 index=第几首）。做这些动作时 url 可留空。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
+                std::string action = props["action"].value<std::string>();
+                std::string playlist = props["playlist"].value<std::string>();
+                std::string target = props["target"].value<std::string>();
+                std::string song = props["song"].value<std::string>();
+                std::string artist = props["artist"].value<std::string>();
+                int index = props["index"].value<int>();
                 std::string url = props["url"].value<std::string>();
+
+                if (action == "identify") {
+                    return state_machine_->IdentifySong();
+                }
+                if (action == "save_last") {
+                    if (playlist.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
+                    }
+                    return state_machine_->LibrarySaveLast(playlist);
+                }
+                if (action == "playlist_list") {
+                    return state_machine_->LibraryListPlaylists();
+                }
+                if (action == "playlist_info") {
+                    if (playlist.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
+                    }
+                    return state_machine_->LibraryPlaylistInfo(playlist);
+                }
+                if (action == "playlist_delete") {
+                    if (playlist.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
+                    }
+                    return state_machine_->LibraryDeletePlaylist(playlist);
+                }
+                if (action == "playlist_remove") {
+                    if (playlist.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
+                    }
+                    return state_machine_->LibraryRemoveFromPlaylist(playlist, song, artist, index);
+                }
+                if (action == "playlist_play") {
+                    if (playlist.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
+                    }
+                    int pret = state_machine_->PlayPlaylist(playlist);
+                    if (pret >= 0) {
+                        return std::string("{\"status\":\"ok\",\"playing\":true}");
+                    }
+                    char pjson[128];
+                    snprintf(pjson, sizeof(pjson), "{\"status\":\"error\",\"code\":%d}", pret);
+                    return std::string(pjson);
+                }
+                if (action == "playlist_track") {
+                    if (playlist.empty() || index <= 0) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist and index are required\"}");
+                    }
+                    int pret = state_machine_->PlayPlaylistTrack(playlist, index);
+                    if (pret >= 0) {
+                        return std::string("{\"status\":\"ok\",\"playing\":true}");
+                    }
+                    char pjson[128];
+                    snprintf(pjson, sizeof(pjson), "{\"status\":\"error\",\"code\":%d}", pret);
+                    return std::string(pjson);
+                }
+                if (action == "playlist_copy_track") {
+                    if (playlist.empty() || target.empty() || index <= 0) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist, target and index are required\"}");
+                    }
+                    return state_machine_->LibraryCopyTrack(playlist, index, target);
+                }
+                if (action == "playlist_rename") {
+                    if (playlist.empty() || target.empty()) {
+                        return std::string("{\"status\":\"error\",\"hint\":\"playlist and target are required\"}");
+                    }
+                    return state_machine_->LibraryRenamePlaylist(playlist, target);
+                }
+                if (action == "playlist_undo") {
+                    return state_machine_->LibraryUndoDeletePlaylist(playlist);
+                }
+                if (!action.empty()) {
+                    return std::string("{\"status\":\"error\",\"hint\":\"unknown action\"}");
+                }
+                if (url.empty()) {
+                    return std::string("{\"status\":\"error\",\"hint\":\"url or action is required\"}");
+                }
                 // 重播最近一首：使用设备保存的 URL，不依赖 AI 上下文
                 if (url == "__last__" || url.find("__last__") != std::string::npos) {
                     if (state_machine_->last_song_url_.empty()) {

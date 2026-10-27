@@ -146,6 +146,10 @@ public:
     void SetBackgroundAudioGain(float gain);
     void ClearBackgroundAudio();
     size_t GetBgAudioFillLevel();
+    // 听歌识曲：录制一段麦克风 PCM（16k 单声道）
+    void StartSongCapture(int duration_ms);
+    void StopSongCapture();
+    bool GetSongCapture(std::vector<int16_t>& out);
     // 诊断：背景音乐混音/欠载统计（累积值，调用方自行做差分）
     uint32_t GetBgMixFrames() const { return bg_mix_frames_.load(std::memory_order_relaxed); }
     uint32_t GetBgUnderrunFrames() const { return bg_underrun_frames_.load(std::memory_order_relaxed); }
@@ -294,6 +298,10 @@ private:
     bool bg_audio_active_ = false;
     bool bg_audio_drain_enabled_ = false;
     std::mutex bg_audio_mutex_;
+    std::mutex song_capture_mutex_;
+    std::vector<int16_t> song_capture_;
+    int song_capture_target_ = 0;
+    bool song_capture_active_ = false;
 
     // 诊断：背景音乐欠载计数（音频输出任务写，其他任务读）
     std::atomic<uint32_t> bg_mix_frames_{0};

@@ -339,6 +339,19 @@ void AudioService::AudioInputTask() {
                     int32_t v = (int32_t)s * 2;
                     s = (v > 32767) ? 32767 : (v < -32768) ? -32768 : (int16_t)v;
                 }
+                {
+                    std::lock_guard<std::mutex> lock(song_capture_mutex_);
+                    if (song_capture_active_) {
+                        const int channels = codec_->input_channels() > 0 ? codec_->input_channels() : 1;
+                        for (size_t i = 0; i + channels <= data.size(); i += channels) {
+                            song_capture_.push_back(data[i]);
+                            if ((int)song_capture_.size() >= song_capture_target_) {
+                                song_capture_active_ = false;
+                                break;
+                            }
+                        }
+                    }
+                }
                 // AEC 前后电平统计：每秒打印一行 ERLE（取麦克风声道）
                 {
                     const int channels = codec_->input_channels() > 0 ? codec_->input_channels() : 1;
@@ -1055,6 +1068,33 @@ void AudioService::OutputRawPcm(const int16_t* data, size_t num_samples, int sam
     }
     last_output_time_ = std::chrono::steady_clock::now();
     debug_statistics_.playback_count++;
+}
+
+void AudioService::StartSongCapture(int duration_ms) {
+    if (duration_ms < 1000) duration_ms = 1000;
+    if (duration_ms > 10000) duration_ms = 10000;
+    std::lock_guard<std::mutex> lock(song_capture_mutex_);
+    song_capture_.clear();
+    song_capture_target_ = 16000 * duration_ms / 1000;
+    song_capture_active_ = true;
+}
+
+void AudioService::StopSongCapture() {
+    std::lock_guard<std::mutex> lock(song_capture_mutex_);
+    song_capture_active_ = false;
+}
+
+bool AudioService::GetSongCapture(std::vector<int16_t>& out) {
+    std::lock_guard<std::mutex> lock(song_capture_mutex_);
+    if (song_capture_.empty()) return false;
+    if (song_capture_active_ &&
+        (int)song_capture_.size() < song_capture_target_) {
+        return false;
+    }
+    out = std::move(song_capture_);
+    song_capture_.clear();
+    song_capture_active_ = false;
+    return true;
 }
 
 void AudioService::PushBackgroundAudio(const int16_t* data, size_t samples, int sample_rate) {
