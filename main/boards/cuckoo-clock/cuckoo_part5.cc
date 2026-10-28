@@ -1346,7 +1346,12 @@ int CuckooStateMachine::PlayPlaylist(const std::string& playlist) {
     }
     std::string path = "/opus?playlist=" + CuckooUrlEncode(playlist);
     ESP_LOGI(TAG, "PlayPlaylist: %s", playlist.c_str());
-    return PlayOnlineMusic(path.c_str());
+    int ret = PlayOnlineMusic(path.c_str());
+    if (ret >= 0) {
+        // 记入“最近播放”：歌单也要记，否则 AI 会报上一首单曲的旧名字
+        SaveLastSong("歌单《" + playlist + "》", path);
+    }
+    return ret;
 }
 
 int CuckooStateMachine::PlayPlaylistTrack(const std::string& playlist, int index) {
@@ -1358,7 +1363,13 @@ int CuckooStateMachine::PlayPlaylistTrack(const std::string& playlist, int index
     snprintf(idxbuf, sizeof(idxbuf), "&index=%d", index);
     path += idxbuf;
     ESP_LOGI(TAG, "PlayPlaylistTrack: %s", path.c_str());
-    return PlayOnlineMusic(path.c_str());
+    int ret = PlayOnlineMusic(path.c_str());
+    if (ret >= 0) {
+        char namebuf[160];
+        snprintf(namebuf, sizeof(namebuf), "歌单《%s》第 %d 首", playlist.c_str(), index);
+        SaveLastSong(namebuf, path);
+    }
+    return ret;
 }
 
 // ============================================
