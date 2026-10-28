@@ -471,6 +471,11 @@ public:
 
     // 在线音乐
     int PlayOnlineMusic(const char* url);
+    int PlayOnlineMusicNow(const char* url);   // 立即播放（跳过“等 AI 说完”排队）
+    static void MusicDeferTask(void* arg);     // 等 TTS 结束后再开始播放
+    std::string music_pending_url_;
+    std::mutex music_pending_mutex_;
+    TaskHandle_t music_defer_task_ = nullptr;
     std::string IdentifySong();
     std::string CheckMultiArtist(const char* url_or_path);
     /// 查询在线音乐账号状态（会员/订阅/cookie 是否有效），返回服务端 JSON 摘要

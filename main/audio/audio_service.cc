@@ -624,7 +624,8 @@ void AudioService::OpusCodecTask() {
 
                     if (task->type == kAudioTaskTypeEncodeToSendQueue) {
                         // 诊断：uplink_muted_ 为真时只丢弃上行包，麦克风采集/AFE 照常运行
-                        if (!uplink_muted_.load(std::memory_order_relaxed)) {
+                        // 防自听：IsUplinkHeld() 为真（TTS 尾音窗口）时同样丢弃
+                        if (!uplink_muted_.load(std::memory_order_relaxed) && !IsUplinkHeld()) {
                             {
                                 std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
                                 audio_send_queue_.push_back(std::move(packet));
@@ -889,6 +890,12 @@ void AudioService::WaitForPlaybackQueueEmpty() {
         audio_decode_queue_.size(), audio_playback_queue_.size(), decode_pushed_, decode_dropped_);
 }
 
+
+void AudioService::HoldUplink(int ms) {
+    int64_t until = (ms > 0) ? (esp_timer_get_time() + (int64_t)ms * 1000) : 0;
+    uplink_hold_until_us_.store(until, std::memory_order_relaxed);
+    ESP_LOGI(TAG, "UPLINK-HOLD: %d ms", ms);
+}
 
 void AudioService::SetUplinkMuted(bool muted) {
     uplink_muted_.store(muted, std::memory_order_relaxed);

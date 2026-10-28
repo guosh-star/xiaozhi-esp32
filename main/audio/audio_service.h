@@ -162,6 +162,12 @@ public:
     uint32_t GetBgMaxWriteMs() const { return bg_max_write_ms_.load(std::memory_order_relaxed); }
     void SetUplinkMuted(bool muted);
     bool IsUplinkMuted() const { return uplink_muted_.load(std::memory_order_relaxed); }
+    // 防自听：暂时丢弃上行音频（毫秒），用于 TTS 尾音未散尽的窗口
+    void HoldUplink(int ms);
+    bool IsUplinkHeld() const {
+        int64_t until = uplink_hold_until_us_.load(std::memory_order_relaxed);
+        return until > 0 && esp_timer_get_time() < until;
+    }
 
     uint32_t GetBgClipSamples() const { return bg_clip_samples_.load(std::memory_order_relaxed); }
     uint32_t GetBgMusicPeak() const { return bg_music_peak_.load(std::memory_order_relaxed); }
@@ -314,6 +320,7 @@ private:
     std::atomic<uint32_t> bg_write_late_frames_{0}; // B：OutputData 内部 >25ms
     std::atomic<uint32_t> bg_max_write_ms_{0};
     std::atomic<bool> uplink_muted_{false};          // 诊断：只停上行发送，采集/AFE 照常
+    std::atomic<int64_t> uplink_hold_until_us_{0};   // 防自听：上行丢弃截止时间（us）
     std::atomic<uint32_t> bg_clip_samples_{0};       // 混音后被硬钳位的样本数
     std::atomic<uint32_t> bg_music_peak_{0};        // 本窗口音乐（乘增益后）最大绝对值
     std::atomic<uint32_t> bg_out_peak_{0};          // 本窗口混音后最大绝对值

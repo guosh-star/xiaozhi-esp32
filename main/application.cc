@@ -1118,6 +1118,12 @@ void Application::HandleStateChangedEvent() {
             listening_diag_logged_ = false;
             ESP_LOGI(TAG, "LISTENING-START: t=%d us", (int)listening_start_us_);
 
+            // 防自听：从说话态回到聆听时，开头 500ms 丢弃上行音频，
+            // 避免把自己 TTS 的尾音当成用户说话（AEC 抑制不足时的补救）
+            if (tts_restart_listening_) {
+                audio_service_.HoldUplink(500);
+            }
+
             // Make sure the audio processor is running
             if (tts_restart_listening_ || play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
                 tts_restart_listening_ = false;

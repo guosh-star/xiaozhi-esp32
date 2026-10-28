@@ -164,6 +164,7 @@
 // ============================================
 #define DEFAULT_MUSIC_PROXY_HOST    "120.55.47.160"
 #define DEFAULT_MUSIC_PROXY_PORT    8765
+#define DEFAULT_LIBRARY_TOKEN       "Guosh10011@"
 
 // 在线音乐传输格式：1=Opus（省带宽/抗抖动），0=原始 PCM
 #define MUSIC_PREFER_OPUS           1

@@ -70,6 +70,7 @@ static std::string CuckooHttpGetJson(const std::string& host, int port,
     if (!cli) {
         return "{\"ok\":false,\"error\":\"http init failed\"}";
     }
+    esp_http_client_set_header(cli, "X-Library-Token", DEFAULT_LIBRARY_TOKEN);
 
     esp_err_t e = esp_http_client_open(cli, 0);
     if (e != ESP_OK) {
@@ -163,6 +164,7 @@ static std::string CuckooHttpPostJson(const std::string& host, int port,
     esp_http_client_handle_t cli = esp_http_client_init(&cfg);
     if (!cli) return "{\"ok\":false,\"error\":\"http init failed\"}";
     esp_http_client_set_header(cli, "Content-Type", "application/octet-stream");
+    esp_http_client_set_header(cli, "X-Library-Token", DEFAULT_LIBRARY_TOKEN);
     esp_err_t e = esp_http_client_open(cli, (int)body.size());
     if (e != ESP_OK) {
         esp_http_client_cleanup(cli);
@@ -989,12 +991,67 @@ std::string CuckooStateMachine::GetMusicAccountStatus() {
  */
 int CuckooStateMachine::PlayOnlineMusic(const char* url_or_path) {
     if (!mp3_) return -1;
+
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() == kDeviceStateSpeaking) {
+        // AI 还在说话：先把当前音乐静音，等 TTS 播完再开始，避免抢话
+        ESP_LOGI(TAG, "PlayOnlineMusic: AI speaking, defer until TTS done");
+        if (mp3_->IsPlaying()) {
+            mp3_->Stop();
+            vTaskDelay(pdMS_TO_TICKS(100));
+            app.GetAudioService().ClearBackgroundAudio();
+        }
+        {
+            std::lock_guard<std::mutex> lk(music_pending_mutex_);
+            music_pending_url_ = url_or_path;
+        }
+        if (music_defer_task_ == nullptr) {
+            xTaskCreate(MusicDeferTask, "music_defer", 6144, this, 5, &music_defer_task_);
+            ESP_LOGI(TAG, "PlayOnlineMusic: defer task started");
+        }
+        return 0;
+    }
+
+    // 立即播放：丢弃尚未启动的排队请求，避免旧请求后面又抢回来
+    {
+        std::lock_guard<std::mutex> lk(music_pending_mutex_);
+        music_pending_url_.clear();
+    }
+    return PlayOnlineMusicNow(url_or_path);
+}
+
+void CuckooStateMachine::MusicDeferTask(void* arg) {
+    auto* sm = static_cast<CuckooStateMachine*>(arg);
+    auto& app = Application::GetInstance();
+    int waited = 0;
+    while (app.GetDeviceState() == kDeviceStateSpeaking && waited < 25000) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited += 100;
+    }
+    // TTS 结束后再等 300ms，让喇叭尾音散尽，避免开头被截
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    std::string url;
+    {
+        std::lock_guard<std::mutex> lk(sm->music_pending_mutex_);
+        url = sm->music_pending_url_;
+        sm->music_pending_url_.clear();
+    }
+    ESP_LOGI(TAG, "Deferred music start (waited %d ms): %s", waited, url.c_str());
+    if (!url.empty()) {
+        sm->PlayOnlineMusicNow(url.c_str());
+    }
+    {
+        std::lock_guard<std::mutex> lk(sm->music_pending_mutex_);
+        sm->music_defer_task_ = nullptr;
+    }
+    vTaskDelete(NULL);
+}
+
+int CuckooStateMachine::PlayOnlineMusicNow(const char* url_or_path) {
+    if (!mp3_) return -1;
     
     auto& app = Application::GetInstance();
-    auto ai_state = app.GetDeviceState();
-    if (ai_state == kDeviceStateSpeaking) {
-        ESP_LOGI(TAG, "PlayOnlineMusic: AI speaking, music will overlap (ducked)");
-    }
     
     // 若正在播放，先干净地停止旧任务再播新的
     
@@ -1623,7 +1680,7 @@ void CuckooTools::RegisterAll() {
         mcp.AddTool("cuckoo.play_url",
             "播放在线音乐。用户说出歌名后立即调用本工具，不要先问用户问题。\n""参数url格式：'/pcm?q=歌名'（中文需要URL编码，空格用%%20）。\n""【歌手规则】如果用户明确指定了歌手（如'放苏芮的奉献'），url格式为'/pcm?q=歌名 歌手'，系统直接播该歌手版本。如果用户只说歌名没指定歌手（如'放《奉献》'），url只用'/pcm?q=歌名'，让系统自动展示多版本供选择。\n""如果正在放歌，用户要换歌，直接传新歌名即可，系统自动停旧播新。\n""不要问用户'要不要换'——直接调用工具。\n""不要光说'我来放歌'——必须实际调用play_url。\n""示例：'放酒干倘卖无'→play_url('/pcm?q=%E9%85%92%E5%B9%B2%E5%80%98%E5%8D%96%E6%97%A0')。'放苏芮的奉献'→play_url('/pcm?q=%E5%A5%89%E7%8C%AE%%20%E8%8B%8F%E8%8A%AE')。\n""【重播规则】用户说‘再唱一遍/重放刚才那首/再放一遍’时，直接调用本工具，url传'/pcm?q=__last__'，不要问歌名，也不要凭记忆猜；设备会用最近一次成功播放的歌曲重播。\n"
             "如果用户问‘刚才那首是什么/谁唱的’，先调用cuckoo.get_status读取last_song。\n"
-            "本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。\n【歌单】收藏最近一首：action=save_last, playlist=歌单名；播放歌单：action=playlist_play, playlist=歌单名；播放歌单第N首：action=playlist_track, playlist=歌单名, index=N；复制歌单第N首到另一歌单：action=playlist_copy_track, playlist=源歌单, index=N, target=目标歌单；歌单改名：action=playlist_rename, playlist=旧名, target=新名；撤销删除歌单：action=playlist_undo, playlist=歌单名（可留空，默认最近一次）；听歌识曲：action=identify（设备录5秒，自动识别并在多版本时让用户选择）；列出歌单：action=playlist_list；查询歌单：action=playlist_info, playlist=歌单名；删除歌单：action=playlist_delete, playlist=歌单名；从歌单删歌：action=playlist_remove, playlist=歌单名, song=歌名（或 index=第几首）。做这些动作时 url 可留空。",
+            "本地歌曲请用cuckoo.play_music（曲目1-12），不要用play_url。\n【歌单】收藏最近一首：action=save_last, playlist=歌单名；播放歌单：action=playlist_play, playlist=歌单名；播放歌单第N首：action=playlist_track, playlist=歌单名, index=N；复制歌单第N首到另一歌单：action=playlist_copy_track, playlist=源歌单, index=N, target=目标歌单；歌单改名：action=playlist_rename, playlist=旧名, target=新名；撤销删除歌单：action=playlist_undo, playlist=歌单名（可留空，默认最近一次）；听歌识曲：action=identify（设备录5秒，自动识别并在多版本时让用户选择）；【歌单播放】调用 playlist_play 后会自动逐首播放并播报，不要再对第一首调用 play_url；歌单名按原样传，不要自行加“歌单”后缀；列出歌单：action=playlist_list；查询歌单：action=playlist_info, playlist=歌单名；删除歌单：action=playlist_delete, playlist=歌单名；从歌单删歌：action=playlist_remove, playlist=歌单名, song=歌名（或 index=第几首）。做这些动作时 url 可留空。",
             pl,
             [this](const PropertyList& props) -> ReturnValue {
                 std::string action = props["action"].value<std::string>();
@@ -1668,6 +1725,21 @@ void CuckooTools::RegisterAll() {
                     if (playlist.empty()) {
                         return std::string("{\"status\":\"error\",\"hint\":\"playlist is required\"}");
                     }
+                    // 播放前先确认歌单存在，避免设备先播报“开始播放”再 404
+                    {
+                        std::string chk = state_machine_->LibraryPlaylistInfo(playlist);
+                        bool exists = chk.find("\"ok\": true") != std::string::npos ||
+                                      chk.find("\"ok\":true") != std::string::npos;
+                        if (!exists) {
+                            bool unreachable = chk.find("http open failed") != std::string::npos ||
+                                               chk.find("http init failed") != std::string::npos ||
+                                               chk.find("music proxy not configured") != std::string::npos;
+                            if (unreachable) {
+                                return std::string("{\"status\":\"error\",\"reason\":\"server_unreachable\",\"hint\":\"连接音乐服务失败。请告诉用户稍后再试，不要重试播放。\"}");
+                            }
+                            return std::string("{\"status\":\"error\",\"reason\":\"playlist_not_found\",\"hint\":\"该歌单不存在。请如实告诉用户没有这个歌单（不要说成开始播放），然后调用 playlist_list 列出歌单让用户挑；不要重复尝试播放同一个名字。\"}");
+                        }
+                    }
                     int pret = state_machine_->PlayPlaylist(playlist);
                     if (pret >= 0) {
                         return std::string("{\"status\":\"ok\",\"playing\":true}");
@@ -1679,6 +1751,15 @@ void CuckooTools::RegisterAll() {
                 if (action == "playlist_track") {
                     if (playlist.empty() || index <= 0) {
                         return std::string("{\"status\":\"error\",\"hint\":\"playlist and index are required\"}");
+                    }
+                    // 播放前先确认歌单存在
+                    {
+                        std::string chk = state_machine_->LibraryPlaylistInfo(playlist);
+                        bool exists = chk.find("\"ok\": true") != std::string::npos ||
+                                      chk.find("\"ok\":true") != std::string::npos;
+                        if (!exists) {
+                            return std::string("{\"status\":\"error\",\"reason\":\"playlist_not_found\",\"hint\":\"该歌单不存在。请如实告诉用户没有这个歌单，然后调用 playlist_list 列出歌单让用户挑。\"}");
+                        }
                     }
                     int pret = state_machine_->PlayPlaylistTrack(playlist, index);
                     if (pret >= 0) {
