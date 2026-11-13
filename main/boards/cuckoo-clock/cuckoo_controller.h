@@ -1,6 +1,8 @@
 #ifndef __CUCKOO_CONTROLLER_H__
 #define __CUCKOO_CONTROLLER_H__
 
+#include "cuckoo_action_gate.h"
+
 #include "mcp_server.h"
 #include "config.h"
 #include "assets.h"
@@ -143,8 +145,8 @@ private:
 
     // 播放任务句柄
     TaskHandle_t play_task_ = nullptr;
-    int pending_track_ = 0;              // 待播放曲目
-    int pending_bell_hour_ = 0;          // 待播放报时小时数
+    std::atomic<int> pending_track_{0};              // 待播放曲目
+    std::atomic<int> pending_bell_hour_{0};          // 待播放报时小时数
 
     // 音频缓冲区
     static constexpr size_t kInputBufSize = 8192;  // 输入缓冲
@@ -169,23 +171,60 @@ private:
     void ApplyDuckingGain(int16_t* pcm, size_t num_samples);
 
 public:
+    // Immutable local-file/chime jobs; no persistent worker can re-read a new request.
+    mutable std::mutex offline_lifetime_mutex_;
+    std::condition_variable offline_drained_;
+    size_t offline_jobs_ = 0;
+    bool offline_closing_ = false;
+    bool OfflineClosing() const { std::lock_guard<std::mutex> lock(offline_lifetime_mutex_); return offline_closing_; }
+    struct OfflineJob {
+        Mp3Player* player;
+        uint64_t sequence;
+        cuckoo_stop::Ticket ticket;
+        int track, hour;
+        bool background;
+        std::function<bool()> keep, audio_allowed;
+        std::function<void()> retired;
+        std::shared_ptr<void> lifetime;
+    };
+    std::atomic<uint64_t> offline_generation_{0};
+    std::atomic<int> offline_kind_{0}; // 0=none, 1=chime, 2=accepted background
+    bool OfflineCurrent(const OfflineJob& job) const;
+    bool QueueOffline(int track, int hour, bool background,
+                      std::function<bool()> keep = {}, std::function<void()> retired = {},
+                      std::function<bool()> audio_allowed = {});
+    bool PlayBackground(int index, std::function<bool()> keep,
+                        std::function<void()> retired, std::function<bool()> audio_allowed) {
+        return QueueOffline(index < 1 ? 1 : index, 0, true,
+                            std::move(keep), std::move(retired), std::move(audio_allowed));
+    }
+    bool HasBackgroundPlayback() const { return offline_kind_.load() == 2; }
+    bool HasChimePlayback() const { return offline_kind_.load() == 1; }
+
     Mp3Player() = default;
     ~Mp3Player();
 
     void Init(Assets* assets);
 
     // 解码并播放单个 MP3 文件
-    int DecodeSingleFile(int index);
+    int DecodeSingleFile(int index, std::function<bool()> keep_running = {}, std::function<bool(const int16_t*, size_t, int)> output = {});
 
     // 解码 MP3 到内存缓冲区（不直接播放）
     int DecodeToBuffer(int index, int16_t** out_buf, size_t* out_samples, int* out_samplerate);
 
     // 流式解码 MP3，逐帧回调（零大 buffer，适合长音频）
-    int DecodeStreaming(int index, std::function<void(const int16_t* pcm, size_t samples, int src_sr, void* user_data)> callback, void* user_data = nullptr);
+    int DecodeStreaming(int index, std::function<void(const int16_t* pcm, size_t samples, int src_sr, void* user_data)> callback, void* user_data = nullptr, std::function<bool()> keep_running = {});
 
     void PlayTrack(uint8_t folder, uint8_t track); // 播放指定曲目
     void PlayIndex(uint16_t index);                // 按全局索引播放
     void Stop();
+    void RequestStop() {
+        cuckoo_stop::Gate::Instance().MediaState([&] {
+            stop_requested_ = true; ++offline_generation_;
+            if (offline_kind_.exchange(0) != 0) is_playing_ = false;
+            pending_track_ = 0; pending_bell_hour_ = 0;
+        });
+    }
     void ResetForNextPlay();
     void Pause();
     void Resume();
@@ -283,56 +322,56 @@ private:
     LdrSensor* ldr_;
     gpio_num_t motor_power_pin_ = GPIO_NUM_NC;
 
-    PerformanceType current_performance_;
-    Phase current_phase_;
-    int call_count_;                           // 布谷鸟叫声计数
-    int total_calls_;                          // 布谷鸟叫声总次数
-    std::atomic<bool> is_running_{false};
+    cuckoo_stop::Value<PerformanceType> current_performance_;
+    cuckoo_stop::Value<Phase> current_phase_;
+    cuckoo_stop::Value<int> call_count_;                           // 布谷鸟叫声计数
+    cuckoo_stop::Value<int> total_calls_;                          // 布谷鸟叫声总次数
+    cuckoo_stop::Value<bool> is_running_{false};
     int last_hour_;                            // 上次整点报时的小时
     int last_half_hour_;                       // 上次半点报时的小时
-    int show_music_index_;                   // 当前播放曲目编号
-    int music_dance_phase_ = 0;              // 音乐舞蹈相位 (0-7)
-    int music_dance_enabled_ = -1;           // 音乐舞蹈状态: -1=未初始化, 0=已停止, 1=激活中
-    int m1_music_fwd_count_ = 0;               // 音乐中 M1 正转脉冲计数
-    int m1_music_rev_count_ = 0;               // 音乐中 M1 反转脉冲计数
-    bool dog_outro_done_ = false;
-    std::atomic<bool> dog_outro_running_{false};  // 小狗回家动画进行中
-    std::atomic<bool> dog_intro_running_{false};  // 小狗出场动画进行中（防重复创建）
-    std::atomic<bool> dog_intro_done_{false};     // 小狗出场完成
-    std::atomic<bool> kids_active_{true};         // Kids 模式是否激活（默认true，启动即活跃）
-    std::atomic<bool> kids_dancing_{false};       // 小朋友跳舞模式（false=安静欣赏, true=电机舞蹈）
-    std::atomic<bool> kids_appreciating_{true};    // 轻摆欣赏模式（M1 MusicDanceTick 相位脉冲）默认true
-    std::atomic<bool> flash_leds_active_{false};   // LED 闪烁模式是否激活
+    cuckoo_stop::Value<int> show_music_index_;                   // 当前播放曲目编号
+    cuckoo_stop::Value<int> music_dance_phase_ = 0;              // 音乐舞蹈相位 (0-7)
+    cuckoo_stop::Value<int> music_dance_enabled_ = -1;           // 音乐舞蹈状态: -1=未初始化, 0=已停止, 1=激活中
+    cuckoo_stop::Value<int> m1_music_fwd_count_ = 0;               // 音乐中 M1 正转脉冲计数
+    cuckoo_stop::Value<int> m1_music_rev_count_ = 0;               // 音乐中 M1 反转脉冲计数
+    cuckoo_stop::Value<bool> dog_outro_done_ = false;
+    cuckoo_stop::Value<bool> dog_outro_running_{false};  // 小狗回家动画进行中
+    cuckoo_stop::Value<bool> dog_intro_running_{false};  // 小狗出场动画进行中（防重复创建）
+    cuckoo_stop::Value<bool> dog_intro_done_{false};     // 小狗出场完成
+    cuckoo_stop::Value<bool> kids_active_{true};         // Kids 模式是否激活（默认true，启动即活跃）
+    cuckoo_stop::Value<bool> kids_dancing_{false};       // 小朋友跳舞模式（false=安静欣赏, true=电机舞蹈）
+    cuckoo_stop::Value<bool> kids_appreciating_{true};    // 轻摆欣赏模式（M1 MusicDanceTick 相位脉冲）默认true
+    cuckoo_stop::Value<bool> flash_leds_active_{false};   // LED 闪烁模式是否激活
 
     // 小提琴循环状态
     struct ViolinLoopState {
-        int stage = 0;
-        int loop_count = 0;
-        int timer = 0;
-        int angle = 90;
-        int fwd_count = 0;
-        int rev_count = 0;
+        cuckoo_stop::Value<int> stage = 0;
+        cuckoo_stop::Value<int> loop_count = 0;
+        cuckoo_stop::Value<int> timer = 0;
+        cuckoo_stop::Value<int> angle = 90;
+        cuckoo_stop::Value<int> fwd_count = 0;
+        cuckoo_stop::Value<int> rev_count = 0;
         void Reset() { stage = 0; loop_count = 0; timer = 0; angle = 90; fwd_count = 0; rev_count = 0; }
     };
     ViolinLoopState violin_state_;
 
     // 狗尾摇摆状态
     struct DogTailState {
-        int angle = 15;
-        int dir = 1;
-        int target = 65;
-        int pause = 0;
+        cuckoo_stop::Value<int> angle = 15;
+        cuckoo_stop::Value<int> dir = 1;
+        cuckoo_stop::Value<int> target = 65;
+        cuckoo_stop::Value<int> pause = 0;
         void Reset() { angle = 15; dir = 1; target = 65; pause = 0; }
     };
     DogTailState dog_state_;
-    std::atomic<bool> door_open_{false};   // 大门状态
-    std::atomic<bool> dog_out_{false};    // 小狗状态
-    std::atomic<bool> kids_dance_{false}; // KidsDanceShow 触发标志
+    cuckoo_stop::Value<bool> door_open_{false};   // 大门状态
+    cuckoo_stop::Value<bool> dog_out_{false};    // 小狗状态
+    cuckoo_stop::Value<bool> kids_dance_{false}; // KidsDanceShow 触发标志
 
     // M1 舞蹈电机时序
-    unsigned long m1_fwd_time_ = 0;
-    unsigned long m1_rev_time_ = 0;
-    unsigned long m1_stage_start_ = 0;
+    cuckoo_stop::Value<unsigned long> m1_fwd_time_ = 0;
+    cuckoo_stop::Value<unsigned long> m1_rev_time_ = 0;
+    cuckoo_stop::Value<unsigned long> m1_stage_start_ = 0;
 
 public:
     // 时间状态
@@ -343,8 +382,8 @@ public:
     std::atomic<bool> is_dark_{false};         // 当前是否暗光
 
     // 唤醒时间戳
-    uint64_t last_idle_exit_us_ = 0;
-    int prev_device_state_ = -1;               // 上一次设备状态
+    cuckoo_stop::Value<uint64_t> last_idle_exit_us_ = 0;
+    cuckoo_stop::Value<int> prev_device_state_ = -1;               // 上一次设备状态
 
     // 闹钟管理（最多 5 个）
     static constexpr int kMaxAlarms = 5;
@@ -359,11 +398,11 @@ public:
     mutable std::mutex alarm_mutex_;
     AlarmInfo alarms_[kMaxAlarms] = {};
     std::atomic<int> alarm_count_{0};
-    std::atomic<bool> alarm_ringing_{false};
-    std::atomic<bool> alarm_stopped_{false};
-    std::atomic<int> thanks_counter_{0};       // 感谢语计数
-    std::atomic<int> linda_song_counter_{0};   // 琳达歌曲计数
-    std::atomic<int> garden_song_counter_{0};  // 花园歌曲计数
+    cuckoo_stop::Value<bool> alarm_ringing_{false};
+    cuckoo_stop::Value<bool> alarm_stopped_{false};
+    cuckoo_stop::Value<int> thanks_counter_{0};       // 感谢语计数
+    cuckoo_stop::Value<int> linda_song_counter_{0};   // 琳达歌曲计数
+    cuckoo_stop::Value<int> garden_song_counter_{0};  // 花园歌曲计数
 
     // 静音模式配置
     std::atomic<int> quiet_mode_{2};           // 0=全天静音 1=全天报时 2=光线静音(LDR) 3=时间段静音
@@ -388,7 +427,7 @@ public:
     std::string GetAlarmsJson();
     bool DeleteAlarm(int index);  // 1-based 索引
     bool IsAlarmRinging() const { return alarm_ringing_; }
-    
+
     // 闹钟持久化（NVS 存储，断电保留）
     void SaveAlarmsToNvs();
     void LoadAlarmsFromNvs();
@@ -471,7 +510,7 @@ public:
 
     // 在线音乐
     int PlayOnlineMusic(const char* url);
-    int PlayOnlineMusicNow(const char* url);   // 立即播放（跳过“等 AI 说完”排队）
+    int PlayOnlineMusicNow(const char* url, uint64_t expected_request = 0);   // 立即播放（跳过“等 AI 说完”排队）
     static void MusicDeferTask(void* arg);     // 等 TTS 结束后再开始播放
     std::string music_pending_url_;
     std::mutex music_pending_mutex_;
@@ -514,6 +553,90 @@ public:
     void SetMusicProxy(const char* host, int port);
     std::string music_proxy_host_;
     int music_proxy_port_ = 8765;
+
+    // Single-board native S3 action ownership. Scalar commits share the output fence.
+    cuckoo_stop::Value<bool> motion_suspended_{false};
+    std::atomic<uint64_t> media_generation_{0};
+    std::atomic<uint64_t> pending_music_generation_{0};
+    std::atomic<bool> background_owned_{false};
+    std::atomic<bool> background_streaming_{false};
+    std::atomic<uint64_t> active_background_token_{0};
+    bool PreserveBackground() const {
+        return mp3_ && (mp3_->HasBackgroundPlayback() ||
+            (background_owned_.load() && active_background_token_.load() == media_generation_.load() &&
+             active_background_token_.load() != 0 && !mp3_->HasChimePlayback() &&
+             (background_streaming_.load() || mp3_->IsPlaying())));
+    }
+    void RetireMotion();
+    void FailPerformanceStart();
+    bool ClaimPerformance(PerformanceType type) {
+        if (is_running_.load()) return false;
+        RetireMotion();
+        alarm_stopped_ = true; alarm_ringing_ = false;
+        if (mp3_ && !PreserveBackground()) mp3_->RequestStop();
+        is_running_ = true; current_performance_ = type;
+        motion_suspended_ = false;
+        return true;
+    }
+    bool MotionSuppressed() const {
+        return motion_suspended_.load() && cuckoo_stop::Gate::Instance().Automatic();
+    }
+    void ResumeMotionForCommand() {
+        if (!cuckoo_stop::Gate::Instance().Automatic()) motion_suspended_ = false;
+    }
+    cuckoo_stop::Value<uint64_t> performance_media_ticket_{0}, performance_media_generation_{0};
+    cuckoo_stop::Value<bool> performance_owns_background_{false};
+    void OwnPerformanceMedia(bool reserve_background = true) {
+        cuckoo_stop::Gate::Instance().Write([&] {
+            performance_owns_background_ = reserve_background;
+            performance_media_ticket_ = cuckoo_stop::Gate::Instance().CurrentTicket();
+            performance_media_generation_ = reserve_background ? media_generation_.fetch_add(1) + 1 : media_generation_.load();
+        });
+    }
+    template<class F> bool PerformanceMedia(F&& f) {
+        bool done = false;
+        cuckoo_stop::Gate::Instance().Media([&] {
+            if (performance_media_ticket_.load() == cuckoo_stop::Gate::Instance().CurrentTicket()) { f(); done = true; }
+        });
+        return done;
+    }
+    template<class F> bool PerformanceTrack(F&& f) {
+        bool done = false;
+        cuckoo_stop::Gate::Instance().Media([&] {
+            if (performance_media_ticket_.load() == cuckoo_stop::Gate::Instance().CurrentTicket() &&
+                performance_media_generation_.load() == media_generation_.load()) { f(); done = true; }
+        });
+        return done;
+    }
+    void FinishPerformanceMedia();
+    uint64_t BeginBackground(bool performance = false, bool revoke_pending = true) {
+        uint64_t token = 0;
+        cuckoo_stop::Gate::Instance().Media([&] {
+            cuckoo_stop::Gate::Instance().Write([&] {
+                if (performance) {
+                    if (performance_media_ticket_.load() != cuckoo_stop::Gate::Instance().CurrentTicket() ||
+                        performance_media_generation_.load() != media_generation_.load()) return;
+                    token = performance_media_generation_.load();
+                } else {
+                    if (revoke_pending) ++pending_music_generation_;
+                    token = media_generation_.fetch_add(1) + 1;
+                }
+                active_background_token_ = token;
+                background_owned_ = true; background_streaming_ = false;
+            });
+        });
+        return token;
+    }
+    bool MediaCurrent(uint64_t token) const {
+        return token && token == media_generation_.load() && !cuckoo_stop::Gate::Instance().Closing();
+    }
+    template<class F> bool MediaChunk(uint64_t token, F&& f) {
+        bool done = false;
+        cuckoo_stop::Gate::Instance().MediaOwner([&] {
+            if (MediaCurrent(token)) { f(); done = true; }
+        });
+        return done;
+    }
 
     bool IsRunning() { return is_running_.load(); }
     void SetDark(bool dark) { is_dark_ = dark; }

@@ -146,7 +146,7 @@ private:
     // 在 Core 1 上启动时钟任务（250ms tick）
     void StartClockTask() {
         TaskHandle_t task_handle;
-        xTaskCreatePinnedToCore(
+        cuckoo_stop::LaunchService(
             cuckoo_clock_task,
             "cuckoo_clock",
             8192,
@@ -162,6 +162,7 @@ private:
     // BOOT按键：切换对话 + 报时。TOUCH按键：触发演出
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
+            CUCKOO_ACTION_BEGIN();
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
@@ -198,17 +199,17 @@ private:
                                 resampled[d++] = 0;
                             }
                         }
-                        audio.MixIntoBackgroundAudio(resampled.data(), d, 0.9f);
+    cuckoo_stop::Gate::Instance().Media([&] { audio.MixIntoBackgroundAudio(resampled.data(), d, 0.9f); });
                         ESP_LOGI(TAG, "BOOT: ask prompt mixed into bg audio (%d samples)", (int)d);
                         // 等提示音播完再切换对话，避免和 AI 回复叠在一起
-                        vTaskDelay(pdMS_TO_TICKS(2500));
+                        CUCKOO_ACTION_WAIT(pdMS_TO_TICKS(2500));
                     } else {
-                        audio.OutputRawPcm(ask_data, ask_samples, 16000);
+    cuckoo_stop::Gate::Instance().Media([&] { audio.OutputRawPcm(ask_data, ask_samples, 16000); });
                     }
                 }
                 // 布谷鸟叫完成，继续切换对话状态
             }
-            app.ToggleChatState();
+            cuckoo_stop::Gate::Instance().Media([&] { app.ToggleChatState(); });
         });
 
         // BOOT 长按：紧急停止所有演出
@@ -220,17 +221,18 @@ private:
         });
 
         touch_button_.OnClick([this]() {
+            CUCKOO_ACTION_BEGIN();
             if (state_machine_) state_machine_->StartShow();
         });
     }
 
 public:
-    CuckooBoard() : 
+    CuckooBoard() :
         boot_button_(BOOT_BUTTON_GPIO),
         touch_button_(TOUCH_BUTTON_GPIO) {
-        
+
         ESP_LOGI(TAG, "=== Cuckoo Clock Board ===");
-        
+
         InitializeCodecI2c();
         display_ = new NoDisplay();
         InitializePeripherals();

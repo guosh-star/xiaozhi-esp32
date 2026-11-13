@@ -63,6 +63,10 @@ RTC_NOINIT_ATTR struct {
 // 将 QQ 音乐代理的 URL 统一成实际传输格式
 // MUSIC_PREFER_OPUS=1：/stream、/pcm 都改写成 /opus（省带宽、抗抖动）
 // MUSIC_PREFER_OPUS=0：/stream、/opus 都改写成 /pcm（原始 s16le）
+static void CuckooGpioWrite(gpio_num_t pin, uint32_t level) {
+    cuckoo_stop::Gate::Instance().Write([&] { gpio_set_level(pin, level); });
+}
+
 static void ConvertToPcmUrl(char* url, size_t url_sz) {
     size_t url_len = strlen(url);
     if (url_len >= url_sz) return;
@@ -167,6 +171,7 @@ Motor::Motor(gpio_num_t in1, gpio_num_t in2, ledc_channel_t ch1, ledc_channel_t 
  * PWM 模式按百分比映射占空比；GPIO 模式直接电平控制。
  */
 void Motor::SetSpeed(int speed) {
+    cuckoo_stop::Gate::Instance().Write([&] {
     if (speed == 0) { Stop(); return; }
     int spd = abs(speed); if (spd > 100) spd = 100;
     if (use_pwm_) {
@@ -179,14 +184,19 @@ void Motor::SetSpeed(int speed) {
         if (speed > 0) { gpio_set_level(in1_pin_, 1); gpio_set_level(in2_pin_, 0); }
         else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 1); }
     }
+
+    });
 }
 /**
  * @brief 停止电机（双通道输出 0）
  */
 void Motor::Stop() {
+    cuckoo_stop::Gate::Instance().Write([&] {
     if (use_pwm_) { ledc_set_duty(speed_mode_, ledc_channel_, 0); ledc_set_duty(speed_mode_, ledc_channel2_, 0);
         ledc_update_duty(speed_mode_, ledc_channel_); ledc_update_duty(speed_mode_, ledc_channel2_); }
     else { gpio_set_level(in1_pin_, 0); gpio_set_level(in2_pin_, 0); }
+
+    });
 }
 /**
  * @brief 正转电机（speed 取正，默认 100）
@@ -244,28 +254,32 @@ Servo::Servo(gpio_num_t pin, ledc_channel_t channel, ledc_mode_t speed_mode)
  * 将角度转换为50Hz PWM 占空比 (409~2048 对应 0~180度，上限钳位到 145 度)
  */
 void Servo::SetAngle(int angle) {
+    cuckoo_stop::Gate::Instance().Write([&] {
     if (angle < 0) angle = 0;
     if (angle > 145) angle = 145;   // 上限 145°，避免 DS-M005 微型舵机顶死堵转
     angle_ = angle;
     uint32_t duty = (uint32_t)(409 + (float)(angle) / 180.0f * (2048 - 409));
     ledc_set_duty(speed_mode_, ledc_channel_, duty);
     ledc_update_duty(speed_mode_, ledc_channel_);
+
+    });
 }
 
 /**
  * @brief 舵机平滑扫描：从起始角度到目标角度，按指定时长插值
  * @param from 起始角度
- * @param to 目标角度  
+ * @param to 目标角度
  * @param duration_ms 扫描时长（毫秒），每20ms一步
  */
 void Servo::Sweep(int from, int to, int duration_ms) {
+    if (!cuckoo_stop::Live()) return;
     if (from == to) { SetAngle(to); return; }
     int steps = duration_ms / 20;
     if (steps < 1) steps = 1;
     float delta = (float)(to - from) / steps;
     for (int i = 0; i <= steps; i++) {
         SetAngle(from + (int)(delta * i));
-        vTaskDelay(pdMS_TO_TICKS(20));
+        if (!cuckoo_stop::Wait(pdMS_TO_TICKS(20))) return;
     }
 }
 
@@ -275,8 +289,11 @@ void Servo::Sweep(int from, int to, int duration_ms) {
  * 下次 SetAngle/Sweep 会自动恢复 PWM 输出。
  */
 void Servo::Release() {
+    cuckoo_stop::Gate::Instance().Write([&] {
     ledc_set_duty(speed_mode_, ledc_channel_, 0);
     ledc_update_duty(speed_mode_, ledc_channel_);
+
+    });
 }
 
 // 小鸟跳跃 + 水车驱动的水鸟电机 (DRV8833 电机驱动 IN1/IN2)
@@ -297,6 +314,10 @@ void Servo::Release() {
  * @brief 析构播放器：请求停止并等待后台任务退出（最多5秒超时），然后清理资源
  */
 Mp3Player::~Mp3Player() {
+    { std::lock_guard<std::mutex> lock(offline_lifetime_mutex_); offline_closing_ = true; }
+    RequestStop();
+    { std::unique_lock<std::mutex> lock(offline_lifetime_mutex_);
+      offline_drained_.wait(lock, [&] { return offline_jobs_ == 0; }); }
     stop_requested_ = true;
     // 等后台任务最多5秒退出（可能阻塞在 recv，需等待超时或关闭 socket）
     for (int i = 0; i < 100 && is_playing_; i++) {
@@ -387,7 +408,18 @@ void Mp3Player::ApplyDuckingGain(int16_t* pcm, size_t num_samples) {
  * - 混音机制：若 bark_active_ 自动叠加狗叫
  * - Ducking：AI 说话时音乐降到 20% 音量
  */
-int Mp3Player::DecodeSingleFile(int index) {
+struct CuckooPrivateMp3Decoder {
+    void* handle = nullptr;
+    std::vector<uint8_t> input = std::vector<uint8_t>(8192), output = std::vector<uint8_t>(8192);
+    ~CuckooPrivateMp3Decoder() { if (handle) esp_mp3_dec_close(handle); }
+};
+int Mp3Player::DecodeSingleFile(int index, std::function<bool()> keep_running,
+                                std::function<bool(const int16_t*, size_t, int)> output) {
+    CuckooPrivateMp3Decoder decoder;
+    float decode_gain = 1.0f;
+    int duck_state = 0;  // 0=空闲, 1=淡出中, 2=已压低, 3=恢复中
+    int64_t duck_transition_us = 0;
+
     if (!assets_) {
         ESP_LOGE(TAG, "Assets not initialized");
         return 0;
@@ -426,12 +458,12 @@ int Mp3Player::DecodeSingleFile(int index) {
     }
 
     // 关闭解码器
-    if (mp3_dec_handle_) {
-        esp_mp3_dec_close(mp3_dec_handle_);
-        mp3_dec_handle_ = nullptr;
+    if (decoder.handle) {
+        esp_mp3_dec_close(decoder.handle);
+        decoder.handle = nullptr;
     }
 
-    esp_audio_err_t ret = esp_mp3_dec_open(nullptr, 0, &mp3_dec_handle_);
+    esp_audio_err_t ret = esp_mp3_dec_open(nullptr, 0, &decoder.handle);
     if (ret != ESP_AUDIO_ERR_OK) {
         ESP_LOGE(TAG, "Failed to open MP3 decoder: %d", ret);
         return 0;
@@ -449,26 +481,26 @@ int Mp3Player::DecodeSingleFile(int index) {
     int consecutive_errors = 0;
     const int MAX_CONSECUTIVE_ERRORS = 50;
 
-    while (remaining > 0 && !stop_requested_) {
+    while (remaining > 0 && (keep_running ? keep_running() : !stop_requested_.load())) {
         // 准备输入帧
         size_t in_len = (remaining < kInputBufSize) ? remaining : kInputBufSize;
-        memcpy(input_buf_, input_ptr, in_len);
+        memcpy(decoder.input.data(), input_ptr, in_len);
 
         esp_audio_dec_in_raw_t raw;
-        raw.buffer = input_buf_;
+        raw.buffer = decoder.input.data();
         raw.len = in_len;
         raw.consumed = 0;
         raw.frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE;
 
         // 准备输出帧
         esp_audio_dec_out_frame_t frame;
-        frame.buffer = output_buf_;
+        frame.buffer = decoder.output.data();
         frame.len = kOutputBufSize;
         frame.needed_size = 0;
         frame.decoded_size = 0;
 
         // 解码
-        ret = esp_mp3_dec_decode(mp3_dec_handle_, &raw, &frame, &dec_info);
+        ret = esp_mp3_dec_decode(decoder.handle, &raw, &frame, &dec_info);
 
         if (ret == ESP_AUDIO_ERR_OK) {
             // 首次获取解码信息（esp_mp3_dec_decode 通过 dec_info 带回）
@@ -481,7 +513,7 @@ int Mp3Player::DecodeSingleFile(int index) {
             }
 
             // 有解码出的 PCM 数据，提交给音频通道
-            if (frame.decoded_size > 0 && !stop_requested_) {
+            if (frame.decoded_size > 0 && (keep_running ? keep_running() : !stop_requested_.load())) {
                 int16_t* pcm_data = (int16_t*)frame.buffer;
                 size_t num_samples = frame.decoded_size / sizeof(int16_t);
 
@@ -489,13 +521,11 @@ int Mp3Player::DecodeSingleFile(int index) {
 
  // ---- 平滑 ducking: AI 开始说话时淡出音乐 ----
                 // 使用状态机：0=空闲, 1=淡出中, 2=已压低, 3=恢复中
-                static int duck_state = 0;  // 0=空闲, 1=淡出中, 2=已压低, 3=恢复中
-                static int64_t duck_transition_us = 0;
                 bool ai_speaking = (app.GetDeviceState() == kDeviceStateSpeaking);
 
                 if (disable_ducking_) {
                     // 禁用模式：关闭 ducking，保持全音量
-                    ducking_gain_ = 1.0f;
+                    decode_gain = 1.0f;
                 } else if (ai_speaking && duck_state == 0) {
                     // 开始淡出
                     duck_state = 1;
@@ -506,9 +536,9 @@ int Mp3Player::DecodeSingleFile(int index) {
                 if (duck_state == 1) {
                     // 400ms 内淡出到 20%
                     int64_t elapsed = esp_timer_get_time() - duck_transition_us;
-                    ducking_gain_ = 1.0f - 0.8f * (float)elapsed / 400000.0f;
-                    if (ducking_gain_ <= 0.2f) {
-                        ducking_gain_ = 0.2f;
+                    decode_gain = 1.0f - 0.8f * (float)elapsed / 400000.0f;
+                    if (decode_gain <= 0.2f) {
+                        decode_gain = 0.2f;
                         duck_state = 2;
                     }
                     if (!ai_speaking) {
@@ -517,7 +547,7 @@ int Mp3Player::DecodeSingleFile(int index) {
                         duck_transition_us = esp_timer_get_time();
                     }
                 } else if (duck_state == 2) {
-                    ducking_gain_ = 0.2f;
+                    decode_gain = 0.2f;
                     if (!ai_speaking) {
                         duck_state = 3;
                         duck_transition_us = esp_timer_get_time();
@@ -525,9 +555,9 @@ int Mp3Player::DecodeSingleFile(int index) {
                 } else if (duck_state == 3) {
                     // 400ms 恢复到 100%
                     int64_t elapsed = esp_timer_get_time() - duck_transition_us;
-                    ducking_gain_ = 0.2f + 0.8f * (float)elapsed / 400000.0f;
-                    if (ducking_gain_ >= 1.0f) {
-                        ducking_gain_ = 1.0f;
+                    decode_gain = 0.2f + 0.8f * (float)elapsed / 400000.0f;
+                    if (decode_gain >= 1.0f) {
+                        decode_gain = 1.0f;
                         duck_state = 0;
                         ESP_LOGI(TAG, "DecodeSingleFile: false trigger, restored");
                     }
@@ -539,7 +569,7 @@ int Mp3Player::DecodeSingleFile(int index) {
                 }
 
  // 应用增益 + 削波
-                float gain = ducking_gain_;
+                float gain = decode_gain;
                 for (size_t i = 0; i < num_samples; i++) {
                     int32_t s = (int32_t)(pcm_data[i] * gain);
                     if (s > 30000) s = 30000;
@@ -566,12 +596,18 @@ int Mp3Player::DecodeSingleFile(int index) {
                     }
                 }
 
-                app.GetAudioService().OutputRawPcm(pcm_data, num_samples, sample_rate);
+                if (output) {
+                    if (!output(pcm_data, num_samples, sample_rate)) return 0;
+                } else if (!cuckoo_stop::Gate::Instance().Media([&] {
+                    app.GetAudioService().OutputRawPcm(pcm_data, num_samples, sample_rate);
+                })) return 0;
 
             // 等待播放完成（OutputRawPcm 为异步输出）
                 int play_ms = (int)(num_samples * 1000 / sample_rate / (channels > 0 ? channels : 1));
                 if (play_ms < 10) play_ms = 10;
-                vTaskDelay(pdMS_TO_TICKS(play_ms));
+                if (keep_running) {
+                    if (!cuckoo_stop::WaitWhile(pdMS_TO_TICKS(play_ms), keep_running)) return 0;
+                } else vTaskDelay(pdMS_TO_TICKS(play_ms));
             }
 
             // 移动输入指针
@@ -606,20 +642,13 @@ int Mp3Player::DecodeSingleFile(int index) {
     }
 
     // 关闭解码器
-    if (mp3_dec_handle_) {
-        esp_mp3_dec_close(mp3_dec_handle_);
-        mp3_dec_handle_ = nullptr;
+    if (decoder.handle) {
+        esp_mp3_dec_close(decoder.handle);
+        decoder.handle = nullptr;
     }
-
-    // 恢复小音量 Opus 播放：清空 DMA 缓冲，防止缓冲区残留导致回放错乱
-    auto& app = Application::GetInstance();
-    if (stop_requested_) {
-        app.GetAudioService().FlushOutputDma();
-    }
-    app.GetAudioService().SetOutputMuted(false);
 
     ESP_LOGI(TAG, "Finished playing %s (stopped=%d)", filename, stop_requested_.load() ? 1 : 0);
-    return !stop_requested_;
+    return keep_running ? keep_running() : !stop_requested_.load();
 }
 
 /**
